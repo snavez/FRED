@@ -1,0 +1,5 @@
+{
+  "name": "VowelVision Pro",
+  "description": "A high-performance acoustic phonetics visualization tool capable of handling 40,000+ tokens with interactive F1/F2 formant plots, trajectory analysis, and multi-variable comparison.",
+  "requestFramePermissions": []
+}
