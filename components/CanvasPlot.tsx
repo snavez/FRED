@@ -279,13 +279,23 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
-  const [hoveredToken, setHoveredToken] = useState<SpeechToken | null>(null);
-  const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
+  // Hover state uses refs + lightweight state to avoid triggering canvas redraws
+  const hoveredTokenRef = useRef<SpeechToken | null>(null);
+  const hoveredLayerIdRef = useRef<string | null>(null);
+  const [hoverTick, setHoverTick] = useState(0); // lightweight trigger for tooltip re-render only
+  const hoveredToken = hoveredTokenRef.current;
+  const hoveredLayerId = hoveredLayerIdRef.current;
+  const hoverRafRef = useRef<number | null>(null); // for requestAnimationFrame throttling
   const isDragging = useRef(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
 
   // Background layer always controls coordinate space
   const bgConfig = layers[0].config;
+
+  // Cleanup RAF on unmount
+  useEffect(() => {
+    return () => { if (hoverRafRef.current !== null) cancelAnimationFrame(hoverRafRef.current); };
+  }, []);
 
   // Compute mappings for all layers
   const allMappings = useMemo(() => {
@@ -296,6 +306,73 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     });
     return result;
   }, [layers, layerData]);
+
+  // Spatial grid index for O(1) hover hit-testing (rebuilt when data/config changes)
+  const spatialGrid = useMemo(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return null;
+    const { width, height } = container.getBoundingClientRect();
+    if (width === 0 || height === 0) return null;
+
+    const CELL_SIZE = 20; // pixels per grid cell
+    const cols = Math.ceil(width / CELL_SIZE);
+    const rows = Math.ceil(height / CELL_SIZE);
+    const grid: { token: SpeechToken; layerId: string; x: number; y: number }[][] = new Array(cols * rows);
+
+    const mapX = (f2: number) => {
+      const norm = (f2 - bgConfig.f2Range[0]) / (bgConfig.f2Range[1] - bgConfig.f2Range[0]);
+      return bgConfig.invertX ? (1 - norm) * width : norm * width;
+    };
+    const mapY = (f1: number) => {
+      const norm = (f1 - bgConfig.f1Range[0]) / (bgConfig.f1Range[1] - bgConfig.f1Range[0]);
+      return bgConfig.invertY ? norm * height : (1 - norm) * height;
+    };
+
+    layers.forEach(layer => {
+      if (!layer.visible) return;
+      const data = layerData[layer.id] || [];
+      const config = layer.config;
+      data.forEach(t => {
+        if (config.plotType === 'trajectory') {
+          const pts = t.trajectory
+            .filter(p => p.time >= (config.trajectoryOnset ?? 0) && p.time <= (config.trajectoryOffset ?? 100));
+          pts.forEach(pt => {
+            const f1 = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
+            const f2 = config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
+            if (isNaN(f1) || isNaN(f2)) return;
+            const px = mapX(f2);
+            const py = mapY(f1);
+            const col = Math.floor(px / CELL_SIZE);
+            const row = Math.floor(py / CELL_SIZE);
+            if (col >= 0 && col < cols && row >= 0 && row < rows) {
+              const idx = row * cols + col;
+              if (!grid[idx]) grid[idx] = [];
+              grid[idx].push({ token: t, layerId: layer.id, x: px, y: py });
+            }
+          });
+        } else {
+          const nearestTime = findNearestTimePoint(t.trajectory, config.timePoint);
+          const pt = nearestTime !== undefined ? t.trajectory.find(p => p.time === nearestTime) : undefined;
+          if (!pt) return;
+          const f1 = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
+          const f2 = config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
+          if (isNaN(f1) || isNaN(f2)) return;
+          const px = mapX(f2);
+          const py = mapY(f1);
+          const col = Math.floor(px / CELL_SIZE);
+          const row = Math.floor(py / CELL_SIZE);
+          if (col >= 0 && col < cols && row >= 0 && row < rows) {
+            const idx = row * cols + col;
+            if (!grid[idx]) grid[idx] = [];
+            grid[idx].push({ token: t, layerId: layer.id, x: px, y: py });
+          }
+        }
+      });
+    });
+
+    return { grid, cols, rows, cellSize: CELL_SIZE, width, height };
+  }, [layers, layerData, bgConfig.f1Range, bgConfig.f2Range, bgConfig.invertX, bgConfig.invertY]);
 
   // Helper functions for drawing individual layers
   const drawTrajectoryLayer = (
@@ -994,72 +1071,71 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
       lastMousePos.current = { x: e.clientX, y: e.clientY };
     } else {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      const mouseX = (e.clientX - rect.left - transform.x) / transform.scale;
-      const mouseY = (e.clientY - rect.top - transform.y) / transform.scale;
-      const dprWidth = canvas.width / window.devicePixelRatio;
-      const dprHeight = canvas.height / window.devicePixelRatio;
-      const mapX = (f2: number) => {
-        const norm = (f2 - bgConfig.f2Range[0]) / (bgConfig.f2Range[1] - bgConfig.f2Range[0]);
-        return bgConfig.invertX ? (1 - norm) * dprWidth : norm * dprWidth;
-      };
-      const mapY = (f1: number) => {
-        const norm = (f1 - bgConfig.f1Range[0]) / (bgConfig.f1Range[1] - bgConfig.f1Range[0]);
-        return bgConfig.invertY ? norm * dprHeight : (1 - norm) * dprHeight;
-      };
-      let closest: SpeechToken | null = null;
-      let closestLayerId: string | null = null;
-      let minDist = 15 / transform.scale;
+      // Throttle hover hit-testing to one per animation frame
+      const clientX = e.clientX;
+      const clientY = e.clientY;
+      if (hoverRafRef.current !== null) return; // already pending
+      hoverRafRef.current = requestAnimationFrame(() => {
+        hoverRafRef.current = null;
+        if (!spatialGrid) return;
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = (clientX - rect.left - transform.x) / transform.scale;
+        const mouseY = (clientY - rect.top - transform.y) / transform.scale;
 
-      // Check all visible layers for hover
-      layers.forEach(layer => {
-        if (!layer.visible) return;
-        const data = layerData[layer.id] || [];
-        const layerConfig = layer.config;
-        data.forEach(t => {
-          if (layerConfig.plotType === 'trajectory') {
-            // For trajectory, check all trajectory points
-            const pts = t.trajectory
-              .filter(p => p.time >= (layerConfig.trajectoryOnset ?? 0) && p.time <= (layerConfig.trajectoryOffset ?? 100));
-            pts.forEach(pt => {
-              const f1 = layerConfig.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
-              const f2 = layerConfig.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
-              if (isNaN(f1) || isNaN(f2)) return;
-              const tx = mapX(f2);
-              const ty = mapY(f1);
-              const dist = Math.sqrt((tx - mouseX)**2 + (ty - mouseY)**2);
+        // Spatial grid lookup: check mouse cell + 8 neighbors
+        const { grid, cols, rows, cellSize } = spatialGrid;
+        const col = Math.floor(mouseX / cellSize);
+        const row = Math.floor(mouseY / cellSize);
+        let closest: SpeechToken | null = null;
+        let closestLayerId: string | null = null;
+        let minDist = 15 / transform.scale;
+
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            const r = row + dr;
+            const c = col + dc;
+            if (r < 0 || r >= rows || c < 0 || c >= cols) continue;
+            const cell = grid[r * cols + c];
+            if (!cell) continue;
+            for (let i = 0; i < cell.length; i++) {
+              const entry = cell[i];
+              const dx = entry.x - mouseX;
+              const dy = entry.y - mouseY;
+              const dist = Math.sqrt(dx * dx + dy * dy);
               if (dist < minDist) {
                 minDist = dist;
-                closest = t;
-                closestLayerId = layer.id;
+                closest = entry.token;
+                closestLayerId = entry.layerId;
               }
-            });
-          } else {
-            const nearestTime = findNearestTimePoint(t.trajectory, layerConfig.timePoint);
-            const pt = nearestTime !== undefined ? t.trajectory.find(p => p.time === nearestTime) : undefined;
-            if (!pt) return;
-            const f1 = layerConfig.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
-            const f2 = layerConfig.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
-            if (isNaN(f1) || isNaN(f2)) return;
-            const tx = mapX(f2);
-            const ty = mapY(f1);
-            const dist = Math.sqrt((tx - mouseX)**2 + (ty - mouseY)**2);
-            if (dist < minDist) {
-              minDist = dist;
-              closest = t;
-              closestLayerId = layer.id;
             }
           }
-        });
+        }
+
+        // Only trigger re-render if hover actually changed
+        if (hoveredTokenRef.current !== closest) {
+          hoveredTokenRef.current = closest;
+          hoveredLayerIdRef.current = closestLayerId;
+          setHoverTick(t => t + 1); // lightweight re-render for tooltip only
+        }
       });
-      setHoveredToken(closest);
-      setHoveredLayerId(closestLayerId);
     }
   };
 
-  const handleMouseUp = () => isDragging.current = false;
+  const handleMouseUp = () => { isDragging.current = false; };
+  const handleMouseLeave = () => {
+    isDragging.current = false;
+    if (hoverRafRef.current !== null) {
+      cancelAnimationFrame(hoverRafRef.current);
+      hoverRafRef.current = null;
+    }
+    if (hoveredTokenRef.current !== null) {
+      hoveredTokenRef.current = null;
+      hoveredLayerIdRef.current = null;
+      setHoverTick(t => t + 1);
+    }
+  };
 
   const handleWheel = (e: React.WheelEvent) => {
     const scaleFactor = e.deltaY > 0 ? 0.95 : 1.05;
@@ -1073,7 +1149,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+        onMouseLeave={handleMouseLeave}
         onWheel={handleWheel}
         className="cursor-move"
       />

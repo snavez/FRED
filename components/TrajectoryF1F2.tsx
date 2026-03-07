@@ -42,7 +42,11 @@ const DASH_NAMES = ['solid', 'dash', 'dot', 'longdash', 'dotdash', 'solid'];
 const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, config, globalReferences, styleOverrides, onLegendClick }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [hoveredToken, setHoveredToken] = useState<SpeechToken | null>(null);
+  // Hover state uses refs + lightweight tick to avoid triggering canvas redraws
+  const hoveredTokenRef = useRef<SpeechToken | null>(null);
+  const [hoverTick, setHoverTick] = useState(0);
+  const hoveredToken = hoveredTokenRef.current;
+  const hoverRafRef = useRef<number | null>(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const isDragging = useRef(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
@@ -630,6 +634,50 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
     }
   }, [data, config, transform, colorMap, renderPlot]);
 
+  // Spatial grid for O(1) hover hit-testing
+  const spatialGrid = useMemo(() => {
+    const container = containerRef.current;
+    if (!container) return null;
+    const { width, height } = container.getBoundingClientRect();
+    if (width === 0 || height === 0) return null;
+    const CELL_SIZE = 20;
+    const cols = Math.ceil(width / CELL_SIZE);
+    const rows = Math.ceil(height / CELL_SIZE);
+    const grid: { token: SpeechToken; x: number; y: number }[][] = new Array(cols * rows);
+
+    const mapX = (f2: number) => {
+      const norm = (f2 - config.f2Range[0]) / (config.f2Range[1] - config.f2Range[0]);
+      return config.invertX ? (1 - norm) * width : norm * width;
+    };
+    const mapY = (f1: number) => {
+      const norm = (f1 - config.f1Range[0]) / (config.f1Range[1] - config.f1Range[0]);
+      return config.invertY ? norm * height : (1 - norm) * height;
+    };
+
+    for (const t of data) {
+      const last = t.trajectory[t.trajectory.length - 1];
+      if (!last) continue;
+      const f1 = config.useSmoothing ? (last.f1_smooth ?? last.f1) : last.f1;
+      const f2 = config.useSmoothing ? (last.f2_smooth ?? last.f2) : last.f2;
+      if (isNaN(f1) || isNaN(f2)) continue;
+      const px = mapX(f2);
+      const py = mapY(f1);
+      const col = Math.floor(px / CELL_SIZE);
+      const row = Math.floor(py / CELL_SIZE);
+      if (col >= 0 && col < cols && row >= 0 && row < rows) {
+        const idx = row * cols + col;
+        if (!grid[idx]) grid[idx] = [];
+        grid[idx].push({ token: t, x: px, y: py });
+      }
+    }
+    return { grid, cols, rows, cellSize: CELL_SIZE };
+  }, [data, config.f1Range, config.f2Range, config.invertX, config.invertY, config.useSmoothing]);
+
+  // Cleanup RAF on unmount
+  useEffect(() => {
+    return () => { if (hoverRafRef.current !== null) cancelAnimationFrame(hoverRafRef.current); };
+  }, []);
+
   const handleMouseDown = (e: React.MouseEvent) => { isDragging.current = true; lastMousePos.current = { x: e.clientX, y: e.clientY }; };
   const handleMouseMove = (e: React.MouseEvent) => {
     const canvas = canvasRef.current;
@@ -640,36 +688,51 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
       setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
       lastMousePos.current = { x: e.clientX, y: e.clientY };
     } else {
-       const rect = canvas.getBoundingClientRect();
-       const mouseX = (e.clientX - rect.left - transform.x) / transform.scale;
-       const mouseY = (e.clientY - rect.top - transform.y) / transform.scale;
-       const dprWidth = canvas.width / window.devicePixelRatio;
-       const dprHeight = canvas.height / window.devicePixelRatio;
-       const mapX = (f2: number) => {
-         const norm = (f2 - config.f2Range[0]) / (config.f2Range[1] - config.f2Range[0]);
-         return config.invertX ? (1 - norm) * dprWidth : norm * dprWidth;
-       };
-       const mapY = (f1: number) => {
-         const norm = (f1 - config.f1Range[0]) / (config.f1Range[1] - config.f1Range[0]);
-         return config.invertY ? norm * dprHeight : (1 - norm) * dprHeight;
-       };
-       let closest = null;
-       let minDist = 15 / transform.scale;
-       for (const t of data) {
-           const last = t.trajectory[t.trajectory.length - 1];
-           if (!last) continue;
-           const f1 = config.useSmoothing ? (last.f1_smooth ?? last.f1) : last.f1;
-           const f2 = config.useSmoothing ? (last.f2_smooth ?? last.f2) : last.f2;
-           if (isNaN(f1) || isNaN(f2)) continue;
-           const px = mapX(f2);
-           const py = mapY(f1);
-           const d = Math.sqrt((px - mouseX)**2 + (py - mouseY)**2);
-           if (d < minDist) { minDist = d; closest = t; }
-       }
-       setHoveredToken(closest);
+      const clientX = e.clientX;
+      const clientY = e.clientY;
+      if (hoverRafRef.current !== null) return;
+      hoverRafRef.current = requestAnimationFrame(() => {
+        hoverRafRef.current = null;
+        if (!spatialGrid) return;
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = (clientX - rect.left - transform.x) / transform.scale;
+        const mouseY = (clientY - rect.top - transform.y) / transform.scale;
+        const { grid, cols, rows, cellSize } = spatialGrid;
+        const col = Math.floor(mouseX / cellSize);
+        const row = Math.floor(mouseY / cellSize);
+        let closest: SpeechToken | null = null;
+        let minDist = 15 / transform.scale;
+
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            const r = row + dr;
+            const c = col + dc;
+            if (r < 0 || r >= rows || c < 0 || c >= cols) continue;
+            const cell = grid[r * cols + c];
+            if (!cell) continue;
+            for (let i = 0; i < cell.length; i++) {
+              const entry = cell[i];
+              const dx = entry.x - mouseX;
+              const dy = entry.y - mouseY;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              if (dist < minDist) { minDist = dist; closest = entry.token; }
+            }
+          }
+        }
+
+        if (hoveredTokenRef.current !== closest) {
+          hoveredTokenRef.current = closest;
+          setHoverTick(t => t + 1);
+        }
+      });
     }
   };
   const handleMouseUp = () => isDragging.current = false;
+  const handleMouseLeave = () => {
+    isDragging.current = false;
+    if (hoverRafRef.current !== null) { cancelAnimationFrame(hoverRafRef.current); hoverRafRef.current = null; }
+    if (hoveredTokenRef.current !== null) { hoveredTokenRef.current = null; setHoverTick(t => t + 1); }
+  };
   const handleWheel = (e: React.WheelEvent) => {
     const scaleFactor = e.deltaY > 0 ? 0.95 : 1.05;
     setTransform(t => ({ ...t, scale: Math.max(0.1, Math.min(50, t.scale * scaleFactor)) }));
@@ -753,7 +816,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
            </div>
          )}
       </div>
-      <canvas ref={canvasRef} onMouseMove={handleMouseMove} onMouseLeave={() => { handleMouseUp(); setHoveredToken(null); }} className="cursor-move w-full h-full" />
+      <canvas ref={canvasRef} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave} className="cursor-move w-full h-full" />
     </div>
   );
 });
