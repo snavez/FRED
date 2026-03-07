@@ -1084,7 +1084,14 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       </div>
       {hoveredToken && (() => {
         const hoveredLayer = hoveredLayerId ? layers.find(l => l.id === hoveredLayerId) : layers[0];
-        const fields = hoveredLayer?.config.tooltipFields || ['file_id', 'word', 'canonical', 'produced', 'xmin', 'duration'];
+        const fields = hoveredLayer?.config.tooltipFields || [];
+        if (fields.length === 0) {
+          return (
+            <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-16 top-16 border border-slate-700 backdrop-blur-md min-w-[200px]">
+              <p className="text-slate-400 italic text-center">Select fields from the <span className="text-indigo-400 font-bold">Tooltip</span> dropdown to see token data here.</p>
+            </div>
+          );
+        }
         const getFieldLabel = (key: string) => {
           if (TOOLTIP_LABELS[key]) return TOOLTIP_LABELS[key];
           // Custom field — title-case the key

@@ -387,8 +387,14 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                        </div>
                        <div className="max-h-[300px] overflow-y-auto space-y-1">
                          {(() => {
+                           // Only show fields that actually exist in the loaded dataset
+                           const mappedRoles = new Set(
+                             (datasetMeta?.columnMappings || [])
+                               .filter(m => m.role !== 'ignore' && m.role !== 'formant')
+                               .map(m => m.role)
+                           );
                            const allFields = [
-                             ...TOOLTIP_FIELD_OPTIONS,
+                             ...TOOLTIP_FIELD_OPTIONS.filter(f => mappedRoles.has(f.key)),
                              ...(datasetMeta?.customColumns || []).map(col => ({
                                key: col,
                                label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),

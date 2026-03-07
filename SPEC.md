@@ -252,10 +252,18 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 - Select up to **10 fields** from all available built-in + custom columns
 - Stored in `PlotConfig.tooltipFields: string[]`
 
-### Default Fields
-`file_id`, `word`, `canonical`, `produced`, `xmin`, `duration`
+### Default State
+- Tooltip starts **empty** (no fields selected)
+- When hovering a token with no fields selected, a friendly message is shown: *"Select fields from the Tooltip dropdown to see token data here."*
+- Users opt-in to exactly the fields they want to see
 
-### Built-in Field Options
+### Dropdown Filtering
+- The tooltip dropdown only shows fields that **actually exist in the loaded dataset**
+- Fields are matched against `datasetMeta.columnMappings` — only roles with a mapped CSV column appear
+- Custom columns from the dataset are always shown
+- This prevents stale or unmapped fields (e.g., `xmin` when no onset column was mapped) from cluttering the dropdown
+
+### Built-in Field Options (shown only when mapped)
 | Key | Label |
 |-----|-------|
 | `file_id` | File ID |
@@ -281,6 +289,7 @@ Plus any custom columns from the dataset.
 - `xmin` and `duration` formatted as `.toFixed(3)s`
 - Custom fields accessed via `token.customFields`
 - Tooltip uses the hovered token's layer config for field selection
+- Trajectory F1/F2 chart now also uses the configurable tooltip fields (previously hardcoded)
 
 ---
 

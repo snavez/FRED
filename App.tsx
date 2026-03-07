@@ -86,7 +86,7 @@ const INITIAL_CONFIG: PlotConfig = {
   ellipseLineOpacity: 0.8,
   ellipseFillOpacity: 0.1,
 
-  tooltipFields: ['file_id', 'word', 'canonical', 'produced', 'xmin', 'duration'],
+  tooltipFields: [],
 
   f1Range: [200, 1200],
   f2Range: [500, 3200],

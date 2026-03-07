@@ -691,15 +691,49 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
   return (
     <div ref={containerRef} className="w-full h-full p-8 relative">
        {/* ... Tooltip ... */}
-       {hoveredToken && (
-        <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-4 bottom-16 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]">
-          <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-indigo-400">File ID: {hoveredToken.file_id}</div>
-          <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-             <p><span className="text-slate-400 font-bold uppercase text-[9px]">Word:</span> {hoveredToken.word}</p>
-             <p><span className="text-slate-400 font-bold uppercase text-[9px]">Phoneme:</span> {hoveredToken.canonical}</p>
+       {hoveredToken && (() => {
+        const fields = config.tooltipFields || [];
+        if (fields.length === 0) {
+          return (
+            <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-4 bottom-16 border border-slate-700 backdrop-blur-md min-w-[200px]">
+              <p className="text-slate-400 italic text-center">Select fields from the <span className="text-indigo-400 font-bold">Tooltip</span> dropdown to see token data here.</p>
+            </div>
+          );
+        }
+        const getFieldLabel = (key: string): string => {
+          const labels: Record<string, string> = {
+            file_id: 'File ID', word: 'Word', syllable: 'Syllable', syllable_mark: 'Syllable Mark',
+            canonical_stress: 'Expected Stress', lexical_stress: 'Transcribed Stress',
+            canonical: 'Phoneme', produced: 'Allophone', alignment: 'Alignment',
+            type: 'Type', canonical_type: 'Vowel Category', voice_pitch: 'Voice Pitch',
+            xmin: 'Time (xmin)', duration: 'Duration',
+          };
+          return labels[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        };
+        const getTooltipValue = (token: SpeechToken, field: string): string => {
+          if (field === 'xmin') return `${token.xmin.toFixed(3)}s`;
+          if (field === 'duration') return `${token.duration.toFixed(3)}s`;
+          if (field in token && field !== 'id' && field !== 'trajectory' && field !== 'customFields') {
+            return String((token as any)[field] ?? '');
+          }
+          return token.customFields?.[field] ?? '';
+        };
+        const [firstField, ...restFields] = fields;
+        return (
+          <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-4 bottom-16 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]">
+            {firstField && (
+              <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-indigo-400">
+                {getFieldLabel(firstField)}: {getTooltipValue(hoveredToken, firstField)}
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+              {restFields.map(field => (
+                <p key={field}><span className="text-slate-400 font-bold uppercase text-[9px]">{getFieldLabel(field)}:</span> {getTooltipValue(hoveredToken, field)}</p>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
       {/* ... Screen Legend ... */}
       <div className="absolute top-4 right-4 bg-white/95 backdrop-blur p-3 rounded-xl border border-slate-200 text-xs shadow-xl flex flex-col space-y-3 max-h-[85%] overflow-y-auto w-56 pointer-events-auto">
          {config.colorBy !== 'none' && (
