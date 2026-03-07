@@ -214,7 +214,7 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
       return {
         csvHeader: header,
         role,
-        ...(SIDEBAR_ELIGIBLE_ROLES.has(role) ? { showInSidebar: true } : {})
+        showInSidebar: SIDEBAR_ELIGIBLE_ROLES.has(role)
       };
     }
 
@@ -390,12 +390,12 @@ export const parseWithMappings = (
     }
   });
   let formantVariants: string[] | undefined;
-  if (formantLabelSet.size === 2) {
+  if (formantLabelSet.size >= 2) {
     const labels = Array.from(formantLabelSet);
-    // Sort: undefined (raw) first, then labeled
-    const rawLabel = labels.includes(undefined) ? 'Original' : labels[0]!;
-    const smoothLabel = labels.includes(undefined) ? labels.find(l => l !== undefined)! : labels[1]!;
-    formantVariants = [rawLabel, smoothLabel];
+    // Put unlabeled (raw/original) first, then named variants alphabetically
+    const hasRaw = labels.includes(undefined);
+    const namedLabels = labels.filter((l): l is string => l !== undefined).sort();
+    formantVariants = hasRaw ? ['Original', ...namedLabels] : namedLabels;
   }
 
   const meta: DatasetMeta = {

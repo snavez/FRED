@@ -451,18 +451,20 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
             <div className="h-6 w-px bg-slate-300"></div>
 
-            {/* Config: Formant Variant Toggle */}
-            {(activeTab === 'vowel' || activeTab === '3d' || activeTab === 'traj_f1f2' || activeTab === 'traj_series') && datasetMeta?.formantVariants && datasetMeta.formantVariants.length === 2 && (
+            {/* Config: Formant Variant Dropdown */}
+            {(activeTab === 'vowel' || activeTab === '3d' || activeTab === 'traj_f1f2' || activeTab === 'traj_series') && datasetMeta?.formantVariants && datasetMeta.formantVariants.length >= 2 && (
                 <div className="flex items-center gap-1.5 mr-2">
-                    <span className="font-semibold text-slate-600">Data:</span>
-                    <button
-                        onClick={() => handleConfig('useSmoothing', !currentConfig.useSmoothing)}
-                        className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-bold border transition-all ${currentConfig.useSmoothing ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-500 border-slate-300 hover:bg-slate-50'}`}
-                        title={`Toggle between ${datasetMeta.formantVariants[0]} and ${datasetMeta.formantVariants[1]} data`}
+                    <span className="font-semibold text-slate-600 flex items-center gap-1"><Waves size={12} />Data:</span>
+                    <select
+                        value={currentConfig.useSmoothing ? datasetMeta.formantVariants[1] : datasetMeta.formantVariants[0]}
+                        onChange={e => handleConfig('useSmoothing', e.target.value !== datasetMeta!.formantVariants![0])}
+                        className="text-xs p-1 border border-slate-200 rounded bg-white font-bold text-slate-700"
+                        title="Select formant data variant"
                     >
-                        <Waves size={12} />
-                        <span>{currentConfig.useSmoothing ? datasetMeta.formantVariants[1] : datasetMeta.formantVariants[0]}</span>
-                    </button>
+                        {datasetMeta.formantVariants.map(variant => (
+                            <option key={variant} value={variant}>{variant}</option>
+                        ))}
+                    </select>
                 </div>
             )}
 

@@ -39,7 +39,7 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 
 ### Formant Column Detection
 - Regex pattern: `f[1-3]_<timepoint>[_<variant>]` (e.g., `f1_50`, `f2_30_smooth`)
-- Supports multiple formant variants (e.g., raw + smoothed); toggle between them via the Data button in the config toolbar
+- Supports multiple formant variants (e.g., raw + smoothed); select between them via the Data dropdown in the config toolbar
 - Time points are derived from the data (not hardcoded); all plots use `findNearestTimePoint()` for flexible lookup
 
 ### Custom Columns
@@ -51,7 +51,12 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 - Modal UI listing all detected columns with role dropdowns
 - Shows sample data preview for each column
 - User can reassign roles, set custom field names, or ignore columns
-- Formant columns show formant/time-point/variant details
+- Formant columns show formant/time-point details and auto-detected variant tags (e.g., "smooth")
+- **Sidebar column**: Every non-ignore, non-formant role has a checkbox to control sidebar visibility
+  - Filter-type fields (type, canonical, produced, word, alignment, stresses, etc.) default to **checked**
+  - Data-type fields (file_id, xmin, duration, syllable) default to **unchecked**
+  - Users can toggle any field on/off; settings persist after import
+- Role labels: "Phoneme" (canonical), "Allophone" (produced) — parenthetical suffixes removed for clarity
 
 ---
 
@@ -172,7 +177,7 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 - Each filter section has **All** / **Clear** buttons
 - Word filter has a search box
 - **Gear icon** (Settings2) opens a popover listing ALL available fields (built-in + custom) with checkboxes to toggle visibility in the sidebar
-- `ColumnMapping.showInSidebar` controls field visibility
+- `ColumnMapping.showInSidebar` controls field visibility; set during import via Sidebar column in the Data Mapping Dialog
 - On import, `computeSelectAllFilters()` populates all filter arrays with all unique values
 
 ### Per-Layer Filtering
