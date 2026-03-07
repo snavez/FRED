@@ -79,7 +79,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config }
     ctx.fillRect(0, 0, width, height);
     ctx.scale(scale, scale);
 
-    const isExport = drawScale > 1.5;
+    const isExport = !!exportConfig;
 
     // Scale margins with drawScale for export
     const margin = { 
@@ -316,6 +316,9 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config }
                 showShapeLegend: true, shapeLegendTitle: 'SHAPE',
                 showTextureLegend: true, textureLegendTitle: 'TEXTURE',
                 showLineTypeLegend: true, lineTypeLegendTitle: 'LINE TYPE',
+                showOverlayColorLegend: true, overlayColorLegendTitle: '',
+                showOverlayShapeLegend: true, overlayShapeLegendTitle: '',
+                showOverlayLineTypeLegend: true, overlayLineTypeLegendTitle: '',
             };
             const url = generateImage(defaultExportConfig);
             if(url) {

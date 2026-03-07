@@ -138,7 +138,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
     ctx.fillStyle = '#94a3b8';
     
     // Balanced Sizing
-    const isExport = drawScale > 1.5;
+    const isExport = !!exportConfig;
     const tickBaseSize = exportConfig ? exportConfig.tickLabelSize : (isExport ? 28 : 14);
     const tickFontSize = (tickBaseSize * drawScale) / scale;
     ctx.font = `bold ${tickFontSize}px Inter`;
@@ -238,7 +238,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
           if (config.lineTypeBy !== 'none') {
               const lVal = getLabel(token, config.lineTypeBy);
               const pattern = lineStyles[lVal] || [];
-              const scaledPattern = pattern.map(v => (v * drawScale) / scale);
+              const scaledPattern = pattern.map(v => (v * config.lineWidth * drawScale) / scale);
               ctx.setLineDash(scaledPattern);
           } else {
               ctx.setLineDash([]);
@@ -284,7 +284,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         
         if (lKey && config.lineTypeBy !== 'none') {
              const pattern = lineStyles[lKey] || [];
-             const scaledPattern = pattern.map(v => (v * drawScale) / scale);
+             const scaledPattern = pattern.map(v => (v * config.meanTrajectoryWidth * drawScale) / scale);
              ctx.setLineDash(scaledPattern);
         } else {
              ctx.setLineDash([]);
@@ -370,7 +370,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
 
   const drawLegend = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
       let curY = y;
-      const isExport = drawScale > 1.5;
+      const isExport = !!exportConfig;
       
       // If custom position, override x and y
       if (exportConfig && exportConfig.legendPosition === 'custom') {
@@ -391,12 +391,21 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
       ctx.textBaseline = 'middle';
       ctx.fillStyle = '#0f172a';
 
-      if (exportConfig?.showColorLegend !== false && config.colorBy !== 'none') {
+      // Determine legend visibility and titles from per-layer config or fallback to old fields
+      const layerLegendCfg = exportConfig?.layerLegends?.find(ll => ll.layerId === 'bg');
+      const showColor = layerLegendCfg ? layerLegendCfg.show : (exportConfig?.showColorLegend !== false);
+      const colorTitle = (layerLegendCfg?.colorTitle) || (exportConfig?.colorLegendTitle) || config.colorBy.toUpperCase();
+      const showLineType = layerLegendCfg ? layerLegendCfg.show : (exportConfig?.showLineTypeLegend !== false);
+      const lineTypeTitle = (layerLegendCfg?.lineTypeTitle) || (exportConfig?.lineTypeLegendTitle) || config.lineTypeBy.toUpperCase();
+
+      const legendLayerIds = exportConfig?.legendLayers;
+      const isInLegend = !legendLayerIds || legendLayerIds.includes('bg');
+
+      if (isInLegend && showColor && config.colorBy !== 'none') {
           ctx.font = `bold ${fontSizeTitle}px Inter`;
-          const title = (exportConfig && exportConfig.colorLegendTitle) ? exportConfig.colorLegendTitle : config.colorBy.toUpperCase();
-          ctx.fillText(title, x, curY);
+          ctx.fillText(colorTitle, x, curY);
           curY += fontSizeTitle * 1.4;
-          
+
           ctx.font = `${fontSizeItem}px Inter`;
           sortedKeys.forEach(k => {
               const count = groups[k]?.length || 0;
@@ -409,13 +418,12 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
           curY += fontSizeTitle;
       }
 
-      if (exportConfig?.showLineTypeLegend !== false && config.lineTypeBy !== 'none') {
+      if (isInLegend && showLineType && config.lineTypeBy !== 'none') {
           ctx.font = `bold ${fontSizeTitle}px Inter`;
           ctx.fillStyle = '#0f172a';
-          const title = (exportConfig && exportConfig.lineTypeLegendTitle) ? exportConfig.lineTypeLegendTitle : config.lineTypeBy.toUpperCase();
-          ctx.fillText(title, x, curY);
+          ctx.fillText(lineTypeTitle, x, curY);
           curY += fontSizeTitle * 1.4;
-          
+
           ctx.font = `${fontSizeItem}px Inter`;
           lineTypeKeys.forEach(k => {
               const count = lineTypeCounts[k] || 0;
@@ -594,6 +602,9 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
                 showShapeLegend: true, shapeLegendTitle: '',
                 showTextureLegend: true, textureLegendTitle: '',
                 showLineTypeLegend: true, lineTypeLegendTitle: config.lineTypeBy.toUpperCase(),
+                showOverlayColorLegend: true, overlayColorLegendTitle: '',
+                showOverlayShapeLegend: true, overlayShapeLegendTitle: '',
+                showOverlayLineTypeLegend: true, overlayLineTypeLegendTitle: '',
             };
 
             const url = generateImage(defaultExportConfig);

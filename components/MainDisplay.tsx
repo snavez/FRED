@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useCallback, useMemo } from 'react';
-import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, VariableType, StyleOverrides } from '../types';
+import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, VariableType, StyleOverrides, Layer } from '../types';
 import CanvasPlot from './CanvasPlot';
 import TrajectoryTimeSeries from './TrajectoryTimeSeries';
 import TrajectoryF1F2 from './TrajectoryF1F2';
@@ -9,20 +9,22 @@ import PhonemeDistributionPlot from './PhonemeDistributionPlot';
 import Scatter3DPlot from './Scatter3DPlot';
 import StyleEditor from './StyleEditor';
 import ExportDialog from './ExportDialog';
-import { Grid, LineChart, Table, Settings2, MoveUpRight, Printer, Check, Download, BarChart2, PieChart, Box, Waves, ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
+import { Grid, LineChart, Table, Settings2, MoveUpRight, Printer, Check, Download, BarChart2, PieChart, Box, Waves, ArrowDown, ArrowUp, ArrowUpDown, Eye, EyeOff, Plus, X, ChevronUp, ChevronDown } from 'lucide-react';
 
 interface MainDisplayProps {
-  data: SpeechToken[];
-  config: PlotConfig;
-  setConfig: React.Dispatch<React.SetStateAction<PlotConfig>>;
+  layers: Layer[];
+  layerData: Record<string, SpeechToken[]>;
+  activeLayerId: string;
+  setActiveLayerId: (id: string) => void;
+  updateLayerConfig: (layerId: string, key: keyof PlotConfig, value: any) => void;
+  addLayer: (type: 'point' | 'trajectory') => void;
+  removeLayer: (layerId: string) => void;
+  reorderLayer: (layerId: string, direction: 'up' | 'down') => void;
+  toggleLayerVisibility: (layerId: string) => void;
+  renameLayer: (layerId: string, newName: string) => void;
+  setActiveConfig: React.Dispatch<React.SetStateAction<PlotConfig>>;
   globalReferences?: ReferenceCentroid[];
-  
-  // New Props for Overlay
-  overlayData?: SpeechToken[];
-  overlayConfig?: PlotConfig;
-  setOverlayConfig?: React.Dispatch<React.SetStateAction<PlotConfig>>;
-  activeLayer?: 'background' | 'overlay';
-  setActiveLayer?: React.Dispatch<React.SetStateAction<'background' | 'overlay'>>;
+  updateStyleOverride: (fieldKey: 'colors' | 'shapes' | 'textures' | 'lineTypes', category: string, value: any, layerId?: string) => void;
 }
 
 const VARIABLE_OPTIONS: { label: string, value: VariableType }[] = [
@@ -37,43 +39,49 @@ const VARIABLE_OPTIONS: { label: string, value: VariableType }[] = [
   { label: 'Voice Pitch', value: 'voice_pitch' },
 ];
 
-const MainDisplay: React.FC<MainDisplayProps> = ({ 
-  data, config, setConfig, globalReferences = [],
-  overlayData, overlayConfig, setOverlayConfig, activeLayer, setActiveLayer
+const MainDisplay: React.FC<MainDisplayProps> = ({
+  layers, layerData, activeLayerId, setActiveLayerId,
+  updateLayerConfig, addLayer, removeLayer, reorderLayer,
+  toggleLayerVisibility, renameLayer, setActiveConfig,
+  globalReferences = [], updateStyleOverride
 }) => {
   const [activeTab, setActiveTab] = useState<'vowel' | '3d' | 'traj_f1f2' | 'traj_series' | 'duration' | 'dist' | 'table'>('vowel');
   const [showRefDropdown, setShowRefDropdown] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
-  
-  // Style Overrides State
-  const [styleOverrides, setStyleOverrides] = useState<StyleOverrides>({
-    colors: {},
-    shapes: {},
-    textures: {},
-    lineTypes: {}
-  });
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const [editingLayerName, setEditingLayerName] = useState<string | null>(null);
+  const [editingNameValue, setEditingNameValue] = useState('');
+
+  // Style overrides derived from active layer (no local state needed)
+  const styleOverrides = useMemo(() => {
+    const layer = layers.find(l => l.id === activeLayerId);
+    return layer?.styleOverrides || { colors: {}, shapes: {}, textures: {}, lineTypes: {} };
+  }, [layers, activeLayerId]);
 
   // Editor State
   const [editingItem, setEditingItem] = useState<{
     category: string;
     position: { x: number, y: number };
     currentStyles: { color: string, shape: string, texture: number, lineType: string };
+    layerId?: string;
   } | null>(null);
-  
+
   const plotRef = useRef<PlotHandle>(null);
 
+  // Derived: active layer & its config
+  const activeLayer = useMemo(() => layers.find(l => l.id === activeLayerId) || layers[0], [layers, activeLayerId]);
+  const currentConfig = activeLayer.config;
+  // Background config for things that always use background (ranges, etc.)
+  const bgConfig = layers[0].config;
+  // Active layer data — used by non-F1/F2 plots so sidebar filters affect all views
+  const activeData = layerData[activeLayerId] || [];
+
   const handleConfig = (key: keyof PlotConfig, val: any) => {
-      if (activeLayer === 'overlay' && setOverlayConfig) {
-          setOverlayConfig(prev => ({ ...prev, [key]: val }));
-      } else {
-          setConfig(prev => ({ ...prev, [key]: val }));
-      }
+      updateLayerConfig(activeLayerId, key, val);
   };
 
-  const currentConfig = (activeLayer === 'overlay' && overlayConfig) ? overlayConfig : config;
-
   const toggleReferenceVowel = (vowel: string) => {
-    setConfig(prev => {
+    setActiveConfig(prev => {
       const current = prev.selectedReferenceVowels;
       if (current.includes(vowel)) {
         return { ...prev, selectedReferenceVowels: current.filter(v => v !== vowel) };
@@ -83,17 +91,17 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   };
 
   const selectAllRefVowels = () => {
-     setConfig(prev => ({ ...prev, selectedReferenceVowels: globalReferences.map(r => r.canonical) }));
+     setActiveConfig(prev => ({ ...prev, selectedReferenceVowels: globalReferences.map(r => r.canonical) }));
   };
-  
+
   const clearRefVowels = () => {
-    setConfig(prev => ({ ...prev, selectedReferenceVowels: [] }));
+    setActiveConfig(prev => ({ ...prev, selectedReferenceVowels: [] }));
   };
-  
-  const availablePitches = useMemo(() => Array.from(new Set(data.map(t => t.voice_pitch))).filter(Boolean).sort(), [data]);
+
+  const availablePitches = useMemo(() => Array.from(new Set(activeData.map(t => t.voice_pitch))).filter(Boolean).sort(), [activeData]);
 
   const togglePitchFilter = (p: string) => {
-      setConfig(prev => {
+      setActiveConfig(prev => {
           const current = prev.referencePitchFilter || [];
           if (current.includes(p)) return { ...prev, referencePitchFilter: current.filter(v => v !== p) };
           return { ...prev, referencePitchFilter: [...current, p] };
@@ -104,52 +112,41 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     setShowExportDialog(true);
   };
 
-  const handleLegendClick = useCallback((category: string, currentStyles: { color: string, shape: string, texture: number, lineType: string }, event: React.MouseEvent) => {
+  const handleLegendClick = useCallback((category: string, currentStyles: { color: string, shape: string, texture: number, lineType: string }, event: React.MouseEvent, layerId?: string) => {
     setEditingItem({
       category,
       currentStyles,
-      position: { x: event.clientX + 10, y: event.clientY + 10 }
+      position: { x: event.clientX + 10, y: event.clientY + 10 },
+      layerId
     });
   }, []);
 
   const handleStyleUpdate = (type: 'color' | 'shape' | 'texture' | 'lineType', value: any) => {
     if (!editingItem) return;
-    setStyleOverrides(prev => ({
-      ...prev,
-      [type === 'color' ? 'colors' : type === 'shape' ? 'shapes' : type === 'texture' ? 'textures' : 'lineTypes']: {
-        ...prev[type === 'color' ? 'colors' : type === 'shape' ? 'shapes' : type === 'texture' ? 'textures' : 'lineTypes'],
-        [editingItem.category]: value
-      }
-    }));
-    // Update local state to reflect change immediately in picker if needed
+    const fieldKey = type === 'color' ? 'colors' : type === 'shape' ? 'shapes' : type === 'texture' ? 'textures' : 'lineTypes';
+    // Update the specific layer (or active layer if no layerId)
+    updateStyleOverride(fieldKey, editingItem.category, value, editingItem.layerId);
     setEditingItem(prev => prev ? ({
         ...prev,
         currentStyles: { ...prev.currentStyles, [type]: value }
     }) : null);
   };
 
-  // Determine which channels are active for the current plot/config configuration
   const getActiveChannels = () => {
     const active = { color: false, shape: false, texture: false, lineType: false };
-    
-    if (config.colorBy !== 'none') active.color = true;
-    
-    if ((activeTab === 'vowel' || activeTab === '3d') && config.shapeBy !== 'none') active.shape = true;
-    
-    if ((activeTab === 'traj_f1f2' || activeTab === 'traj_series') && config.lineTypeBy !== 'none') active.lineType = true;
-    
-    if ((activeTab === 'dist' || activeTab === 'duration') && config.textureBy !== 'none') active.texture = true;
-    
+    if (currentConfig.colorBy !== 'none') active.color = true;
+    if ((activeTab === 'vowel' || activeTab === '3d') && currentConfig.shapeBy !== 'none') active.shape = true;
+    if ((activeTab === 'vowel' || activeTab === 'traj_f1f2' || activeTab === 'traj_series') && currentConfig.lineTypeBy !== 'none') active.lineType = true;
+    if ((activeTab === 'dist' || activeTab === 'duration') && currentConfig.textureBy !== 'none') active.texture = true;
     return active;
   };
 
-  // Helper for Variable Selectors
   const renderVariableSelect = (label: string, value: VariableType, onChange: (v: VariableType) => void) => (
     <div className="flex items-center gap-2">
       <label className="font-semibold text-slate-600">{label}:</label>
-      <select 
+      <select
         className="p-1.5 border border-slate-300 rounded bg-white text-slate-700 max-w-[120px]"
-        value={value} 
+        value={value}
         onChange={e => onChange(e.target.value as VariableType)}
       >
         {VARIABLE_OPTIONS.map(opt => (
@@ -159,66 +156,155 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     </div>
   );
 
+  const startRename = (layerId: string, currentName: string) => {
+    setEditingLayerName(layerId);
+    setEditingNameValue(currentName);
+  };
+
+  const commitRename = () => {
+    if (editingLayerName && editingNameValue.trim()) {
+      renameLayer(editingLayerName, editingNameValue.trim());
+    }
+    setEditingLayerName(null);
+  };
+
   return (
     <div className="h-full flex flex-col space-y-4">
       {/* Top Bar: Tabs + Toolbar */}
       <div className="flex flex-col space-y-2 shrink-0">
-        {/* ... Tabs (unchanged) ... */}
         <div className="flex items-center justify-between">
           <div className="flex bg-white p-1 rounded-lg border border-slate-200 w-fit shadow-sm overflow-x-auto">
             <button onClick={() => setActiveTab('vowel')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'vowel' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Grid size={16} /><span>F1/F2</span></button>
             <button onClick={() => setActiveTab('3d')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === '3d' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Box size={16} /><span>3D F1/F2/F3</span></button>
-            {/* <button onClick={() => setActiveTab('traj_f1f2')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'traj_f1f2' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><MoveUpRight size={16} /><span>Traj. F1/F2</span></button> */}
             <button onClick={() => setActiveTab('traj_series')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'traj_series' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><LineChart size={16} /><span>Time Series</span></button>
             <button onClick={() => setActiveTab('duration')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'duration' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><BarChart2 size={16} /><span>Duration</span></button>
             <button onClick={() => setActiveTab('dist')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'dist' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><PieChart size={16} /><span>Phoneme Dist.</span></button>
             <button onClick={() => setActiveTab('table')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'table' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Table size={16} /><span>Table</span></button>
           </div>
 
-          {/* Layer Controls for F1/F2 Tab */}
-          {activeTab === 'vowel' && setActiveLayer && (
-             <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
-                <button 
-                   onClick={() => setActiveLayer('background')}
-                   className={`px-3 py-1 rounded text-xs font-bold transition-all ${activeLayer === 'background' ? 'bg-indigo-50 text-indigo-700 shadow-sm border border-indigo-200' : 'text-slate-500 hover:bg-slate-50'}`}
-                >
-                   Background
-                </button>
-                <button 
-                   onClick={() => setActiveLayer('overlay')}
-                   className={`px-3 py-1 rounded text-xs font-bold transition-all ${activeLayer === 'overlay' ? 'bg-indigo-50 text-indigo-700 shadow-sm border border-indigo-200' : 'text-slate-500 hover:bg-slate-50'}`}
-                >
-                   Overlay
-                </button>
-                <div className="w-px h-4 bg-slate-300 mx-2"></div>
-                <label className="flex items-center gap-1.5 cursor-pointer px-2 hover:bg-slate-50 rounded py-1 transition-colors select-none">
-                   <input 
-                      type="checkbox" 
-                      className="rounded text-indigo-600 accent-indigo-600" 
-                      checked={config.showTrajectoryOverlay} 
-                      onChange={e => setConfig(prev => ({ ...prev, showTrajectoryOverlay: e.target.checked }))} 
-                   />
-                   <span className="text-xs font-bold text-slate-600">Show Overlay</span>
-                </label>
-                {config.showTrajectoryOverlay && (
-                    <select
-                        className="text-[10px] p-1 border rounded bg-white text-slate-600 font-bold ml-2"
-                        value={config.legendSource || 'background'}
-                        onChange={e => handleConfig('legendSource', e.target.value)}
-                        title="Legend Source"
+          {/* Layer Panel for F1/F2 Tab */}
+          {activeTab === 'vowel' && (
+             <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-200 shadow-sm relative">
+                {/* Add Button */}
+                <div className="relative">
+                  <button
+                    onClick={() => setShowAddMenu(!showAddMenu)}
+                    disabled={layers.length >= 10}
+                    className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-bold transition-all ${layers.length >= 10 ? 'text-slate-300 cursor-not-allowed' : 'text-indigo-600 hover:bg-indigo-50'}`}
+                  >
+                    <Plus size={12} />
+                    <span>Add</span>
+                  </button>
+                  {showAddMenu && layers.length < 10 && (
+                    <div className="absolute top-full mt-1 left-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 py-1 min-w-[140px]">
+                      <button
+                        onClick={() => { addLayer('point'); setShowAddMenu(false); }}
+                        className="w-full px-3 py-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-indigo-50 flex items-center gap-2"
+                      >
+                        <span className="w-4 h-4 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-[9px] font-black">P</span>
+                        Point Layer
+                      </button>
+                      <button
+                        onClick={() => { addLayer('trajectory'); setShowAddMenu(false); }}
+                        className="w-full px-3 py-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-indigo-50 flex items-center gap-2"
+                      >
+                        <span className="w-4 h-4 rounded bg-emerald-100 text-emerald-600 flex items-center justify-center text-[9px] font-black">T</span>
+                        Trajectory Layer
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="w-px h-5 bg-slate-200"></div>
+
+                {/* Layer Chips */}
+                {layers.map((layer, idx) => (
+                  <div
+                    key={layer.id}
+                    className={`flex items-center gap-0.5 px-2 py-1 rounded text-xs font-bold transition-all cursor-pointer ${
+                      activeLayerId === layer.id
+                        ? 'bg-indigo-50 text-indigo-700 shadow-sm border border-indigo-200'
+                        : 'text-slate-500 hover:bg-slate-50'
+                    }`}
+                    onClick={() => setActiveLayerId(layer.id)}
+                  >
+                    {/* Type badge */}
+                    <span className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[8px] font-black shrink-0 ${
+                      layer.config.plotType === 'trajectory'
+                        ? 'bg-emerald-100 text-emerald-600'
+                        : 'bg-blue-100 text-blue-600'
+                    }`}>
+                      {layer.config.plotType === 'trajectory' ? 'T' : 'P'}
+                    </span>
+
+                    {/* Name (editable on double-click) */}
+                    {editingLayerName === layer.id ? (
+                      <input
+                        type="text"
+                        className="w-16 text-[10px] p-0.5 border rounded bg-white text-slate-700 outline-none"
+                        value={editingNameValue}
+                        onChange={e => setEditingNameValue(e.target.value)}
+                        onBlur={commitRename}
+                        onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditingLayerName(null); }}
+                        autoFocus
+                        onClick={e => e.stopPropagation()}
+                      />
+                    ) : (
+                      <span
+                        className="truncate max-w-[60px]"
+                        onDoubleClick={(e) => { e.stopPropagation(); startRename(layer.id, layer.name); }}
+                        title={layer.name}
+                      >
+                        {layer.name}
+                      </span>
+                    )}
+
+                    {/* Visibility toggle */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleLayerVisibility(layer.id); }}
+                      className="p-0.5 hover:bg-slate-200 rounded"
+                      title={layer.visible ? 'Hide layer' : 'Show layer'}
                     >
-                        <option value="background">Legend: Background</option>
-                        <option value="overlay">Legend: Overlay</option>
-                        <option value="both">Legend: Both</option>
-                    </select>
-                )}
+                      {layer.visible ? <Eye size={10} /> : <EyeOff size={10} className="text-slate-300" />}
+                    </button>
+
+                    {/* Reorder & Delete (non-background only) */}
+                    {!layer.isBackground && (
+                      <>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); reorderLayer(layer.id, 'up'); }}
+                          className="p-0.5 hover:bg-slate-200 rounded"
+                          title="Move up"
+                          disabled={idx <= 1}
+                        >
+                          <ChevronUp size={10} className={idx <= 1 ? 'text-slate-200' : ''} />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); reorderLayer(layer.id, 'down'); }}
+                          className="p-0.5 hover:bg-slate-200 rounded"
+                          title="Move down"
+                          disabled={idx >= layers.length - 1}
+                        >
+                          <ChevronDown size={10} className={idx >= layers.length - 1 ? 'text-slate-200' : ''} />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); removeLayer(layer.id); }}
+                          className="p-0.5 hover:bg-red-100 rounded text-slate-400 hover:text-red-500"
+                          title="Delete layer"
+                        >
+                          <X size={10} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ))}
              </div>
           )}
 
           {activeTab !== 'table' && (
              <div className="flex items-center gap-2">
                <button onClick={handleExportClick} className="flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all bg-white text-indigo-600 border-indigo-200 hover:bg-indigo-50"><Download size={14} /><span>Export</span></button>
-               <button onClick={() => handleConfig('bwMode', !config.bwMode)} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${config.bwMode ? 'bg-slate-800 text-white border-slate-800 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}><Printer size={14} /><span>B&W</span></button>
+               <button onClick={() => handleConfig('bwMode', !currentConfig.bwMode)} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${currentConfig.bwMode ? 'bg-slate-800 text-white border-slate-800 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}><Printer size={14} /><span>B&W</span></button>
              </div>
           )}
         </div>
@@ -230,15 +316,15 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
               <Settings2 size={14} />
               <span>Config</span>
             </div>
-            
+
             <div className="h-6 w-px bg-slate-300"></div>
 
-            {/* Config: Smoothing Toggle (Applicable to plots involving F1/F2 data) */}
+            {/* Config: Smoothing Toggle */}
             {(activeTab === 'vowel' || activeTab === '3d' || activeTab === 'traj_f1f2' || activeTab === 'traj_series') && (
                 <div className="flex items-center gap-1.5 mr-2">
                     <span className="font-semibold text-slate-600">Data:</span>
-                    <button 
-                        onClick={() => handleConfig('useSmoothing', !currentConfig.useSmoothing)} 
+                    <button
+                        onClick={() => handleConfig('useSmoothing', !currentConfig.useSmoothing)}
                         className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-bold border transition-all ${currentConfig.useSmoothing ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-500 border-slate-300 hover:bg-slate-50'}`}
                         title="Toggle between Raw and Smoothed Data"
                     >
@@ -250,17 +336,15 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
             {/* Range Controls (Context Sensitive) */}
             <div className="flex items-center gap-2 border-r border-slate-300 pr-4 mr-2">
-                 {/* ... (Range Controls unchanged) ... */}
                  {(activeTab === 'vowel' || activeTab === '3d' || activeTab === 'traj_f1f2') && (
                     <div className="flex flex-col gap-1">
-                      {/* Standard F1/F2 Ranges */}
                        <div className="flex items-center gap-1">
                           <span className="text-[9px] font-bold text-slate-500 w-6">F1 Min</span>
-                          <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={config.f1Range[0]} onChange={e => handleConfig('f1Range', [parseInt(e.target.value), config.f1Range[1]])} />
+                          <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f1Range[0]} onChange={e => updateLayerConfig(layers[0].id, 'f1Range', [parseInt(e.target.value), bgConfig.f1Range[1]])} />
                        </div>
                        <div className="flex items-center gap-1">
                           <span className="text-[9px] font-bold text-slate-500 w-6">F1 Max</span>
-                          <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={config.f1Range[1]} onChange={e => handleConfig('f1Range', [config.f1Range[0], parseInt(e.target.value)])} />
+                          <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f1Range[1]} onChange={e => updateLayerConfig(layers[0].id, 'f1Range', [bgConfig.f1Range[0], parseInt(e.target.value)])} />
                        </div>
                     </div>
                  )}
@@ -268,11 +352,11 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-1">
                             <span className="text-[9px] font-bold text-slate-500 w-6">F2 Min</span>
-                            <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={config.f2Range[0]} onChange={e => handleConfig('f2Range', [parseInt(e.target.value), config.f2Range[1]])} />
+                            <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f2Range[0]} onChange={e => updateLayerConfig(layers[0].id, 'f2Range', [parseInt(e.target.value), bgConfig.f2Range[1]])} />
                         </div>
                         <div className="flex items-center gap-1">
                             <span className="text-[9px] font-bold text-slate-500 w-6">F2 Max</span>
-                            <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={config.f2Range[1]} onChange={e => handleConfig('f2Range', [config.f2Range[0], parseInt(e.target.value)])} />
+                            <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f2Range[1]} onChange={e => updateLayerConfig(layers[0].id, 'f2Range', [bgConfig.f2Range[0], parseInt(e.target.value)])} />
                         </div>
                     </div>
                  )}
@@ -280,11 +364,11 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-1">
                             <span className="text-[9px] font-bold text-slate-500 w-8">Freq Min</span>
-                            <input type="number" step="100" className="w-16 p-0.5 border rounded text-[10px]" value={config.timeSeriesFrequencyRange ? config.timeSeriesFrequencyRange[0] : 0} onChange={e => handleConfig('timeSeriesFrequencyRange', [parseInt(e.target.value), config.timeSeriesFrequencyRange[1]])} />
+                            <input type="number" step="100" className="w-16 p-0.5 border rounded text-[10px]" value={bgConfig.timeSeriesFrequencyRange ? bgConfig.timeSeriesFrequencyRange[0] : 0} onChange={e => updateLayerConfig(layers[0].id, 'timeSeriesFrequencyRange', [parseInt(e.target.value), bgConfig.timeSeriesFrequencyRange[1]])} />
                         </div>
                         <div className="flex items-center gap-1">
                             <span className="text-[9px] font-bold text-slate-500 w-8">Freq Max</span>
-                            <input type="number" step="100" className="w-16 p-0.5 border rounded text-[10px]" value={config.timeSeriesFrequencyRange ? config.timeSeriesFrequencyRange[1] : 4000} onChange={e => handleConfig('timeSeriesFrequencyRange', [config.timeSeriesFrequencyRange[0], parseInt(e.target.value)])} />
+                            <input type="number" step="100" className="w-16 p-0.5 border rounded text-[10px]" value={bgConfig.timeSeriesFrequencyRange ? bgConfig.timeSeriesFrequencyRange[1] : 4000} onChange={e => updateLayerConfig(layers[0].id, 'timeSeriesFrequencyRange', [bgConfig.timeSeriesFrequencyRange[0], parseInt(e.target.value)])} />
                         </div>
                     </div>
                  )}
@@ -292,33 +376,33 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                      <div className="flex flex-col gap-1">
                          <div className="flex items-center gap-1">
                              <span className="text-[9px] font-bold text-slate-500 w-6">F3 Min</span>
-                             <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={config.f3Range[0]} onChange={e => handleConfig('f3Range', [parseInt(e.target.value), config.f3Range[1]])} />
+                             <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f3Range[0]} onChange={e => updateLayerConfig(layers[0].id, 'f3Range', [parseInt(e.target.value), bgConfig.f3Range[1]])} />
                          </div>
                          <div className="flex items-center gap-1">
                              <span className="text-[9px] font-bold text-slate-500 w-6">F3 Max</span>
-                             <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={config.f3Range[1]} onChange={e => handleConfig('f3Range', [config.f3Range[0], parseInt(e.target.value)])} />
+                             <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f3Range[1]} onChange={e => updateLayerConfig(layers[0].id, 'f3Range', [bgConfig.f3Range[0], parseInt(e.target.value)])} />
                          </div>
                      </div>
                  )}
                  {activeTab === 'duration' && (
                      <div className="flex items-center gap-1">
                         <span className="text-[9px] font-bold text-slate-500">Max Duration (s)</span>
-                        <input type="number" step="0.1" className="w-12 p-0.5 border rounded text-[10px]" value={config.durationRange[1]} onChange={e => handleConfig('durationRange', [0, parseFloat(e.target.value)])} />
+                        <input type="number" step="0.1" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.durationRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'durationRange', [0, parseFloat(e.target.value)])} />
                      </div>
                  )}
                  {activeTab === 'dist' && (
                      <div className="flex items-center gap-1">
                         <span className="text-[9px] font-bold text-slate-500">Max Count</span>
-                        <input type="number" step="10" className="w-12 p-0.5 border rounded text-[10px]" value={config.countRange[1]} onChange={e => handleConfig('countRange', [0, parseInt(e.target.value)])} />
+                        <input type="number" step="10" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.countRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'countRange', [0, parseInt(e.target.value)])} />
                      </div>
                  )}
             </div>
 
-            {/* General Visualization Controls - All Tabs except Table */}
+            {/* General Visualization Controls */}
             {activeTab === 'duration' && (
                  renderVariableSelect('Group By', currentConfig.groupBy, v => handleConfig('groupBy', v))
             )}
-            
+
             {renderVariableSelect('Color By', currentConfig.colorBy, v => handleConfig('colorBy', v))}
 
             {(activeTab === 'duration' || activeTab === 'dist') && (
@@ -330,48 +414,46 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             {/* Distribution Specific Ordering Controls */}
             {activeTab === 'dist' && (
                 <div className="flex items-center gap-4">
-                    {/* Group Sort */}
                     <div className="flex items-center gap-1">
                          <div className="flex flex-col gap-0.5">
                              <span className="text-[9px] font-bold text-slate-500 uppercase">Group Order</span>
                              <div className="flex items-center gap-1">
-                                 <select 
+                                 <select
                                     className="p-1 border border-slate-300 rounded text-[10px]"
-                                    value={config.distGroupOrder}
+                                    value={currentConfig.distGroupOrder}
                                     onChange={e => handleConfig('distGroupOrder', e.target.value)}
                                  >
                                      <option value="count">Count</option>
                                      <option value="alpha">Alpha</option>
                                  </select>
-                                 <button 
-                                    onClick={() => handleConfig('distGroupDir', config.distGroupDir === 'asc' ? 'desc' : 'asc')}
+                                 <button
+                                    onClick={() => handleConfig('distGroupDir', currentConfig.distGroupDir === 'asc' ? 'desc' : 'asc')}
                                     className="p-1 border border-slate-300 rounded bg-white hover:bg-slate-50 text-slate-600"
-                                    title={config.distGroupDir === 'asc' ? 'Ascending' : 'Descending'}
+                                    title={currentConfig.distGroupDir === 'asc' ? 'Ascending' : 'Descending'}
                                  >
-                                     {config.distGroupDir === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>}
+                                     {currentConfig.distGroupDir === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>}
                                  </button>
                              </div>
                          </div>
                     </div>
-                    {/* Bar Sort */}
                     <div className="flex items-center gap-1">
                          <div className="flex flex-col gap-0.5">
                              <span className="text-[9px] font-bold text-slate-500 uppercase">Bar Order</span>
                              <div className="flex items-center gap-1">
-                                 <select 
+                                 <select
                                     className="p-1 border border-slate-300 rounded text-[10px]"
-                                    value={config.distBarOrder}
+                                    value={currentConfig.distBarOrder}
                                     onChange={e => handleConfig('distBarOrder', e.target.value)}
                                  >
                                      <option value="count">Count</option>
                                      <option value="alpha">Alpha</option>
                                  </select>
-                                 <button 
-                                    onClick={() => handleConfig('distBarDir', config.distBarDir === 'asc' ? 'desc' : 'asc')}
+                                 <button
+                                    onClick={() => handleConfig('distBarDir', currentConfig.distBarDir === 'asc' ? 'desc' : 'asc')}
                                     className="p-1 border border-slate-300 rounded bg-white hover:bg-slate-50 text-slate-600"
-                                    title={config.distBarDir === 'asc' ? 'Ascending' : 'Descending'}
+                                    title={currentConfig.distBarDir === 'asc' ? 'Ascending' : 'Descending'}
                                  >
-                                     {config.distBarDir === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>}
+                                     {currentConfig.distBarDir === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>}
                                  </button>
                              </div>
                          </div>
@@ -379,12 +461,11 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
                     <div className="h-6 w-px bg-slate-300"></div>
 
-                    {/* Bar Mode (Grouped vs Stacked) */}
                     <div className="flex flex-col gap-0.5">
                         <span className="text-[9px] font-bold text-slate-500 uppercase">Bar Mode</span>
-                        <select 
+                        <select
                             className="p-1 border border-slate-300 rounded text-[10px]"
-                            value={config.distBarMode || 'grouped'}
+                            value={currentConfig.distBarMode || 'grouped'}
                             onChange={e => handleConfig('distBarMode', e.target.value)}
                         >
                             <option value="grouped">Grouped</option>
@@ -392,37 +473,35 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         </select>
                     </div>
 
-                    {/* Primary Variable Selector (Only if Interaction) */}
-                    {config.textureBy !== 'none' && config.textureBy !== config.colorBy && (
+                    {currentConfig.textureBy !== 'none' && currentConfig.textureBy !== currentConfig.colorBy && (
                         <div className="flex flex-col gap-0.5 animate-in fade-in slide-in-from-left-2 duration-300">
                             <span className="text-[9px] font-bold text-slate-500 uppercase">Cluster By</span>
-                            <select 
+                            <select
                                 className="p-1 border border-slate-300 rounded text-[10px] max-w-[80px]"
-                                value={config.distPrimaryVar || 'color'}
+                                value={currentConfig.distPrimaryVar || 'color'}
                                 onChange={e => handleConfig('distPrimaryVar', e.target.value)}
                             >
-                                <option value="color">Color ({config.colorBy})</option>
-                                <option value="texture">Pattern ({config.textureBy})</option>
+                                <option value="color">Color ({currentConfig.colorBy})</option>
+                                <option value="texture">Pattern ({currentConfig.textureBy})</option>
                             </select>
                         </div>
                     )}
 
-                    {/* Value Mode (Count vs Percentage) */}
                     <div className="flex flex-col gap-0.5">
                         <span className="text-[9px] font-bold text-slate-500 uppercase">Values</span>
                         <div className="flex items-center gap-1">
-                            <select 
+                            <select
                                 className="p-1 border border-slate-300 rounded text-[10px]"
-                                value={config.distValueMode || 'count'}
+                                value={currentConfig.distValueMode || 'count'}
                                 onChange={e => handleConfig('distValueMode', e.target.value)}
                             >
                                 <option value="count">Count</option>
                                 <option value="percentage">Percent</option>
                             </select>
-                            {config.distValueMode === 'percentage' && config.distBarMode === 'stacked' && (
+                            {currentConfig.distValueMode === 'percentage' && currentConfig.distBarMode === 'stacked' && (
                                 <button
-                                    onClick={() => handleConfig('distNormalize', !config.distNormalize)}
-                                    className={`p-1 border rounded text-[10px] ${config.distNormalize ? 'bg-indigo-100 border-indigo-300 text-indigo-700' : 'bg-white border-slate-300 text-slate-600'}`}
+                                    onClick={() => handleConfig('distNormalize', !currentConfig.distNormalize)}
+                                    className={`p-1 border rounded text-[10px] ${currentConfig.distNormalize ? 'bg-indigo-100 border-indigo-300 text-indigo-700' : 'bg-white border-slate-300 text-slate-600'}`}
                                     title="Normalize each stack to 100%"
                                 >
                                     100%
@@ -430,7 +509,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                             )}
                         </div>
                     </div>
-                    
+
                     <div className="h-6 w-px bg-slate-300"></div>
                 </div>
             )}
@@ -438,22 +517,21 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             {/* Plot-Specific Toggles */}
             {(activeTab === 'vowel' || activeTab === '3d') && (
               <>
-                 {/* Shape / Line Type */}
                  {currentConfig.plotType === 'trajectory' ? (
                    renderVariableSelect('Line Type', currentConfig.lineTypeBy, (val) => handleConfig('lineTypeBy', val))
                  ) : (
                    renderVariableSelect('Shape', currentConfig.shapeBy, (val) => handleConfig('shapeBy', val))
                  )}
-                
+
                  {/* Plot Type Toggle (Point vs Trajectory) */}
                  <div className="flex items-center bg-slate-200 rounded p-0.5 ml-2">
-                    <button 
+                    <button
                         onClick={() => handleConfig('plotType', 'point')}
                         className={`px-2 py-0.5 text-[10px] font-bold rounded ${currentConfig.plotType !== 'trajectory' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                     >
                         Point
                     </button>
-                    <button 
+                    <button
                         onClick={() => handleConfig('plotType', 'trajectory')}
                         className={`px-2 py-0.5 text-[10px] font-bold rounded ${currentConfig.plotType === 'trajectory' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                     >
@@ -464,9 +542,9 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                  {currentConfig.plotType !== 'trajectory' ? (
                     <div className="flex items-center gap-2 ml-2">
                       <label className="font-semibold text-slate-600">Time:</label>
-                      <select 
+                      <select
                         className="p-1.5 border border-slate-300 rounded bg-white text-slate-700 w-16"
-                        value={currentConfig.timePoint} 
+                        value={currentConfig.timePoint}
                         onChange={e => handleConfig('timePoint', parseInt(e.target.value))}
                       >
                         {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map(t => (
@@ -479,7 +557,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         <div className="flex flex-col gap-0.5">
                             <span className="text-[9px] font-bold text-slate-500 uppercase">Range</span>
                             <div className="flex items-center gap-1">
-                                <select 
+                                <select
                                     className="p-0.5 border rounded text-[10px] w-12"
                                     value={currentConfig.trajectoryOnset ?? 0}
                                     onChange={e => handleConfig('trajectoryOnset', parseInt(e.target.value))}
@@ -487,7 +565,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                     {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map(t => <option key={t} value={t}>{t}%</option>)}
                                 </select>
                                 <span className="text-slate-400">-</span>
-                                <select 
+                                <select
                                     className="p-0.5 border rounded text-[10px] w-12"
                                     value={currentConfig.trajectoryOffset ?? 100}
                                     onChange={e => handleConfig('trajectoryOffset', parseInt(e.target.value))}
@@ -496,8 +574,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                 </select>
                             </div>
                         </div>
-                        
-                        {/* Trajectory Specific Toggles */}
+
                         <div className="flex flex-col gap-0.5 ml-2 border-l border-slate-200 pl-2">
                              <label className="flex items-center gap-1 cursor-pointer">
                                 <input type="checkbox" className="rounded text-indigo-600" checked={currentConfig.showIndividualLines} onChange={e => handleConfig('showIndividualLines', e.target.checked)} />
@@ -531,7 +608,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
                    {currentConfig.plotType !== 'trajectory' && <div className="w-px h-6 bg-slate-200"></div>}
 
-                   {/* Ellipse Config (2D & 3D) */}
+                   {/* Ellipse Config */}
                    {(activeTab === 'vowel' || activeTab === '3d') && currentConfig.plotType !== 'trajectory' && (
                      <div className="flex items-center gap-1.5 border-r border-slate-200 pr-2">
                        <label className="flex items-center gap-1 cursor-pointer" title="Show Standard Deviation Ellipses">
@@ -544,6 +621,10 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                              {[1, 1.5, 2, 2.5, 3].map(sd => <option key={sd} value={sd}>{sd}σ</option>)}
                            </select>
                            <div className="flex flex-col gap-0.5">
+                               <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                                  <span>Width</span>
+                                  <input type="range" min="0.5" max="8" step="0.5" title="Line Width" value={currentConfig.ellipseLineWidth} onChange={e => handleConfig('ellipseLineWidth', parseFloat(e.target.value))} className="w-10 h-1 accent-indigo-600" />
+                               </div>
                                <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                   <span>Line</span>
                                   <input type="range" min="0" max="1" step="0.1" title="Line Opacity" value={currentConfig.ellipseLineOpacity} onChange={e => handleConfig('ellipseLineOpacity', parseFloat(e.target.value))} className="w-10 h-1 accent-indigo-600" />
@@ -561,11 +642,11 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                    {/* Means / Centroids */}
                    <div className="flex items-center gap-1.5">
                      <label className="flex items-center gap-1 cursor-pointer" title="Show Means">
-                       <input 
-                            type="checkbox" 
-                            className="rounded text-indigo-600" 
-                            checked={currentConfig.plotType === 'trajectory' ? currentConfig.showMeanTrajectories : currentConfig.showCentroids} 
-                            onChange={e => handleConfig(currentConfig.plotType === 'trajectory' ? 'showMeanTrajectories' : 'showCentroids', e.target.checked)} 
+                       <input
+                            type="checkbox"
+                            className="rounded text-indigo-600"
+                            checked={currentConfig.plotType === 'trajectory' ? currentConfig.showMeanTrajectories : currentConfig.showCentroids}
+                            onChange={e => handleConfig(currentConfig.plotType === 'trajectory' ? 'showMeanTrajectories' : 'showCentroids', e.target.checked)}
                        />
                        <span className="font-bold">Means</span>
                      </label>
@@ -587,7 +668,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                             <span>Lbl</span>
                                         </label>
                                         {currentConfig.showTrajectoryLabels && (
-                                            <input type="range" min="8" max="24" step="1" title="Label Size" value={currentConfig.meanTrajectoryLabelSize || 12} onChange={e => handleConfig('meanTrajectoryLabelSize', parseFloat(e.target.value))} className="w-8 h-1 accent-indigo-600" />
+                                            <input type="range" min="8" max="72" step="1" title="Label Size" value={currentConfig.meanTrajectoryLabelSize || 12} onChange={e => handleConfig('meanTrajectoryLabelSize', parseFloat(e.target.value))} className="w-10 h-1 accent-indigo-600" />
                                         )}
                                      </div>
                                 </div>
@@ -599,7 +680,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                             <input type="range" min="0" max="1" step="0.1" title="Centroid Opacity" value={currentConfig.centroidOpacity} onChange={e => handleConfig('centroidOpacity', parseFloat(e.target.value))} className="w-10 h-1 accent-indigo-600" />
                                        </div>
                                    )}
-                                   
+
                                    <label className="flex items-center gap-1 cursor-pointer text-[10px] text-slate-500 ml-1">
                                     <input type="checkbox" className="rounded text-indigo-600" checked={currentConfig.labelAsCentroid} onChange={e => handleConfig('labelAsCentroid', e.target.checked)} />
                                     <span>Txt</span>
@@ -609,11 +690,11 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                    )}
                                 </>
                            )}
-                           
+
                            {/* Mean Label Interaction Type */}
                            {(currentConfig.colorBy !== 'none' || (currentConfig.plotType !== 'trajectory' && currentConfig.shapeBy !== 'none') || (currentConfig.plotType === 'trajectory' && currentConfig.lineTypeBy !== 'none')) && (
-                               <select 
-                                 className="text-[9px] p-0.5 border rounded" 
+                               <select
+                                 className="text-[9px] p-0.5 border rounded"
                                  title="Label Source"
                                  value={currentConfig.meanLabelType}
                                  onChange={e => handleConfig('meanLabelType', e.target.value)}
@@ -633,48 +714,54 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             {/* ... Rest of Toggles ... */}
             {(activeTab === 'traj_f1f2' || activeTab === 'traj_series') && (
                <>
-                  {renderVariableSelect('Line Type', config.lineTypeBy, v => handleConfig('lineTypeBy', v))}
+                  {renderVariableSelect('Line Type', currentConfig.lineTypeBy, v => handleConfig('lineTypeBy', v))}
 
-                   {/* Trajectory Opacity */}
                    <div className="flex items-center gap-1 ml-2">
                      <span className="text-slate-500 font-bold">Line Opacity</span>
-                     <input type="range" min="0.01" max="1" step="0.05" value={config.trajectoryLineOpacity} onChange={e => handleConfig('trajectoryLineOpacity', parseFloat(e.target.value))} className="w-16 h-1 accent-indigo-600" />
+                     <input type="range" min="0.01" max="1" step="0.05" value={currentConfig.trajectoryLineOpacity} onChange={e => handleConfig('trajectoryLineOpacity', parseFloat(e.target.value))} className="w-16 h-1 accent-indigo-600" />
                    </div>
-                   
+
+                   <div className="flex items-center gap-1 ml-2">
+                     <span className="text-slate-500 font-bold">Mean Width</span>
+                     <input type="range" min="1" max="10" step="0.5" value={currentConfig.meanTrajectoryWidth} onChange={e => handleConfig('meanTrajectoryWidth', parseFloat(e.target.value))} className="w-16 h-1 accent-indigo-600" />
+                   </div>
+
+                   <div className="flex items-center gap-1 ml-2">
+                     <span className="text-slate-500 font-bold">Mean Opacity</span>
+                     <input type="range" min="0.1" max="1" step="0.05" value={currentConfig.meanTrajectoryOpacity} onChange={e => handleConfig('meanTrajectoryOpacity', parseFloat(e.target.value))} className="w-16 h-1 accent-indigo-600" />
+                   </div>
+
                    {activeTab === 'traj_f1f2' && (
                        <div className="relative ml-2">
-                        <button 
+                        <button
                             onClick={() => {
-                            handleConfig('showReferenceVowels', !config.showReferenceVowels);
-                            if (!config.showReferenceVowels) setShowRefDropdown(true);
+                            handleConfig('showReferenceVowels', !currentConfig.showReferenceVowels);
+                            if (!currentConfig.showReferenceVowels) setShowRefDropdown(true);
                             }}
-                            className={`flex items-center gap-1.5 cursor-pointer px-2 py-1 rounded border shadow-sm transition-colors ${config.showReferenceVowels ? 'bg-indigo-50 border-indigo-200 text-indigo-800' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
+                            className={`flex items-center gap-1.5 cursor-pointer px-2 py-1 rounded border shadow-sm transition-colors ${currentConfig.showReferenceVowels ? 'bg-indigo-50 border-indigo-200 text-indigo-800' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
                         >
-                            <Check size={12} className={config.showReferenceVowels ? 'opacity-100' : 'opacity-0'} />
+                            <Check size={12} className={currentConfig.showReferenceVowels ? 'opacity-100' : 'opacity-0'} />
                             <span>Refs</span>
                         </button>
-                        
-                        {config.showReferenceVowels && (
+
+                        {currentConfig.showReferenceVowels && (
                             <button onClick={() => setShowRefDropdown(!showRefDropdown)} className="ml-1 text-[10px] text-indigo-600 underline font-bold">Config</button>
                         )}
-                        {/* Dropdown ... */}
-                        {showRefDropdown && config.showReferenceVowels && (
+                        {showRefDropdown && currentConfig.showReferenceVowels && (
                             <div className="absolute top-full mt-2 left-0 bg-white border border-slate-200 rounded-lg shadow-xl p-3 w-64 z-50">
-                            {/* Ref Vowel Config Dropdown content */}
                             <div className="flex justify-between border-b border-slate-100 pb-2 mb-2">
                                 <span className="font-bold text-slate-500">Reference Settings</span>
                                 <button onClick={() => setShowRefDropdown(false)} className="text-slate-400 hover:text-slate-600">×</button>
                             </div>
-                            
-                            {/* Pitch Filter for References */}
+
                             <div className="mb-2">
                                 <span className="text-[10px] font-bold text-slate-500 uppercase">Voice Pitch Filter</span>
                                 <div className="flex flex-wrap gap-1 mt-1">
                                     {availablePitches.map(p => (
-                                        <button 
-                                            key={p} 
+                                        <button
+                                            key={p}
                                             onClick={() => togglePitchFilter(p)}
-                                            className={`px-2 py-0.5 rounded text-[10px] border ${(config.referencePitchFilter || []).includes(p) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-500'}`}
+                                            className={`px-2 py-0.5 rounded text-[10px] border ${(currentConfig.referencePitchFilter || []).includes(p) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-500'}`}
                                         >
                                             {p}
                                         </button>
@@ -682,29 +769,29 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                     {availablePitches.length === 0 && <span className="text-[10px] text-slate-400 italic">No pitch data</span>}
                                 </div>
                             </div>
-                            
+
                             <div className="mb-3 space-y-2 pb-3 border-b border-slate-100 mt-3">
                                 <div className="flex items-center justify-between text-[10px] text-slate-500">
                                     <span>Label Size</span>
-                                    <input type="range" min="8" max="24" value={config.refVowelLabelSize} onChange={e => handleConfig('refVowelLabelSize', parseInt(e.target.value))} className="w-24 h-1 accent-indigo-600" />
+                                    <input type="range" min="8" max="24" value={currentConfig.refVowelLabelSize} onChange={e => handleConfig('refVowelLabelSize', parseInt(e.target.value))} className="w-24 h-1 accent-indigo-600" />
                                 </div>
                                 <div className="flex items-center justify-between text-[10px] text-slate-500">
                                     <span>Label Opacity</span>
-                                    <input type="range" min="0" max="1" step="0.1" value={config.refVowelLabelOpacity} onChange={e => handleConfig('refVowelLabelOpacity', parseFloat(e.target.value))} className="w-24 h-1 accent-indigo-600" />
+                                    <input type="range" min="0" max="1" step="0.1" value={currentConfig.refVowelLabelOpacity} onChange={e => handleConfig('refVowelLabelOpacity', parseFloat(e.target.value))} className="w-24 h-1 accent-indigo-600" />
                                 </div>
                                 <div className="flex items-center justify-between text-[10px] text-slate-500">
                                     <span>Ellipse Opacity</span>
-                                    <input type="range" min="0" max="1" step="0.1" value={config.refVowelEllipseLineOpacity} onChange={e => handleConfig('refVowelEllipseLineOpacity', parseFloat(e.target.value))} className="w-24 h-1 accent-indigo-600" />
+                                    <input type="range" min="0" max="1" step="0.1" value={currentConfig.refVowelEllipseLineOpacity} onChange={e => handleConfig('refVowelEllipseLineOpacity', parseFloat(e.target.value))} className="w-24 h-1 accent-indigo-600" />
                                 </div>
                                 <div className="flex items-center justify-between text-[10px] text-slate-500">
                                     <span>Fill Opacity</span>
-                                    <input type="range" min="0" max="1" step="0.1" value={config.refVowelEllipseFillOpacity} onChange={e => handleConfig('refVowelEllipseFillOpacity', parseFloat(e.target.value))} className="w-24 h-1 accent-indigo-600" />
+                                    <input type="range" min="0" max="1" step="0.1" value={currentConfig.refVowelEllipseFillOpacity} onChange={e => handleConfig('refVowelEllipseFillOpacity', parseFloat(e.target.value))} className="w-24 h-1 accent-indigo-600" />
                                 </div>
                             </div>
                             <div className="max-h-32 overflow-y-auto space-y-1">
                                 {globalReferences.map(ref => (
                                 <label key={ref.canonical} className="flex items-center space-x-2 text-[11px] cursor-pointer hover:bg-slate-50 p-1 rounded">
-                                    <input type="checkbox" checked={config.selectedReferenceVowels.includes(ref.canonical)} onChange={() => toggleReferenceVowel(ref.canonical)} className="rounded text-indigo-600" />
+                                    <input type="checkbox" checked={currentConfig.selectedReferenceVowels.includes(ref.canonical)} onChange={() => toggleReferenceVowel(ref.canonical)} className="rounded text-indigo-600" />
                                     <span className="font-mono font-bold text-slate-700">{ref.canonical}</span>
                                 </label>
                                 ))}
@@ -727,56 +814,53 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
       {/* Plot Area */}
       <div className="flex-1 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden relative">
         {activeTab === 'vowel' && (
-          <CanvasPlot 
-            ref={plotRef} 
-            data={data} 
-            config={config} 
+          <CanvasPlot
+            ref={plotRef}
+            layers={layers}
+            layerData={layerData}
             onLegendClick={handleLegendClick}
-            styleOverrides={styleOverrides}
-            overlayData={config.showTrajectoryOverlay ? overlayData : undefined}
-            overlayConfig={overlayConfig}
           />
         )}
         {activeTab === '3d' && (
-          <Scatter3DPlot 
-            ref={plotRef} 
-            data={data} 
-            config={config} 
+          <Scatter3DPlot
+            ref={plotRef}
+            data={activeData}
+            config={currentConfig}
             onLegendClick={handleLegendClick}
             styleOverrides={styleOverrides}
           />
         )}
         {activeTab === 'traj_f1f2' && (
-          <TrajectoryF1F2 
-            ref={plotRef} 
-            data={data} 
-            config={config} 
+          <TrajectoryF1F2
+            ref={plotRef}
+            data={activeData}
+            config={currentConfig}
             globalReferences={globalReferences}
             onLegendClick={handleLegendClick}
             styleOverrides={styleOverrides}
           />
         )}
         {activeTab === 'traj_series' && (
-          <TrajectoryTimeSeries 
-            ref={plotRef} 
-            data={data} 
-            config={config}
+          <TrajectoryTimeSeries
+            ref={plotRef}
+            data={activeData}
+            config={currentConfig}
             onLegendClick={handleLegendClick}
             styleOverrides={styleOverrides}
           />
         )}
         {activeTab === 'duration' && (
-          <DurationPlot 
-            ref={plotRef} 
-            data={data} 
-            config={config}
+          <DurationPlot
+            ref={plotRef}
+            data={activeData}
+            config={currentConfig}
           />
         )}
         {activeTab === 'dist' && (
-          <PhonemeDistributionPlot 
-            ref={plotRef} 
-            data={data} 
-            config={config}
+          <PhonemeDistributionPlot
+            ref={plotRef}
+            data={activeData}
+            config={currentConfig}
             onLegendClick={handleLegendClick}
             styleOverrides={styleOverrides}
           />
@@ -784,7 +868,6 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
         {activeTab === 'table' && (
            <div className="h-full overflow-auto">
              <table className="w-full text-left text-[13px]">
-                {/* ... Table ... */}
                 <thead className="sticky top-0 bg-slate-50/90 backdrop-blur border-b border-slate-200 z-10">
                   <tr>
                     <th className="px-4 py-3 font-bold text-slate-500 uppercase tracking-tighter">Word</th>
@@ -797,10 +880,10 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {data.slice(0, 1000).map(token => {
-                    const f1_mean = token.trajectory.length > 0 ? token.trajectory.reduce((acc, p) => acc + (config.useSmoothing ? (p.f1_smooth ?? p.f1) : p.f1), 0) / token.trajectory.length : 0;
-                    const f2_mean = token.trajectory.length > 0 ? token.trajectory.reduce((acc, p) => acc + (config.useSmoothing ? (p.f2_smooth ?? p.f2) : p.f2), 0) / token.trajectory.length : 0;
-                    const f3_mean = token.trajectory.length > 0 ? token.trajectory.reduce((acc, p) => acc + (config.useSmoothing ? (p.f3_smooth ?? p.f3) : p.f3), 0) / token.trajectory.length : 0;
+                  {activeData.slice(0, 1000).map(token => {
+                    const f1_mean = token.trajectory.length > 0 ? token.trajectory.reduce((acc, p) => acc + (currentConfig.useSmoothing ? (p.f1_smooth ?? p.f1) : p.f1), 0) / token.trajectory.length : 0;
+                    const f2_mean = token.trajectory.length > 0 ? token.trajectory.reduce((acc, p) => acc + (currentConfig.useSmoothing ? (p.f2_smooth ?? p.f2) : p.f2), 0) / token.trajectory.length : 0;
+                    const f3_mean = token.trajectory.length > 0 ? token.trajectory.reduce((acc, p) => acc + (currentConfig.useSmoothing ? (p.f3_smooth ?? p.f3) : p.f3), 0) / token.trajectory.length : 0;
                     return (
                       <tr key={token.id} className="hover:bg-indigo-50/40 transition-colors">
                         <td className="px-4 py-2 text-slate-900 font-semibold">{token.word}</td>
@@ -815,9 +898,9 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   })}
                 </tbody>
              </table>
-             {data.length > 1000 && (
+             {activeData.length > 1000 && (
                 <div className="p-4 text-center text-slate-400 italic text-xs">
-                  Showing first 1,000 of {data.length.toLocaleString()} tokens.
+                  Showing first 1,000 of {activeData.length.toLocaleString()} tokens.
                 </div>
              )}
            </div>
@@ -825,7 +908,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
       </div>
 
       {editingItem && (
-        <StyleEditor 
+        <StyleEditor
           category={editingItem.category}
           position={editingItem.position}
           activeChannels={getActiveChannels()}
@@ -836,13 +919,18 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
       )}
 
       {/* Export Dialog */}
-      <ExportDialog 
+      <ExportDialog
         isOpen={showExportDialog}
         onClose={() => setShowExportDialog(false)}
         plotRef={plotRef}
-        currentConfig={config}
-        defaultTitle={config.colorBy !== 'none' ? config.colorBy : config.groupBy}
+        layers={layers}
+        defaultTitle={bgConfig.colorBy !== 'none' ? bgConfig.colorBy : bgConfig.groupBy}
       />
+
+      {/* Close add menu on click outside */}
+      {showAddMenu && (
+        <div className="fixed inset-0 z-40" onClick={() => setShowAddMenu(false)}></div>
+      )}
     </div>
   );
 };

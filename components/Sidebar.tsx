@@ -13,11 +13,11 @@ interface SidebarProps {
   tokenCount: number;
   totalCount: number;
   handleFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  activeLayer?: 'background' | 'overlay';
+  activeLayerName?: string; // undefined for background, layer name for non-background
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ 
-  filters, setFilters, data, tokenCount, totalCount, handleFileUpload, activeLayer
+const Sidebar: React.FC<SidebarProps> = ({
+  filters, setFilters, data, tokenCount, totalCount, handleFileUpload, activeLayerName
 }) => {
   const [wordSearch, setWordSearch] = useState('');
   const updateFilters = (update: Partial<FilterState>) => setFilters(prev => ({ ...prev, ...update }));
@@ -86,9 +86,9 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside className="w-80 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-y-auto">
-      {activeLayer === 'overlay' && (
+      {activeLayerName && (
         <div className="bg-indigo-50 border-b border-indigo-100 p-2 text-center sticky top-0 z-10">
-            <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Editing Overlay Filters</span>
+            <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Editing: {activeLayerName}</span>
         </div>
       )}
       <div className="p-5 space-y-6">

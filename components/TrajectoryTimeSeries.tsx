@@ -201,8 +201,8 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     ctx.fillStyle = '#64748b'; // Tick color
     
     // Balanced Sizing
-    const isExport = drawScale > 1.5;
-    const tickBaseSize = exportConfig ? exportConfig.tickLabelSize : (isExport ? 28 : 14);
+    const isExport = !!exportConfig;
+    const tickBaseSize = exportConfig ? exportConfig.tickLabelSize : (drawScale > 1.5 ? 28 : 14);
     const tickFontSize = (tickBaseSize * drawScale) / scale;
     ctx.font = `bold ${tickFontSize}px Inter`;
 
@@ -252,7 +252,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
 
     // Draw Lines
     const dynamicOpacity = Math.max(0.01, config.trajectoryLineOpacity);
-    ctx.lineWidth = (1 * drawScale) / scale;
+    ctx.lineWidth = (config.lineWidth * drawScale) / scale;
 
     data.forEach(token => {
       let color = '#64748b';
@@ -271,8 +271,9 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
       }
 
       ctx.strokeStyle = color;
-      const scaledPattern = dashPattern.map(d => (d * drawScale) / scale);
-      const defaultF2Pattern = [(5*drawScale)/scale, (5*drawScale)/scale];
+      const lw = config.lineWidth;
+      const scaledPattern = dashPattern.map(d => (d * lw * drawScale) / scale);
+      const defaultF2Pattern = [(5*lw*drawScale)/scale, (5*lw*drawScale)/scale];
 
       // Helper to draw a single channel (F1 or F2) handling NaNs
       const drawChannel = (isF1: boolean) => {
@@ -334,23 +335,24 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
         if (config.lineTypeBy !== 'none') {
              dashPattern = lineStyles[lVal] || [];
         }
-        const scaledPattern = dashPattern.map(d => (d * drawScale) / scale);
-        const defaultF2Pattern = [(6*drawScale)/scale, (4*drawScale)/scale];
+        const mw = config.meanTrajectoryWidth;
+        const scaledPattern = dashPattern.map(d => (d * mw * drawScale) / scale);
+        const defaultF2Pattern = [(6*mw*drawScale)/scale, (4*mw*drawScale)/scale];
 
         const drawMean = (pts: {x:number,y:number}[], isF2: boolean) => {
             if (pts.length < 2) return;
             // Background stroke (white) for contrast
             ctx.setLineDash(isF2 && config.lineTypeBy === 'none' ? defaultF2Pattern : scaledPattern);
-            ctx.strokeStyle = 'white'; 
-            ctx.lineWidth = (6 * drawScale) / scale;
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = ((2 + config.meanTrajectoryWidth) * drawScale) / scale;
             ctx.beginPath();
             pts.forEach((p,i) => { const x=mapX(p.x); const y=mapY(p.y); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
             ctx.stroke();
 
             // Actual line
-            ctx.strokeStyle = color; 
-            ctx.lineWidth = (3 * drawScale) / scale;
-            ctx.globalAlpha = isF2 ? 0.5 : 1;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = (config.meanTrajectoryWidth * drawScale) / scale;
+            ctx.globalAlpha = (isF2 ? 0.5 : 1) * config.meanTrajectoryOpacity;
             
             ctx.beginPath();
             pts.forEach((p,i) => { const x=mapX(p.x); const y=mapY(p.y); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
@@ -367,7 +369,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
 
   const drawLegend = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
       let curY = y;
-      const isExport = drawScale > 1.5;
+      const isExport = !!exportConfig;
       
       // If custom position, override x and y
       if (exportConfig && exportConfig.legendPosition === 'custom') {
@@ -384,12 +386,22 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
       ctx.textBaseline = 'middle';
       ctx.fillStyle = '#0f172a';
 
-      if (exportConfig?.showColorLegend !== false && config.colorBy !== 'none') {
+      // Determine legend visibility and titles from per-layer config or fallback to old fields
+      const layerLegendCfg = exportConfig?.layerLegends?.find(ll => ll.layerId === 'bg');
+      const showColor = layerLegendCfg ? layerLegendCfg.show : (exportConfig?.showColorLegend !== false);
+      const colorTitle = (layerLegendCfg?.colorTitle) || (exportConfig?.colorLegendTitle) || config.colorBy.toUpperCase();
+      const showLineType = layerLegendCfg ? layerLegendCfg.show : (exportConfig?.showLineTypeLegend !== false);
+      const lineTypeTitle = (layerLegendCfg?.lineTypeTitle) || (exportConfig?.lineTypeLegendTitle) || config.lineTypeBy.toUpperCase();
+
+      // Check if this layer is in the legend layers list
+      const legendLayerIds = exportConfig?.legendLayers;
+      const isInLegend = !legendLayerIds || legendLayerIds.includes('bg');
+
+      if (isInLegend && showColor && config.colorBy !== 'none') {
           ctx.font = `bold ${fontSizeTitle}px Inter`;
-          const title = (exportConfig && exportConfig.colorLegendTitle) ? exportConfig.colorLegendTitle : config.colorBy.toUpperCase();
-          ctx.fillText(title, x, curY);
+          ctx.fillText(colorTitle, x, curY);
           curY += fontSizeTitle * 1.4;
-          
+
           ctx.font = `${fontSizeItem}px Inter`;
           sortedKeys.forEach(k => {
               const count = groups[k]?.length || 0;
@@ -403,17 +415,16 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
       }
 
       // Export Legend for Line Type
-      if (exportConfig?.showLineTypeLegend !== false && config.lineTypeBy !== 'none') {
+      if (isInLegend && showLineType && config.lineTypeBy !== 'none') {
           ctx.font = `bold ${fontSizeTitle}px Inter`;
           ctx.fillStyle = '#0f172a';
-          const title = (exportConfig && exportConfig.lineTypeLegendTitle) ? exportConfig.lineTypeLegendTitle : config.lineTypeBy.toUpperCase();
-          ctx.fillText(title, x, curY);
+          ctx.fillText(lineTypeTitle, x, curY);
           curY += fontSizeTitle * 1.4;
-          
+
           ctx.font = `${fontSizeItem}px Inter`;
           lineTypeKeys.forEach(k => {
               const count = lineTypeCounts[k] || 0;
-              
+
               // Draw line sample
               ctx.beginPath();
               ctx.strokeStyle = '#0f172a';
@@ -560,6 +571,9 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
                 showShapeLegend: true, shapeLegendTitle: '',
                 showTextureLegend: true, textureLegendTitle: '',
                 showLineTypeLegend: true, lineTypeLegendTitle: config.lineTypeBy.toUpperCase(),
+                showOverlayColorLegend: true, overlayColorLegendTitle: '',
+                showOverlayShapeLegend: true, overlayShapeLegendTitle: '',
+                showOverlayLineTypeLegend: true, overlayLineTypeLegendTitle: '',
             };
             const url = generateImage(defaultExportConfig);
             if (url) {

@@ -1,6 +1,6 @@
 
 export interface TrajectoryPoint {
-  time: number; 
+  time: number;
   f1: number;
   f2: number;
   f3: number;
@@ -42,21 +42,21 @@ export interface PlotConfig {
   invertY: boolean; // F1
   colorBy: VariableType;
   shapeBy: VariableType;
-  lineTypeBy: VariableType; 
-  textureBy: VariableType; 
-  bwMode: boolean; 
-  
+  lineTypeBy: VariableType;
+  textureBy: VariableType;
+  bwMode: boolean;
+
   // Data Source Config
   useSmoothing: boolean;
-  
+
   timePoint: number; // 0, 10, ... 100
-  
+
   // Grouping for categorical plots
-  groupBy: VariableType; 
-  
+  groupBy: VariableType;
+
   // Base Plot Mode
-  plotType: 'point' | 'trajectory'; 
-  
+  plotType: 'point' | 'trajectory';
+
   // Trajectory Settings
   trajectoryOnset: number; // 0-100
   trajectoryOffset: number; // 0-100
@@ -64,67 +64,67 @@ export interface PlotConfig {
   // Trajectory Time Series Config
   timeNormalized: boolean;
   showMeanTrajectories: boolean;
-  
+
   // Trajectory F1/F2 Config
   showIndividualLines: boolean;
   trajectoryLineOpacity: number;
   showTrajectoryLabels: boolean;
   meanTrajectoryLabelSize: number;
-  meanTrajectoryWidth: number; // New: Width for mean lines
-  meanTrajectoryOpacity: number; // New: Opacity for mean lines
+  meanTrajectoryWidth: number;
+  meanTrajectoryOpacity: number;
   showArrows: boolean;
-  legendSource?: 'background' | 'overlay' | 'both'; // New: Control legend content
   showReferenceVowels: boolean;
   selectedReferenceVowels: string[];
   referencePitchFilter: string[]; // Filter references by pitch
-  
+
   // Reference Vowel Style Config
   refVowelLabelOpacity: number;
   refVowelLabelSize: number;
   refVowelEllipseLineOpacity: number;
   refVowelEllipseFillOpacity: number;
-  
+
   // Duration Plot Config
   showQuartiles: boolean;
   showMeanMarker: boolean;
   showOutliers: boolean;
   showDurationPoints: boolean;
-  
+
   // Distribution Plot Config
   separatePlots: boolean;
   distGroupOrder: 'count' | 'alpha';
   distGroupDir: 'asc' | 'desc';
   distBarOrder: 'count' | 'alpha';
   distBarDir: 'asc' | 'desc';
-  distBarMode: 'grouped' | 'stacked'; 
-  distPrimaryVar: 'color' | 'texture'; 
+  distBarMode: 'grouped' | 'stacked';
+  distPrimaryVar: 'color' | 'texture';
   distValueMode: 'count' | 'percentage';
-  distNormalize: boolean; // New: Normalize stacked bars to 100%
-  
+  distNormalize: boolean;
+
   // Scatter Plot Visibility
   showPoints: boolean;
   showEllipses: boolean;
   showCentroids: boolean;
   labelAsCentroid: boolean;
-  
+
   // Scatter Plot Configuration
   pointSize: number;
   pointOpacity: number;
-  
+
   centroidSize: number;
-  centroidOpacity: number; 
+  centroidOpacity: number;
   labelSize: number;
-  meanLabelType: 'auto' | 'color' | 'shape' | 'both'; 
-  
+  meanLabelType: 'auto' | 'color' | 'shape' | 'both';
+
   lineWidth: number;
   ellipseSD: number;
+  ellipseLineWidth: number;
   ellipseLineOpacity: number;
   ellipseFillOpacity: number;
-  
+
   // Ranges
   f1Range: [number, number];
   f2Range: [number, number];
-  f3Range: [number, number]; 
+  f3Range: [number, number];
   timeSeriesFrequencyRange: [number, number]; // Specific for Time Series plot
   durationRange: [number, number];
   countRange: [number, number];
@@ -139,8 +139,33 @@ export interface FilterState {
   words: string[]; // New word filter
   canonicalStress: string[];
   lexicalStress: string[];
-  syllableMark: string[]; 
-  voicePitch: string[]; 
+  syllableMark: string[];
+  voicePitch: string[];
+}
+
+// Multi-Layer System
+export interface Layer {
+  id: string;
+  name: string;
+  visible: boolean;
+  isBackground: boolean; // true only for layer[0], cannot delete
+  config: PlotConfig;
+  filters: FilterState;
+  styleOverrides: StyleOverrides;
+}
+
+export interface LayerCounters {
+  point: number;
+  trajectory: number;
+}
+
+export interface LayerLegendConfig {
+  layerId: string;
+  show: boolean;
+  colorTitle: string;
+  shapeTitle: string;
+  lineTypeTitle: string;
+  textureTitle: string;
 }
 
 export interface ReferenceCentroid {
@@ -188,14 +213,18 @@ export interface ExportConfig {
 
   // Legend General
   showLegend: boolean;
-  legendSource?: 'background' | 'overlay' | 'both';
+  legendSource?: 'background' | 'overlay' | 'both'; // Deprecated: kept for other plot components
   legendPosition?: 'right' | 'bottom' | 'inside-top-right' | 'inside-top-left' | 'custom';
   legendX?: number; // Offset or coordinate
   legendY?: number;
   legendTitleSize: number;
   legendItemSize: number;
-  
-  // Legend Specifics
+
+  // Multi-layer legend controls
+  legendLayers?: string[]; // Which layer IDs appear in legend
+  layerLegends?: LayerLegendConfig[]; // Per-layer legend config
+
+  // Legend Specifics (background / single-layer)
   showColorLegend: boolean;
   colorLegendTitle: string;
 
@@ -207,6 +236,14 @@ export interface ExportConfig {
 
   showLineTypeLegend: boolean;
   lineTypeLegendTitle: string;
+
+  // Overlay Legend Specifics (deprecated, kept optional for other plot components)
+  showOverlayColorLegend?: boolean;
+  overlayColorLegendTitle?: string;
+  showOverlayShapeLegend?: boolean;
+  overlayShapeLegendTitle?: string;
+  showOverlayLineTypeLegend?: boolean;
+  overlayLineTypeLegendTitle?: string;
 
   // Canvas Dimensions (Optional - if set, overrides dynamic sizing)
   canvasWidth?: number;

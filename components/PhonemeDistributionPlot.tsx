@@ -142,7 +142,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
     const { groups, data: pData, colors, textureMap, isInteraction } = plotData as any;
     
     // Dynamic margins based on mode
-    const isExport = drawScale > 1.5;
+    const isExport = !!exportConfig;
     const margin = { 
         top: (80 * drawScale) + ((exportConfig?.graphY || 0) * drawScale), 
         right: 40 * drawScale, 
@@ -236,10 +236,11 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
         if (val > 0) {
             ctx.textAlign = 'center';
             if (isExport) {
-                ctx.fillStyle = '#000000';
+                ctx.fillStyle = 'white';
                 ctx.font = `bold ${(barLabelFont * drawScale) / scale}px Inter`;
-                ctx.strokeStyle = '#ffffff';
+                ctx.strokeStyle = '#000000';
                 ctx.lineWidth = (3 * drawScale)/scale;
+                ctx.lineJoin = 'round';
                 const segCenterY = by + bh/2;
                 ctx.strokeText(labelVal, bx + bw/2, segCenterY + (barLabelFont * 0.4 * drawScale));
                 ctx.fillText(labelVal, bx + bw/2, segCenterY + (barLabelFont * 0.4 * drawScale));
@@ -646,7 +647,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
   const drawLegend = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
     const { colors, textureList, textureMap, isInteraction, colorKey, textureKey, colorCounts, textureCounts } = plotData;
     let curY = y;
-    const isExport = drawScale > 1.5;
+    const isExport = !!exportConfig;
 
     // If custom position, override x and y
     if (exportConfig && exportConfig.legendPosition === 'custom') {
@@ -664,13 +665,22 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
     const spacing = (itemSize * 1.6) * drawScale; 
     const boxSize = (itemSize * 0.8) * drawScale;
 
+    // Determine legend visibility and titles from per-layer config or fallback to old fields
+    const layerLegendCfg = exportConfig?.layerLegends?.find(ll => ll.layerId === 'bg');
+    const showColor = layerLegendCfg ? layerLegendCfg.show : (exportConfig?.showColorLegend !== false);
+    const colorLegendTitle = (layerLegendCfg?.colorTitle) || (exportConfig?.colorLegendTitle) || (colorKey ? colorKey.toUpperCase() : 'COLOR');
+    const showTexture = layerLegendCfg ? layerLegendCfg.show : (exportConfig?.showTextureLegend !== false);
+    const textureLegendTitle = (layerLegendCfg?.textureTitle) || (exportConfig?.textureLegendTitle) || (textureKey ? textureKey.toUpperCase() : 'PATTERN');
+
+    const legendLayerIds = exportConfig?.legendLayers;
+    const isInLegend = !legendLayerIds || legendLayerIds.includes('bg');
+
     // 1. Color Legend
-    if (exportConfig?.showColorLegend !== false && colorKey) {
+    if (isInLegend && showColor && colorKey) {
         ctx.font = `bold ${(titleSize * drawScale)}px Inter`;
-        const titleText = (exportConfig && exportConfig.colorLegendTitle) ? exportConfig.colorLegendTitle : colorKey.toUpperCase();
-        ctx.fillText(titleText, x, curY);
+        ctx.fillText(colorLegendTitle, x, curY);
         curY += (titleSize * 1.4) * drawScale;
-        
+
         ctx.font = `${(itemSize * drawScale)}px Inter`;
         Object.entries(colors).forEach(([key, color]) => {
                 const count = colorCounts[key] || 0;
@@ -684,16 +694,14 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
     }
 
     // 2. Texture Legend
-    if (exportConfig?.showTextureLegend !== false && isInteraction && textureKey) {
+    if (isInLegend && showTexture && isInteraction && textureKey) {
         ctx.font = `bold ${(titleSize * drawScale)}px Inter`;
         ctx.fillStyle = '#0f172a';
-        // Correctly use the textureLegendTitle from config
-        const titleText = (exportConfig && exportConfig.textureLegendTitle) ? exportConfig.textureLegendTitle : textureKey.toUpperCase();
-        ctx.fillText(titleText, x, curY);
+        ctx.fillText(textureLegendTitle, x, curY);
         curY += (titleSize * 1.4) * drawScale;
-        
+
         ctx.font = `${(itemSize * drawScale)}px Inter`;
-        
+
         textureList.forEach((tk: string) => {
              const idx = textureMap[tk];
              const count = textureCounts[tk] || 0;
@@ -702,7 +710,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
              ctx.fillRect(x, curY, boxSize, boxSize);
              ctx.strokeStyle = '#cbd5e1';
              ctx.strokeRect(x, curY, boxSize, boxSize);
-             
+
              ctx.fillStyle = '#334155';
              ctx.fillText(`${tk} (n=${count})`, x + (boxSize * 1.5), curY + (boxSize/2));
              curY += spacing;
@@ -825,7 +833,10 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                 showColorLegend: true, colorLegendTitle: config.colorBy.toUpperCase(),
                 showShapeLegend: true, shapeLegendTitle: '',
                 showTextureLegend: true, textureLegendTitle: '',
-                showLineTypeLegend: true, lineTypeLegendTitle: ''
+                showLineTypeLegend: true, lineTypeLegendTitle: '',
+                showOverlayColorLegend: true, overlayColorLegendTitle: '',
+                showOverlayShapeLegend: true, overlayShapeLegendTitle: '',
+                showOverlayLineTypeLegend: true, overlayLineTypeLegendTitle: ''
             };
             const url = generateImage(defaultExportConfig);
             if(url) {

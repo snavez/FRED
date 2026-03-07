@@ -5,7 +5,7 @@ import MainDisplay from './components/MainDisplay';
 import Header from './components/Header';
 import { generateSpeechData } from './services/dataGenerator';
 import { parseSpeechCSV, isMonophthong } from './services/csvParser';
-import { SpeechToken, PlotConfig, FilterState, ReferenceCentroid } from './types';
+import { SpeechToken, PlotConfig, FilterState, ReferenceCentroid, Layer, LayerCounters, StyleOverrides } from './types';
 
 const INITIAL_CONFIG: PlotConfig = {
   invertX: true,
@@ -16,32 +16,31 @@ const INITIAL_CONFIG: PlotConfig = {
   textureBy: 'none',
   bwMode: false,
   timePoint: 50,
-  
+
   // Data Source
   useSmoothing: false,
 
   // New categorical defaults
   groupBy: 'phoneme',
-  
+
   // Base Plot Mode
   plotType: 'point',
   trajectoryOnset: 0,
   trajectoryOffset: 100,
-  
+
   timeNormalized: true,
   showMeanTrajectories: true,
   showIndividualLines: true,
-  trajectoryLineOpacity: 0.1, // Default low for dense data
+  trajectoryLineOpacity: 0.1,
   showTrajectoryLabels: false,
-  meanTrajectoryLabelSize: 12, // Default size
-  meanTrajectoryWidth: 3, // Default width
-  meanTrajectoryOpacity: 1.0, // Default opacity
+  meanTrajectoryLabelSize: 12,
+  meanTrajectoryWidth: 3,
+  meanTrajectoryOpacity: 1.0,
   showArrows: true,
-  legendSource: 'background',
   showReferenceVowels: false,
   selectedReferenceVowels: [],
-  referencePitchFilter: [], // Empty means all
-  
+  referencePitchFilter: [],
+
   // Defaults for Reference Vowels
   refVowelLabelOpacity: 0.7,
   refVowelLabelSize: 14,
@@ -53,7 +52,7 @@ const INITIAL_CONFIG: PlotConfig = {
   showMeanMarker: true,
   showOutliers: true,
   showDurationPoints: false,
-  
+
   // Distribution defaults
   separatePlots: false,
   distGroupOrder: 'count',
@@ -69,10 +68,10 @@ const INITIAL_CONFIG: PlotConfig = {
   showEllipses: false,
   showCentroids: false,
   labelAsCentroid: false,
-  
+
   pointSize: 3,
   pointOpacity: 0.5,
-  
+
   centroidSize: 8,
   centroidOpacity: 1.0,
   labelSize: 12,
@@ -80,19 +79,20 @@ const INITIAL_CONFIG: PlotConfig = {
 
   lineWidth: 1,
   ellipseSD: 1.5,
+  ellipseLineWidth: 1.5,
   ellipseLineOpacity: 0.8,
   ellipseFillOpacity: 0.1,
-  
+
   f1Range: [200, 1200],
   f2Range: [500, 3200],
-  f3Range: [2000, 4000], // New range
+  f3Range: [2000, 4000],
   timeSeriesFrequencyRange: [0, 4000],
   durationRange: [0, 0], // Auto
   countRange: [0, 0] // Auto
 };
 
 const INITIAL_FILTERS: FilterState = {
-  mainType: 'all', // Changed from 'vowel' to 'all' to prevent hiding data by default
+  mainType: 'all',
   vowelCategory: 'all',
   phonemes: [],
   alignments: [],
@@ -104,26 +104,31 @@ const INITIAL_FILTERS: FilterState = {
   voicePitch: [],
 };
 
+const INITIAL_STYLE_OVERRIDES: StyleOverrides = {
+  colors: {},
+  shapes: {},
+  textures: {},
+  lineTypes: {}
+};
+
+const createBackgroundLayer = (): Layer => ({
+  id: 'bg',
+  name: 'Background',
+  visible: true,
+  isBackground: true,
+  config: { ...INITIAL_CONFIG },
+  filters: { ...INITIAL_FILTERS },
+  styleOverrides: { ...INITIAL_STYLE_OVERRIDES }
+});
+
 const App: React.FC = () => {
   const [data, setData] = useState<SpeechToken[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [config, setConfig] = useState<PlotConfig>(INITIAL_CONFIG);
-  const [filters, setFilters] = useState<FilterState>(INITIAL_FILTERS);
-  
-  // Overlay State
-  const [trajectoryConfig, setTrajectoryConfig] = useState<PlotConfig>({
-    ...INITIAL_CONFIG,
-    plotType: 'trajectory',
-    showPoints: false,
-    showEllipses: false,
-    showCentroids: false,
-    showIndividualLines: true,
-    trajectoryLineOpacity: 0.2,
-    showArrows: true,
-    colorBy: 'phoneme',
-  });
-  const [trajectoryFilters, setTrajectoryFilters] = useState<FilterState>(INITIAL_FILTERS);
-  const [activeLayer, setActiveLayer] = useState<'background' | 'overlay'>('background');
+
+  // Multi-layer state
+  const [layers, setLayers] = useState<Layer[]>([createBackgroundLayer()]);
+  const [activeLayerId, setActiveLayerId] = useState('bg');
+  const [layerCounters, setLayerCounters] = useState<LayerCounters>({ point: 1, trajectory: 1 });
 
   useEffect(() => {
     const loadData = async () => {
@@ -145,66 +150,181 @@ const App: React.FC = () => {
       const parsed = parseSpeechCSV(text);
       setData(parsed);
       setIsLoading(false);
-      setFilters(INITIAL_FILTERS);
+      // Reset all layer filters
+      setLayers(prev => prev.map(l => ({ ...l, filters: { ...INITIAL_FILTERS } })));
     };
     reader.readAsText(file);
   };
 
   const filterData = useCallback((sourceData: SpeechToken[], currentFilters: FilterState) => {
     return sourceData.filter(token => {
-      // 1. Vowel/Consonant Type
       if (currentFilters.mainType !== 'all') {
         if (!token.canonical_type || token.canonical_type.toLowerCase() !== currentFilters.mainType) return false;
       }
-
-      // 2. Vowel Category
       if (currentFilters.mainType === 'vowel' && currentFilters.vowelCategory !== 'all') {
         const isMono = isMonophthong(token.canonical);
         if (currentFilters.vowelCategory === 'monophthong' && !isMono) return false;
         if (currentFilters.vowelCategory === 'diphthong' && isMono) return false;
       }
-
-      // 3. Phoneme Selection (Canonical)
       if (currentFilters.phonemes.length > 0 && !currentFilters.phonemes.includes(token.canonical)) return false;
-
-      // 4. Alignment
       if (currentFilters.alignments.length > 0 && !currentFilters.alignments.includes(token.alignment)) return false;
-
-      // 5. Allophones (Produced)
       if (currentFilters.produced.length > 0 && !currentFilters.produced.includes(token.produced)) return false;
-
-      // 6. Word Selection
       if (currentFilters.words.length > 0 && !currentFilters.words.includes(token.word)) return false;
-
-      // 7. Stress & Marks
       if (currentFilters.canonicalStress.length > 0 && !currentFilters.canonicalStress.includes(token.canonical_stress)) return false;
       if (currentFilters.lexicalStress.length > 0 && !currentFilters.lexicalStress.includes(token.lexical_stress)) return false;
       if (currentFilters.syllableMark.length > 0 && !currentFilters.syllableMark.includes(token.syllable_mark)) return false;
-
-      // 8. Voice Pitch
       if (currentFilters.voicePitch.length > 0 && !currentFilters.voicePitch.includes(token.voice_pitch)) return false;
-
       return true;
     });
   }, []);
 
-  const filteredData = useMemo(() => filterData(data, filters), [data, filters, filterData]);
-  const overlayData = useMemo(() => filterData(data, trajectoryFilters), [data, trajectoryFilters, filterData]);
+  // Compute filtered data per layer
+  const layerData = useMemo(() => {
+    const result: Record<string, SpeechToken[]> = {};
+    layers.forEach(layer => {
+      result[layer.id] = filterData(data, layer.filters);
+    });
+    return result;
+  }, [data, layers, filterData]);
 
-  // Calculate Global Reference Centroids (for Ref Vowels)
+  // Derived: active layer
+  const activeLayer = useMemo(() => layers.find(l => l.id === activeLayerId) || layers[0], [layers, activeLayerId]);
+
+  // Layer management helpers
+  const updateLayer = useCallback((layerId: string, updates: Partial<Layer>) => {
+    setLayers(prev => prev.map(l => l.id === layerId ? { ...l, ...updates } : l));
+  }, []);
+
+  const updateLayerConfig = useCallback((layerId: string, key: keyof PlotConfig, value: any) => {
+    setLayers(prev => prev.map(l =>
+      l.id === layerId ? { ...l, config: { ...l.config, [key]: value } } : l
+    ));
+  }, []);
+
+  const updateLayerFilters = useCallback((layerId: string, newFilters: FilterState) => {
+    setLayers(prev => prev.map(l =>
+      l.id === layerId ? { ...l, filters: newFilters } : l
+    ));
+  }, []);
+
+  const addLayer = useCallback((type: 'point' | 'trajectory') => {
+    if (layers.length >= 10) return;
+
+    const counter = type === 'point' ? layerCounters.point : layerCounters.trajectory;
+    const prefix = type === 'point' ? 'POINT' : 'TRAJ';
+    const id = `${type}_${Date.now()}`;
+    const name = `${prefix} ${String(counter).padStart(3, '0')}`;
+
+    const newLayer: Layer = {
+      id,
+      name,
+      visible: true,
+      isBackground: false,
+      config: {
+        ...INITIAL_CONFIG,
+        plotType: type,
+        // Fix: point layers show points by default
+        showPoints: type === 'point',
+        showEllipses: false,
+        showCentroids: false,
+        // Trajectory defaults
+        showIndividualLines: type === 'trajectory',
+        trajectoryLineOpacity: type === 'trajectory' ? 0.2 : 0.1,
+        showArrows: type === 'trajectory',
+        colorBy: 'phoneme',
+      },
+      filters: { ...INITIAL_FILTERS },
+      styleOverrides: { ...INITIAL_STYLE_OVERRIDES }
+    };
+
+    setLayers(prev => [...prev, newLayer]);
+    setActiveLayerId(id);
+    setLayerCounters(prev => ({
+      ...prev,
+      [type]: prev[type] + 1
+    }));
+  }, [layers.length, layerCounters]);
+
+  const removeLayer = useCallback((layerId: string) => {
+    setLayers(prev => {
+      const layer = prev.find(l => l.id === layerId);
+      if (!layer || layer.isBackground) return prev;
+      const filtered = prev.filter(l => l.id !== layerId);
+      // If we removed the active layer, switch to background
+      if (activeLayerId === layerId) {
+        setActiveLayerId('bg');
+      }
+      return filtered;
+    });
+  }, [activeLayerId]);
+
+  const reorderLayer = useCallback((layerId: string, direction: 'up' | 'down') => {
+    setLayers(prev => {
+      const idx = prev.findIndex(l => l.id === layerId);
+      if (idx === -1) return prev;
+      // Background (idx 0) can't be moved
+      if (prev[idx].isBackground) return prev;
+      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+      // Can't move above background (idx 0) or below last
+      if (targetIdx < 1 || targetIdx >= prev.length) return prev;
+      const copy = [...prev];
+      [copy[idx], copy[targetIdx]] = [copy[targetIdx], copy[idx]];
+      return copy;
+    });
+  }, []);
+
+  const toggleLayerVisibility = useCallback((layerId: string) => {
+    setLayers(prev => prev.map(l => l.id === layerId ? { ...l, visible: !l.visible } : l));
+  }, []);
+
+  const renameLayer = useCallback((layerId: string, newName: string) => {
+    setLayers(prev => prev.map(l => l.id === layerId ? { ...l, name: newName } : l));
+  }, []);
+
+  // Update style overrides for a specific layer (or active layer if no layerId given)
+  const updateStyleOverride = useCallback((fieldKey: 'colors' | 'shapes' | 'textures' | 'lineTypes', category: string, value: any, layerId?: string) => {
+    setLayers(prev => prev.map(l => {
+      const targetId = layerId || activeLayerId;
+      if (l.id !== targetId) return l;
+      return {
+        ...l,
+        styleOverrides: {
+          ...l.styleOverrides,
+          [fieldKey]: { ...l.styleOverrides[fieldKey], [category]: value }
+        }
+      };
+    }));
+  }, [activeLayerId]);
+
+  // Proxy setConfig/setFilters for the active layer (used by Sidebar)
+  const setActiveConfig = useCallback((updater: React.SetStateAction<PlotConfig>) => {
+    setLayers(prev => prev.map(l => {
+      if (l.id !== activeLayerId) return l;
+      const newConfig = typeof updater === 'function' ? updater(l.config) : updater;
+      return { ...l, config: newConfig };
+    }));
+  }, [activeLayerId]);
+
+  const setActiveFilters = useCallback((updater: React.SetStateAction<FilterState>) => {
+    setLayers(prev => prev.map(l => {
+      if (l.id !== activeLayerId) return l;
+      const newFilters = typeof updater === 'function' ? updater(l.filters) : updater;
+      return { ...l, filters: newFilters };
+    }));
+  }, [activeLayerId]);
+
+  // Calculate Global Reference Centroids (for Ref Vowels) — uses background layer config
+  const bgConfig = layers[0].config;
   const globalReferences = useMemo(() => {
-    // Only use 'exact' alignments for reference vowels to ensure they represent the canonical target
-    // Respect the Pitch Filter for References
-    // Robust check for referencePitchFilter in case of stale state
-    const pitchFilter = config.referencePitchFilter || []; 
-    
-    const monophthongs = data.filter(t => 
-      t.type === 'vowel' && 
-      isMonophthong(t.canonical) && 
+    const pitchFilter = bgConfig.referencePitchFilter || [];
+
+    const monophthongs = data.filter(t =>
+      t.type === 'vowel' &&
+      isMonophthong(t.canonical) &&
       t.alignment === 'exact' &&
       (pitchFilter.length === 0 || pitchFilter.includes(t.voice_pitch))
     );
-    
+
     const groups: Record<string, SpeechToken[]> = {};
     monophthongs.forEach(t => {
       if (!groups[t.canonical]) groups[t.canonical] = [];
@@ -214,11 +334,9 @@ const App: React.FC = () => {
     const refs: ReferenceCentroid[] = [];
     Object.entries(groups).forEach(([key, tokens]) => {
       if (tokens.length < 5) return;
-      // Calculate based on 50% point
-      // Fallback for f1_smooth/f2_smooth in case data is stale
       const pts = tokens.map(t => t.trajectory.find(p => p.time === 50)).filter(Boolean).map(p => ({
-        f1: config.useSmoothing ? (p!.f1_smooth ?? p!.f1) : p!.f1,
-        f2: config.useSmoothing ? (p!.f2_smooth ?? p!.f2) : p!.f2
+        f1: bgConfig.useSmoothing ? (p!.f1_smooth ?? p!.f1) : p!.f1,
+        f2: bgConfig.useSmoothing ? (p!.f2_smooth ?? p!.f2) : p!.f2
       }));
 
       if (pts.length < 5) return;
@@ -235,7 +353,7 @@ const App: React.FC = () => {
         sxy += (p.f2 - meanF2) * (p.f1 - meanF1);
       });
       sxx /= pts.length; syy /= pts.length; sxy /= pts.length;
-      
+
       const common = Math.sqrt((sxx - syy) ** 2 + 4 * (sxy ** 2));
       const l1 = (sxx + syy + common) / 2;
       const l2 = (sxx + syy - common) / 2;
@@ -251,29 +369,31 @@ const App: React.FC = () => {
       });
     });
     return refs.sort((a,b) => a.canonical.localeCompare(b.canonical));
-  }, [data, config.useSmoothing, config.referencePitchFilter]); 
+  }, [data, bgConfig.useSmoothing, bgConfig.referencePitchFilter]);
+
+  const activeLayerData = layerData[activeLayerId] || [];
 
   return (
     <div className="flex h-screen w-screen bg-slate-50 overflow-hidden text-slate-900">
-      <Sidebar 
-        config={activeLayer === 'background' ? config : trajectoryConfig} 
-        setConfig={activeLayer === 'background' ? setConfig : setTrajectoryConfig} 
-        filters={activeLayer === 'background' ? filters : trajectoryFilters}
-        setFilters={activeLayer === 'background' ? setFilters : setTrajectoryFilters}
+      <Sidebar
+        config={activeLayer.config}
+        setConfig={setActiveConfig}
+        filters={activeLayer.filters}
+        setFilters={setActiveFilters}
         data={data}
-        tokenCount={activeLayer === 'background' ? filteredData.length : overlayData.length}
+        tokenCount={activeLayerData.length}
         totalCount={data.length}
         handleFileUpload={handleFileUpload}
-        activeLayer={activeLayer}
+        activeLayerName={activeLayer.isBackground ? undefined : activeLayer.name}
       />
-      
+
       <div className="flex-1 flex flex-col min-w-0">
-        <Header 
-          tokenCount={activeLayer === 'background' ? filteredData.length : overlayData.length} 
-          isLoading={isLoading} 
-          data={activeLayer === 'background' ? filteredData : overlayData}
+        <Header
+          tokenCount={activeLayerData.length}
+          isLoading={isLoading}
+          data={activeLayerData}
         />
-        
+
         <main className="flex-1 p-4 overflow-hidden">
           {isLoading ? (
             <div className="h-full w-full flex flex-col items-center justify-center space-y-4">
@@ -281,16 +401,20 @@ const App: React.FC = () => {
               <p className="text-slate-500 font-medium">Processing Acoustic Tokens...</p>
             </div>
           ) : (
-            <MainDisplay 
-              data={filteredData} 
-              config={config} 
-              setConfig={setConfig} 
-              overlayData={overlayData}
-              overlayConfig={trajectoryConfig}
-              setOverlayConfig={setTrajectoryConfig}
-              activeLayer={activeLayer}
-              setActiveLayer={setActiveLayer}
+            <MainDisplay
+              layers={layers}
+              layerData={layerData}
+              activeLayerId={activeLayerId}
+              setActiveLayerId={setActiveLayerId}
+              updateLayerConfig={updateLayerConfig}
+              addLayer={addLayer}
+              removeLayer={removeLayer}
+              reorderLayer={reorderLayer}
+              toggleLayerVisibility={toggleLayerVisibility}
+              renameLayer={renameLayer}
+              setActiveConfig={setActiveConfig}
               globalReferences={globalReferences}
+              updateStyleOverride={updateStyleOverride}
             />
           )}
         </main>

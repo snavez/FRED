@@ -207,7 +207,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
         const steps = 4;
         ctx.fillStyle = '#64748b';
         ctx.strokeStyle = '#94a3b8';
-        const isExport = drawScale > 1.5;
+        const isExport = !!exportConfig;
         
         const tickBaseSize = exportConfig ? exportConfig.tickLabelSize : (isExport ? 28 : 14);
         const tickFontSize = (tickBaseSize * drawScale) / scale;
@@ -495,7 +495,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
     const { colorMap, shapeMap, colorKey, shapeKey, colorCounts, shapeCounts } = mappings;
     let curY = y;
     
-    const isExport = drawScale > 1.5;
+    const isExport = !!exportConfig;
 
     // If custom position, override x and y
     if (exportConfig && exportConfig.legendPosition === 'custom') {
@@ -512,12 +512,21 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#0f172a';
 
-    if (exportConfig?.showColorLegend !== false && colorKey) {
+    // Determine legend visibility and titles from per-layer config or fallback to old fields
+    const layerLegendCfg = exportConfig?.layerLegends?.find(ll => ll.layerId === 'bg');
+    const showColor = layerLegendCfg ? layerLegendCfg.show : (exportConfig?.showColorLegend !== false);
+    const colorTitle = (layerLegendCfg?.colorTitle) || (exportConfig?.colorLegendTitle) || (colorKey ? colorKey.toUpperCase() : 'COLOR');
+    const showShape = layerLegendCfg ? layerLegendCfg.show : (exportConfig?.showShapeLegend !== false);
+    const shapeTitle = (layerLegendCfg?.shapeTitle) || (exportConfig?.shapeLegendTitle) || (shapeKey ? shapeKey.toUpperCase() : 'SHAPE');
+
+    const legendLayerIds = exportConfig?.legendLayers;
+    const isInLegend = !legendLayerIds || legendLayerIds.includes('bg');
+
+    if (isInLegend && showColor && colorKey) {
         ctx.font = `bold ${fontSizeTitle}px Inter`;
-        const title = (exportConfig && exportConfig.colorLegendTitle) ? exportConfig.colorLegendTitle : colorKey.toUpperCase();
-        ctx.fillText(title, x, curY);
+        ctx.fillText(colorTitle, x, curY);
         curY += fontSizeTitle * 1.4;
-        
+
         ctx.font = `${fontSizeItem}px Inter`;
         Object.entries(colorMap).sort().forEach(([k, c]) => {
             const count = colorCounts[k] || 0;
@@ -529,14 +538,13 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
         });
         curY += fontSizeTitle;
     }
-    
-    if (exportConfig?.showShapeLegend !== false && shapeKey && shapeKey !== colorKey) {
+
+    if (isInLegend && showShape && shapeKey && shapeKey !== colorKey) {
         ctx.font = `bold ${fontSizeTitle}px Inter`;
-        const title = (exportConfig && exportConfig.shapeLegendTitle) ? exportConfig.shapeLegendTitle : shapeKey.toUpperCase();
         ctx.fillStyle = '#0f172a';
-        ctx.fillText(title, x, curY);
+        ctx.fillText(shapeTitle, x, curY);
         curY += fontSizeTitle * 1.4;
-        
+
         ctx.font = `${fontSizeItem}px Inter`;
         Object.entries(shapeMap).sort().forEach(([k, s]) => {
             const count = shapeCounts[k] || 0;
@@ -559,7 +567,10 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
             showColorLegend: true, colorLegendTitle: config.colorBy.toUpperCase(),
             showShapeLegend: true, shapeLegendTitle: config.shapeBy.toUpperCase(),
             showTextureLegend: true, textureLegendTitle: '',
-            showLineTypeLegend: true, lineTypeLegendTitle: ''
+            showLineTypeLegend: true, lineTypeLegendTitle: '',
+            showOverlayColorLegend: true, overlayColorLegendTitle: '',
+            showOverlayShapeLegend: true, overlayShapeLegendTitle: '',
+            showOverlayLineTypeLegend: true, overlayLineTypeLegendTitle: ''
         };
         const offscreen = document.createElement('canvas');
         const drawScale = 3;

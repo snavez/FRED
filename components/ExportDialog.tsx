@@ -1,13 +1,13 @@
 
 import React, { useState, useEffect } from 'react';
-import { ExportConfig, PlotHandle, PlotConfig } from '../types';
+import { ExportConfig, PlotHandle, PlotConfig, Layer, LayerLegendConfig } from '../types';
 import { Download, X, RefreshCw, Type, Link, Link2Off } from 'lucide-react';
 
 interface ExportDialogProps {
   isOpen: boolean;
   onClose: () => void;
   plotRef: React.RefObject<PlotHandle>;
-  currentConfig: PlotConfig; // Passed to detect active variables
+  layers: Layer[];
   defaultTitle?: string;
 }
 
@@ -33,7 +33,7 @@ const DEFAULT_CONFIG: ExportConfig = {
   textureLegendTitle: '',
   showLineTypeLegend: true,
   lineTypeLegendTitle: '',
-  
+
   showPlotTitle: false,
   plotTitle: 'Vowel Space Plot',
   plotTitleSize: 48,
@@ -44,7 +44,7 @@ const DEFAULT_CONFIG: ExportConfig = {
   legendY: 200
 };
 
-const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, currentConfig, defaultTitle }) => {
+const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, layers, defaultTitle }) => {
   const [config, setConfig] = useState<ExportConfig>(DEFAULT_CONFIG);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -53,36 +53,46 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, c
   const [fontScale, setFontScale] = useState(1.0);
   const [isAutoCanvas, setIsAutoCanvas] = useState(true);
 
-  // Initialize titles based on current plot config when opening
+  // Initialize legend layers and per-layer configs when opening
   useEffect(() => {
     if (isOpen) {
+        const visibleLayerIds = layers.filter(l => l.visible).map(l => l.id);
+
+        const layerLegends: LayerLegendConfig[] = layers.map(layer => ({
+          layerId: layer.id,
+          show: layer.visible,
+          colorTitle: layer.config.colorBy !== 'none' ? layer.config.colorBy.toUpperCase() : 'COLOR',
+          shapeTitle: layer.config.shapeBy !== 'none' ? layer.config.shapeBy.toUpperCase() : 'SHAPE',
+          lineTypeTitle: layer.config.lineTypeBy !== 'none' ? layer.config.lineTypeBy.toUpperCase() : 'LINE TYPE',
+          textureTitle: layer.config.textureBy !== 'none' ? layer.config.textureBy.toUpperCase() : 'PATTERN',
+        }));
+
         setConfig(prev => ({
             ...prev,
             graphScaleX: prev.graphScaleX || prev.graphScale || 1.0,
             graphScaleY: prev.graphScaleY || prev.graphScale || 1.0,
-            colorLegendTitle: currentConfig.colorBy !== 'none' ? currentConfig.colorBy.toUpperCase() : 'COLOR',
-            shapeLegendTitle: currentConfig.shapeBy !== 'none' ? currentConfig.shapeBy.toUpperCase() : 'SHAPE',
-            textureLegendTitle: currentConfig.textureBy !== 'none' ? currentConfig.textureBy.toUpperCase() : 'PATTERN',
-            lineTypeLegendTitle: currentConfig.lineTypeBy !== 'none' ? currentConfig.lineTypeBy.toUpperCase() : 'LINE TYPE',
-            // Reset canvas to auto on open, or keep previous if we persist config?
-            // For now, let's respect the passed config or default. 
-            // If we want to persist user preference for fixed canvas, we'd need to lift state up.
-            // But here, let's just default to Auto unless config has values.
+            legendLayers: visibleLayerIds,
+            layerLegends,
+            // Keep background layer titles for backward compatibility
+            colorLegendTitle: layers[0].config.colorBy !== 'none' ? layers[0].config.colorBy.toUpperCase() : 'COLOR',
+            shapeLegendTitle: layers[0].config.shapeBy !== 'none' ? layers[0].config.shapeBy.toUpperCase() : 'SHAPE',
+            textureLegendTitle: layers[0].config.textureBy !== 'none' ? layers[0].config.textureBy.toUpperCase() : 'PATTERN',
+            lineTypeLegendTitle: layers[0].config.lineTypeBy !== 'none' ? layers[0].config.lineTypeBy.toUpperCase() : 'LINE TYPE',
             canvasWidth: undefined,
             canvasHeight: undefined
         }));
         setIsAutoCanvas(true);
     }
-  }, [isOpen, currentConfig]);
+  }, [isOpen, layers]);
 
   useEffect(() => {
       if (isAutoCanvas) {
           setConfig(prev => ({ ...prev, canvasWidth: undefined, canvasHeight: undefined }));
       } else {
-          setConfig(prev => ({ 
-              ...prev, 
-              canvasWidth: prev.canvasWidth || 2400, 
-              canvasHeight: prev.canvasHeight || 1600 
+          setConfig(prev => ({
+              ...prev,
+              canvasWidth: prev.canvasWidth || 2400,
+              canvasHeight: prev.canvasHeight || 1600
           }));
       }
   }, [isAutoCanvas]);
@@ -101,15 +111,11 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, c
       }));
   };
 
-  // Generate preview whenever config changes or dialog opens
   useEffect(() => {
     if (isOpen && plotRef.current) {
         setIsGenerating(true);
         const timer = setTimeout(() => {
             if (plotRef.current) {
-                // Force scale to 1 for preview to avoid OOM/blanking on high resolutions
-                // The layout logic in CanvasPlot now handles proportional scaling, 
-                // so 1x preview looks layout-wise identical to 4x export.
                 const previewConfig = { ...config, scale: 1 };
                 const url = plotRef.current.generateImage(previewConfig);
                 setPreviewUrl(url);
@@ -135,19 +141,15 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, c
   const updateConfig = (key: keyof ExportConfig, val: any) => {
       setConfig(prev => {
           const updates: Partial<ExportConfig> = { [key]: val };
-          // Link axes logic
           if (linkAxes) {
               if (key === 'xAxisLabelSize') updates.yAxisLabelSize = val;
               if (key === 'yAxisLabelSize') updates.xAxisLabelSize = val;
           }
-          // Link Graph Scale logic
           if (linkGraphScale && (key === 'graphScale' || key === 'graphScaleX' || key === 'graphScaleY')) {
-             // If linked, update all
              if (key === 'graphScale') {
                  updates.graphScaleX = val;
                  updates.graphScaleY = val;
              }
-             // If X or Y changed while linked (shouldn't happen with UI logic, but for safety)
              if (key === 'graphScaleX') {
                  updates.graphScale = val;
                  updates.graphScaleY = val;
@@ -161,27 +163,42 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, c
       });
   };
 
-  // Helper to determine which inputs to show
-  const showColorInput = currentConfig.colorBy !== 'none';
-  const showShapeInput = currentConfig.shapeBy !== 'none' && currentConfig.shapeBy !== currentConfig.colorBy;
-  const showTextureInput = currentConfig.textureBy !== 'none' && currentConfig.textureBy !== currentConfig.colorBy;
-  const showLineInput = currentConfig.lineTypeBy !== 'none';
+  const toggleLegendLayer = (layerId: string) => {
+    setConfig(prev => {
+      const current = prev.legendLayers || [];
+      const updated = current.includes(layerId)
+        ? current.filter(id => id !== layerId)
+        : [...current, layerId];
+      return { ...prev, legendLayers: updated };
+    });
+  };
+
+  const updateLayerLegend = (layerId: string, field: keyof LayerLegendConfig, value: any) => {
+    setConfig(prev => {
+      const layerLegends = (prev.layerLegends || []).map(ll =>
+        ll.layerId === layerId ? { ...ll, [field]: value } : ll
+      );
+      return { ...prev, layerLegends };
+    });
+  };
+
+  const legendLayerIds = config.legendLayers || [];
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl h-[90vh] flex overflow-hidden border border-slate-200">
-        
+
         {/* Left: Configuration Controls */}
         <div className="w-80 flex-shrink-0 bg-slate-50 border-r border-slate-200 flex flex-col">
             <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-white">
                 <h2 className="font-bold text-slate-800 text-lg flex items-center gap-2">
-                    <Type size={18} className="text-indigo-600"/> 
+                    <Type size={18} className="text-indigo-600"/>
                     Export Settings
                 </h2>
             </div>
-            
+
             <div className="flex-1 overflow-y-auto p-5 space-y-6">
-                
+
                 {/* Section: Graph Geometry */}
                 <div className="space-y-3 pb-4 border-b border-slate-200">
                     <div className="flex justify-between items-center mb-1">
@@ -190,31 +207,15 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, c
                             {linkGraphScale ? <Link size={14} /> : <Link2Off size={14} />}
                         </button>
                     </div>
-                    
+
                     {linkGraphScale ? (
                         <div>
                             <label className="text-xs font-semibold text-slate-600 mb-1 flex justify-between">
                                 Graph Scale <span>{config.graphScale?.toFixed(2) || '1.00'}x</span>
                             </label>
                             <div className="flex gap-2 items-center">
-                                <input 
-                                    type="range" 
-                                    min="0.1" 
-                                    max="3.0" 
-                                    step="0.05" 
-                                    value={config.graphScale || 1.0} 
-                                    onChange={e => updateConfig('graphScale', parseFloat(e.target.value))} 
-                                    className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"
-                                />
-                                <input 
-                                    type="number" 
-                                    min="0.1" 
-                                    max="3.0" 
-                                    step="0.1" 
-                                    value={config.graphScale || 1.0} 
-                                    onChange={e => updateConfig('graphScale', parseFloat(e.target.value))} 
-                                    className="w-16 text-xs p-1 border border-slate-300 rounded text-center"
-                                />
+                                <input type="range" min="0.1" max="3.0" step="0.05" value={config.graphScale || 1.0} onChange={e => updateConfig('graphScale', parseFloat(e.target.value))} className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
+                                <input type="number" min="0.1" max="3.0" step="0.1" value={config.graphScale || 1.0} onChange={e => updateConfig('graphScale', parseFloat(e.target.value))} className="w-16 text-xs p-1 border border-slate-300 rounded text-center"/>
                             </div>
                         </div>
                     ) : (
@@ -224,24 +225,8 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, c
                                     X Scale <span>{config.graphScaleX?.toFixed(2) || '1.00'}x</span>
                                 </label>
                                 <div className="flex gap-2 items-center">
-                                    <input 
-                                        type="range" 
-                                        min="0.1" 
-                                        max="3.0" 
-                                        step="0.05" 
-                                        value={config.graphScaleX || 1.0} 
-                                        onChange={e => updateConfig('graphScaleX', parseFloat(e.target.value))} 
-                                        className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"
-                                    />
-                                    <input 
-                                        type="number" 
-                                        min="0.1" 
-                                        max="3.0" 
-                                        step="0.1" 
-                                        value={config.graphScaleX || 1.0} 
-                                        onChange={e => updateConfig('graphScaleX', parseFloat(e.target.value))} 
-                                        className="w-16 text-xs p-1 border border-slate-300 rounded text-center"
-                                    />
+                                    <input type="range" min="0.1" max="3.0" step="0.05" value={config.graphScaleX || 1.0} onChange={e => updateConfig('graphScaleX', parseFloat(e.target.value))} className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
+                                    <input type="number" min="0.1" max="3.0" step="0.1" value={config.graphScaleX || 1.0} onChange={e => updateConfig('graphScaleX', parseFloat(e.target.value))} className="w-16 text-xs p-1 border border-slate-300 rounded text-center"/>
                                 </div>
                             </div>
                             <div>
@@ -249,24 +234,8 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, c
                                     Y Scale <span>{config.graphScaleY?.toFixed(2) || '1.00'}x</span>
                                 </label>
                                 <div className="flex gap-2 items-center">
-                                    <input 
-                                        type="range" 
-                                        min="0.1" 
-                                        max="3.0" 
-                                        step="0.05" 
-                                        value={config.graphScaleY || 1.0} 
-                                        onChange={e => updateConfig('graphScaleY', parseFloat(e.target.value))} 
-                                        className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"
-                                    />
-                                    <input 
-                                        type="number" 
-                                        min="0.1" 
-                                        max="3.0" 
-                                        step="0.1" 
-                                        value={config.graphScaleY || 1.0} 
-                                        onChange={e => updateConfig('graphScaleY', parseFloat(e.target.value))} 
-                                        className="w-16 text-xs p-1 border border-slate-300 rounded text-center"
-                                    />
+                                    <input type="range" min="0.1" max="3.0" step="0.05" value={config.graphScaleY || 1.0} onChange={e => updateConfig('graphScaleY', parseFloat(e.target.value))} className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
+                                    <input type="number" min="0.1" max="3.0" step="0.1" value={config.graphScaleY || 1.0} onChange={e => updateConfig('graphScaleY', parseFloat(e.target.value))} className="w-16 text-xs p-1 border border-slate-300 rounded text-center"/>
                                 </div>
                             </div>
                         </div>
@@ -292,26 +261,16 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, c
                             {isAutoCanvas ? 'AUTO' : 'FIXED'}
                         </button>
                     </div>
-                    
+
                     {!isAutoCanvas && (
                         <div className="grid grid-cols-2 gap-2 animate-in fade-in slide-in-from-top-2 duration-200">
                             <div>
                                 <label className="text-[10px] font-bold text-slate-500 block mb-1">Width (px)</label>
-                                <input 
-                                    type="number" 
-                                    value={config.canvasWidth || 2400} 
-                                    onChange={e => updateConfig('canvasWidth', parseInt(e.target.value))} 
-                                    className="w-full text-xs p-1 border border-slate-300 rounded"
-                                />
+                                <input type="number" value={config.canvasWidth || 2400} onChange={e => updateConfig('canvasWidth', parseInt(e.target.value))} className="w-full text-xs p-1 border border-slate-300 rounded"/>
                             </div>
                             <div>
                                 <label className="text-[10px] font-bold text-slate-500 block mb-1">Height (px)</label>
-                                <input 
-                                    type="number" 
-                                    value={config.canvasHeight || 1600} 
-                                    onChange={e => updateConfig('canvasHeight', parseInt(e.target.value))} 
-                                    className="w-full text-xs p-1 border border-slate-300 rounded"
-                                />
+                                <input type="number" value={config.canvasHeight || 1600} onChange={e => updateConfig('canvasHeight', parseInt(e.target.value))} className="w-full text-xs p-1 border border-slate-300 rounded"/>
                             </div>
                         </div>
                     )}
@@ -326,15 +285,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, c
                         <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider">Global Font Scale</h3>
                         <span className="text-xs font-bold text-indigo-600">{fontScale.toFixed(1)}x</span>
                     </div>
-                    <input 
-                        type="range" 
-                        min="0.5" 
-                        max="3.0" 
-                        step="0.1" 
-                        value={fontScale} 
-                        onChange={e => handleFontScaleChange(parseFloat(e.target.value))} 
-                        className="w-full accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"
-                    />
+                    <input type="range" min="0.5" max="3.0" step="0.1" value={fontScale} onChange={e => handleFontScaleChange(parseFloat(e.target.value))} className="w-full accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
                 </div>
 
                 {/* Section: Chart Title */}
@@ -343,16 +294,10 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, c
                         <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider">Chart Title</h3>
                         <input type="checkbox" checked={config.showPlotTitle} onChange={e => updateConfig('showPlotTitle', e.target.checked)} className="rounded text-indigo-600 scale-75"/>
                     </div>
-                    
+
                     {config.showPlotTitle && (
                         <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                            <input 
-                                type="text" 
-                                value={config.plotTitle} 
-                                onChange={e => updateConfig('plotTitle', e.target.value)} 
-                                className="w-full text-xs p-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 outline-none" 
-                                placeholder="Enter chart title..."
-                            />
+                            <input type="text" value={config.plotTitle} onChange={e => updateConfig('plotTitle', e.target.value)} className="w-full text-xs p-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 outline-none" placeholder="Enter chart title..."/>
                             <div>
                                 <label className="text-xs font-semibold text-slate-600 mb-1 flex justify-between">
                                     Size <span>{config.plotTitleSize}px</span>
@@ -386,7 +331,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, c
                             {linkAxes ? <Link size={14} /> : <Link2Off size={14} />}
                         </button>
                     </div>
-                    
+
                     <div>
                         <label className="text-xs font-semibold text-slate-600 mb-1 flex justify-between">
                             X Axis Size <span>{config.xAxisLabelSize}px</span>
@@ -440,7 +385,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, c
                             </div>
                         </div>
                     </div>
-                    
+
                     <div>
                         <label className="text-xs font-semibold text-slate-600 mb-1 flex justify-between">
                             Data Labels <span>{config.dataLabelSize}px</span>
@@ -467,8 +412,8 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, c
                         <>
                             <div className="mb-3">
                                 <label className="text-xs font-semibold text-slate-600 mb-1 block">Position</label>
-                                <select 
-                                    value={config.legendPosition} 
+                                <select
+                                    value={config.legendPosition}
                                     onChange={e => updateConfig('legendPosition', e.target.value)}
                                     className="w-full text-xs p-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 outline-none bg-white"
                                 >
@@ -484,70 +429,84 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, c
                                 <div className="grid grid-cols-2 gap-2 mb-3 bg-slate-100 p-2 rounded">
                                     <div>
                                         <label className="text-[10px] font-bold text-slate-500 block mb-1">X Coordinate</label>
-                                        <input 
-                                            type="number" 
-                                            value={config.legendX} 
-                                            onChange={e => {
-                                                const val = parseInt(e.target.value);
-                                                updateConfig('legendX', isNaN(val) ? 0 : val);
-                                            }} 
-                                            className="w-full text-xs p-1 border border-slate-300 rounded"
-                                        />
+                                        <input type="number" value={config.legendX} onChange={e => { const val = parseInt(e.target.value); updateConfig('legendX', isNaN(val) ? 0 : val); }} className="w-full text-xs p-1 border border-slate-300 rounded"/>
                                     </div>
                                     <div>
                                         <label className="text-[10px] font-bold text-slate-500 block mb-1">Y Coordinate</label>
-                                        <input 
-                                            type="number" 
-                                            value={config.legendY} 
-                                            onChange={e => {
-                                                const val = parseInt(e.target.value);
-                                                updateConfig('legendY', isNaN(val) ? 0 : val);
-                                            }} 
-                                            className="w-full text-xs p-1 border border-slate-300 rounded"
-                                        />
+                                        <input type="number" value={config.legendY} onChange={e => { const val = parseInt(e.target.value); updateConfig('legendY', isNaN(val) ? 0 : val); }} className="w-full text-xs p-1 border border-slate-300 rounded"/>
                                     </div>
                                 </div>
                             )}
 
-                            {showColorInput && (
-                                <div>
-                                    <div className="flex justify-between items-center mb-1">
-                                        <label className="text-xs font-semibold text-slate-600">Color Heading</label>
-                                        <input type="checkbox" checked={config.showColorLegend} onChange={e => updateConfig('showColorLegend', e.target.checked)} className="rounded text-indigo-600 scale-75"/>
-                                    </div>
-                                    <input type="text" value={config.colorLegendTitle} onChange={e => updateConfig('colorLegendTitle', e.target.value)} disabled={!config.showColorLegend} className="w-full text-xs p-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 outline-none disabled:bg-slate-100" />
-                                </div>
-                            )}
+                            {/* Per-layer legend controls */}
+                            <div className="space-y-3">
+                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Layer Legend</h4>
+                                {layers.map(layer => {
+                                  const llCfg = (config.layerLegends || []).find(ll => ll.layerId === layer.id);
+                                  const isInLegend = legendLayerIds.includes(layer.id);
 
-                            {showShapeInput && (
-                                <div>
-                                    <div className="flex justify-between items-center mb-1">
-                                        <label className="text-xs font-semibold text-slate-600">Shape Heading</label>
-                                        <input type="checkbox" checked={config.showShapeLegend} onChange={e => updateConfig('showShapeLegend', e.target.checked)} className="rounded text-indigo-600 scale-75"/>
+                                  return (
+                                    <div key={layer.id} className="space-y-1.5 pb-2 border-b border-slate-100">
+                                      <div className="flex justify-between items-center">
+                                        <label className="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
+                                          <input
+                                            type="checkbox"
+                                            checked={isInLegend}
+                                            onChange={() => toggleLegendLayer(layer.id)}
+                                            className="rounded text-indigo-600 scale-75"
+                                          />
+                                          <span className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[8px] font-black ${
+                                            layer.config.plotType === 'trajectory' ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600'
+                                          }`}>
+                                            {layer.config.plotType === 'trajectory' ? 'T' : 'P'}
+                                          </span>
+                                          {layer.name}
+                                        </label>
+                                      </div>
+                                      {isInLegend && llCfg && (
+                                        <div className="pl-5 space-y-1">
+                                          {layer.config.colorBy !== 'none' && (
+                                            <div className="flex items-center gap-1">
+                                              <span className="text-[9px] text-slate-400 w-12">Color</span>
+                                              <input
+                                                type="text"
+                                                value={llCfg.colorTitle}
+                                                onChange={e => updateLayerLegend(layer.id, 'colorTitle', e.target.value)}
+                                                className="flex-1 text-[10px] p-0.5 border border-slate-200 rounded"
+                                                placeholder={layer.config.colorBy.toUpperCase()}
+                                              />
+                                            </div>
+                                          )}
+                                          {layer.config.shapeBy !== 'none' && layer.config.shapeBy !== layer.config.colorBy && (
+                                            <div className="flex items-center gap-1">
+                                              <span className="text-[9px] text-slate-400 w-12">Shape</span>
+                                              <input
+                                                type="text"
+                                                value={llCfg.shapeTitle}
+                                                onChange={e => updateLayerLegend(layer.id, 'shapeTitle', e.target.value)}
+                                                className="flex-1 text-[10px] p-0.5 border border-slate-200 rounded"
+                                                placeholder={layer.config.shapeBy.toUpperCase()}
+                                              />
+                                            </div>
+                                          )}
+                                          {layer.config.lineTypeBy !== 'none' && (
+                                            <div className="flex items-center gap-1">
+                                              <span className="text-[9px] text-slate-400 w-12">Line</span>
+                                              <input
+                                                type="text"
+                                                value={llCfg.lineTypeTitle}
+                                                onChange={e => updateLayerLegend(layer.id, 'lineTypeTitle', e.target.value)}
+                                                className="flex-1 text-[10px] p-0.5 border border-slate-200 rounded"
+                                                placeholder={layer.config.lineTypeBy.toUpperCase()}
+                                              />
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
                                     </div>
-                                    <input type="text" value={config.shapeLegendTitle} onChange={e => updateConfig('shapeLegendTitle', e.target.value)} disabled={!config.showShapeLegend} className="w-full text-xs p-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 outline-none disabled:bg-slate-100" />
-                                </div>
-                            )}
-
-                            {showTextureInput && (
-                                <div>
-                                    <div className="flex justify-between items-center mb-1">
-                                        <label className="text-xs font-semibold text-slate-600">Pattern Heading</label>
-                                        <input type="checkbox" checked={config.showTextureLegend} onChange={e => updateConfig('showTextureLegend', e.target.checked)} className="rounded text-indigo-600 scale-75"/>
-                                    </div>
-                                    <input type="text" value={config.textureLegendTitle} onChange={e => updateConfig('textureLegendTitle', e.target.value)} disabled={!config.showTextureLegend} className="w-full text-xs p-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 outline-none disabled:bg-slate-100" />
-                                </div>
-                            )}
-
-                            {showLineInput && (
-                                <div>
-                                    <div className="flex justify-between items-center mb-1">
-                                        <label className="text-xs font-semibold text-slate-600">Line Heading</label>
-                                        <input type="checkbox" checked={config.showLineTypeLegend} onChange={e => updateConfig('showLineTypeLegend', e.target.checked)} className="rounded text-indigo-600 scale-75"/>
-                                    </div>
-                                    <input type="text" value={config.lineTypeLegendTitle} onChange={e => updateConfig('lineTypeLegendTitle', e.target.value)} disabled={!config.showLineTypeLegend} className="w-full text-xs p-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 outline-none disabled:bg-slate-100" />
-                                </div>
-                            )}
+                                  );
+                                })}
+                            </div>
 
                             <div className="pt-2 border-t border-slate-100 mt-2">
                                 <label className="text-xs font-semibold text-slate-600 mb-1 flex justify-between">
@@ -579,8 +538,8 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, c
                     <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider mb-2">Resolution</h3>
                     <div className="flex gap-2">
                         {[1, 2, 3, 4].map(s => (
-                            <button 
-                                key={s} 
+                            <button
+                                key={s}
                                 onClick={() => updateConfig('scale', s)}
                                 className={`flex-1 py-1 text-xs font-bold rounded border ${config.scale === s ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200'}`}
                             >
