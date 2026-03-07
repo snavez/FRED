@@ -34,7 +34,7 @@ const Header: React.FC<HeaderProps> = ({ tokenCount, isLoading, data }) => {
           <Activity size={20} />
         </div>
         <div>
-          <h1 className="text-lg font-bold text-slate-900">VowelVision Pro</h1>
+          <h1 className="text-lg font-bold text-slate-900">FRED</h1>
           <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Speech Acoustic Explorer</p>
         </div>
       </div>

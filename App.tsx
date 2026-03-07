@@ -1,16 +1,16 @@
 
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import MainDisplay from './components/MainDisplay';
 import Header from './components/Header';
-import { generateSpeechData } from './services/dataGenerator';
-import { parseSpeechCSV, isMonophthong } from './services/csvParser';
-import { SpeechToken, PlotConfig, FilterState, ReferenceCentroid, Layer, LayerCounters, StyleOverrides } from './types';
+import { parseSpeechCSV, isMonophthong, detectDelimiter, splitRow, autoDetectMappings, parseWithMappings } from './services/csvParser';
+import { SpeechToken, PlotConfig, FilterState, ReferenceCentroid, Layer, LayerCounters, StyleOverrides, ColumnMapping, DatasetMeta } from './types';
+import DataMappingDialog from './components/DataMappingDialog';
 
 const INITIAL_CONFIG: PlotConfig = {
   invertX: true,
   invertY: true,
-  colorBy: 'phoneme',
+  colorBy: 'none',
   shapeBy: 'none',
   lineTypeBy: 'none',
   textureBy: 'none',
@@ -37,6 +37,9 @@ const INITIAL_CONFIG: PlotConfig = {
   meanTrajectoryWidth: 3,
   meanTrajectoryOpacity: 1.0,
   showArrows: true,
+  showMeanTrajectoryPoints: true,
+  meanTrajectoryPointSize: 4,
+  meanTrajectoryArrowSize: 3,
   showReferenceVowels: false,
   selectedReferenceVowels: [],
   referencePitchFilter: [],
@@ -83,6 +86,8 @@ const INITIAL_CONFIG: PlotConfig = {
   ellipseLineOpacity: 0.8,
   ellipseFillOpacity: 0.1,
 
+  tooltipFields: ['file_id', 'word', 'canonical', 'produced', 'xmin', 'duration'],
+
   f1Range: [200, 1200],
   f2Range: [500, 3200],
   f3Range: [2000, 4000],
@@ -92,8 +97,8 @@ const INITIAL_CONFIG: PlotConfig = {
 };
 
 const INITIAL_FILTERS: FilterState = {
-  mainType: 'all',
-  vowelCategory: 'all',
+  types: [],
+  vowelCategories: [],
   phonemes: [],
   alignments: [],
   produced: [],
@@ -102,6 +107,35 @@ const INITIAL_FILTERS: FilterState = {
   lexicalStress: [],
   syllableMark: [],
   voicePitch: [],
+  customFilters: {},
+};
+
+/** Compute a FilterState with all values selected from the data */
+const computeSelectAllFilters = (tokens: SpeechToken[], meta: DatasetMeta | null): FilterState => {
+  const customFilters: Record<string, string[]> = {};
+  if (meta) {
+    meta.customColumns.forEach(col => {
+      customFilters[col] = Array.from(new Set(tokens.map(t => t.customFields?.[col] ?? '').filter(v => v !== '')));
+    });
+  }
+  const vowelTokens = tokens.filter(t => t.canonical_type?.toLowerCase() === 'vowel');
+  const categories: string[] = [];
+  if (vowelTokens.some(t => isMonophthong(t.canonical))) categories.push('monophthong');
+  if (vowelTokens.some(t => !isMonophthong(t.canonical))) categories.push('diphthong');
+
+  return {
+    types: Array.from(new Set(tokens.map(t => t.canonical_type?.toLowerCase()).filter(Boolean))),
+    vowelCategories: categories,
+    phonemes: Array.from(new Set(tokens.map(t => t.canonical).filter(Boolean))),
+    alignments: Array.from(new Set(tokens.map(t => t.alignment).filter(Boolean))),
+    produced: Array.from(new Set(tokens.map(t => t.produced).filter(Boolean))),
+    words: Array.from(new Set(tokens.map(t => t.word).filter(Boolean))),
+    canonicalStress: Array.from(new Set(tokens.map(t => t.canonical_stress).filter(Boolean))),
+    lexicalStress: Array.from(new Set(tokens.map(t => t.lexical_stress).filter(Boolean))),
+    syllableMark: Array.from(new Set(tokens.map(t => t.syllable_mark).filter(Boolean))),
+    voicePitch: Array.from(new Set(tokens.map(t => t.voice_pitch).filter(Boolean))),
+    customFilters,
+  };
 };
 
 const INITIAL_STYLE_OVERRIDES: StyleOverrides = {
@@ -123,57 +157,112 @@ const createBackgroundLayer = (): Layer => ({
 
 const App: React.FC = () => {
   const [data, setData] = useState<SpeechToken[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
   // Multi-layer state
   const [layers, setLayers] = useState<Layer[]>([createBackgroundLayer()]);
   const [activeLayerId, setActiveLayerId] = useState('bg');
   const [layerCounters, setLayerCounters] = useState<LayerCounters>({ point: 1, trajectory: 1 });
 
-  useEffect(() => {
-    const loadData = async () => {
-      setIsLoading(true);
-      const tokens = generateSpeechData(5000);
-      setData(tokens);
-      setIsLoading(false);
-    };
-    loadData();
-  }, []);
+  // Flexible parsing state
+  const [datasetMeta, setDatasetMeta] = useState<DatasetMeta | null>(null);
+  const [mappingDialog, setMappingDialog] = useState<{
+    isOpen: boolean;
+    rawText: string;
+    headers: string[];
+    sampleData: string[][];
+    detectedMappings: ColumnMapping[];
+    fileName: string;
+  } | null>(null);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setIsLoading(true);
     const reader = new FileReader();
     reader.onload = (event) => {
       const text = event.target?.result as string;
-      const parsed = parseSpeechCSV(text);
-      setData(parsed);
-      setIsLoading(false);
-      // Reset all layer filters
-      setLayers(prev => prev.map(l => ({ ...l, filters: { ...INITIAL_FILTERS } })));
+      const delimiter = detectDelimiter(text);
+      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      if (lines.length < 2) return;
+
+      const headers = splitRow(lines[0], delimiter).map(h => h.trim().replace(/^"|"$/g, ''));
+      const sampleRows = lines.slice(1, 6).map(l => splitRow(l, delimiter));
+      const detected = autoDetectMappings(headers, sampleRows);
+
+      setMappingDialog({
+        isOpen: true,
+        rawText: text,
+        headers,
+        sampleData: sampleRows,
+        detectedMappings: detected,
+        fileName: file.name
+      });
     };
     reader.readAsText(file);
+    // Reset the input so the same file can be re-uploaded
+    e.target.value = '';
   };
 
+  const handleMappingConfirm = useCallback((mappings: ColumnMapping[]) => {
+    if (!mappingDialog) return;
+    setIsLoading(true);
+    const { tokens, meta } = parseWithMappings(mappingDialog.rawText, mappings, mappingDialog.fileName);
+    setData(tokens);
+    setDatasetMeta(meta);
+    const allFilters = computeSelectAllFilters(tokens, meta);
+    setLayers(prev => prev.map(l => ({ ...l, filters: allFilters })));
+    setMappingDialog(null);
+    setIsLoading(false);
+  }, [mappingDialog]);
+
   const filterData = useCallback((sourceData: SpeechToken[], currentFilters: FilterState) => {
+    if (sourceData.length === 0) return [];
+
+    // Pre-convert arrays to Sets for O(1) lookups instead of O(n) Array.includes()
+    const typeSet = new Set(currentFilters.types);
+    const catSet = new Set(currentFilters.vowelCategories);
+    const phonemeSet = new Set(currentFilters.phonemes);
+    const alignSet = new Set(currentFilters.alignments);
+    const producedSet = new Set(currentFilters.produced);
+    const wordSet = new Set(currentFilters.words);
+    const canStressSet = new Set(currentFilters.canonicalStress);
+    const lexStressSet = new Set(currentFilters.lexicalStress);
+    const sylMarkSet = new Set(currentFilters.syllableMark);
+    const pitchSet = new Set(currentFilters.voicePitch);
+
+    const customSets: Record<string, Set<string>> = {};
+    if (currentFilters.customFilters) {
+      for (const [field, values] of Object.entries(currentFilters.customFilters)) {
+        if (values.length > 0) customSets[field] = new Set(values);
+      }
+    }
+
     return sourceData.filter(token => {
-      if (currentFilters.mainType !== 'all') {
-        if (!token.canonical_type || token.canonical_type.toLowerCase() !== currentFilters.mainType) return false;
-      }
-      if (currentFilters.mainType === 'vowel' && currentFilters.vowelCategory !== 'all') {
+      // Types (required filter)
+      if (typeSet.size > 0) {
+        if (!typeSet.has(token.canonical_type?.toLowerCase())) return false;
+      } else { return false; }
+      // Vowel categories (only applies to vowels)
+      if (catSet.size > 0 && token.canonical_type?.toLowerCase() === 'vowel') {
         const isMono = isMonophthong(token.canonical);
-        if (currentFilters.vowelCategory === 'monophthong' && !isMono) return false;
-        if (currentFilters.vowelCategory === 'diphthong' && isMono) return false;
+        if (!catSet.has(isMono ? 'monophthong' : 'diphthong')) return false;
       }
-      if (currentFilters.phonemes.length > 0 && !currentFilters.phonemes.includes(token.canonical)) return false;
-      if (currentFilters.alignments.length > 0 && !currentFilters.alignments.includes(token.alignment)) return false;
-      if (currentFilters.produced.length > 0 && !currentFilters.produced.includes(token.produced)) return false;
-      if (currentFilters.words.length > 0 && !currentFilters.words.includes(token.word)) return false;
-      if (currentFilters.canonicalStress.length > 0 && !currentFilters.canonicalStress.includes(token.canonical_stress)) return false;
-      if (currentFilters.lexicalStress.length > 0 && !currentFilters.lexicalStress.includes(token.lexical_stress)) return false;
-      if (currentFilters.syllableMark.length > 0 && !currentFilters.syllableMark.includes(token.syllable_mark)) return false;
-      if (currentFilters.voicePitch.length > 0 && !currentFilters.voicePitch.includes(token.voice_pitch)) return false;
+      // Phonemes (required filter)
+      if (phonemeSet.size > 0) {
+        if (!phonemeSet.has(token.canonical)) return false;
+      } else { return false; }
+      // Optional filters: empty = no restriction
+      if (alignSet.size > 0 && !alignSet.has(token.alignment)) return false;
+      if (producedSet.size > 0 && !producedSet.has(token.produced)) return false;
+      if (wordSet.size > 0 && !wordSet.has(token.word)) return false;
+      if (canStressSet.size > 0 && !canStressSet.has(token.canonical_stress)) return false;
+      if (lexStressSet.size > 0 && !lexStressSet.has(token.lexical_stress)) return false;
+      if (sylMarkSet.size > 0 && !sylMarkSet.has(token.syllable_mark)) return false;
+      if (pitchSet.size > 0 && !pitchSet.has(token.voice_pitch)) return false;
+      // Custom filters
+      for (const [field, set] of Object.entries(customSets)) {
+        if (!set.has(token.customFields?.[field] ?? '')) return false;
+      }
       return true;
     });
   }, []);
@@ -223,17 +312,16 @@ const App: React.FC = () => {
       config: {
         ...INITIAL_CONFIG,
         plotType: type,
-        // Fix: point layers show points by default
         showPoints: type === 'point',
         showEllipses: false,
         showCentroids: false,
-        // Trajectory defaults
         showIndividualLines: type === 'trajectory',
         trajectoryLineOpacity: type === 'trajectory' ? 0.2 : 0.1,
         showArrows: type === 'trajectory',
+        showMeanTrajectoryPoints: type === 'trajectory',
         colorBy: 'phoneme',
       },
-      filters: { ...INITIAL_FILTERS },
+      filters: computeSelectAllFilters(data, datasetMeta),
       styleOverrides: { ...INITIAL_STYLE_OVERRIDES }
     };
 
@@ -243,7 +331,7 @@ const App: React.FC = () => {
       ...prev,
       [type]: prev[type] + 1
     }));
-  }, [layers.length, layerCounters]);
+  }, [layers.length, layerCounters, data, datasetMeta]);
 
   const removeLayer = useCallback((layerId: string) => {
     setLayers(prev => {
@@ -371,6 +459,26 @@ const App: React.FC = () => {
     return refs.sort((a,b) => a.canonical.localeCompare(b.canonical));
   }, [data, bgConfig.useSmoothing, bgConfig.referencePitchFilter]);
 
+  const handleToggleFieldVisibility = useCallback((key: string, visible: boolean) => {
+    setDatasetMeta(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        columnMappings: prev.columnMappings.map(m => {
+          // Match custom fields by customFieldName
+          if (m.role === 'custom' && m.customFieldName === key) {
+            return { ...m, showInSidebar: visible };
+          }
+          // Match built-in fields by role
+          if (m.role !== 'custom' && m.role !== 'formant' && m.role !== 'ignore' && m.role === key) {
+            return { ...m, showInSidebar: visible };
+          }
+          return m;
+        })
+      };
+    });
+  }, []);
+
   const activeLayerData = layerData[activeLayerId] || [];
 
   return (
@@ -385,6 +493,8 @@ const App: React.FC = () => {
         totalCount={data.length}
         handleFileUpload={handleFileUpload}
         activeLayerName={activeLayer.isBackground ? undefined : activeLayer.name}
+        datasetMeta={datasetMeta}
+        onToggleFieldVisibility={handleToggleFieldVisibility}
       />
 
       <div className="flex-1 flex flex-col min-w-0">
@@ -415,10 +525,24 @@ const App: React.FC = () => {
               setActiveConfig={setActiveConfig}
               globalReferences={globalReferences}
               updateStyleOverride={updateStyleOverride}
+              datasetMeta={datasetMeta}
             />
           )}
         </main>
       </div>
+
+      {/* Data Mapping Dialog */}
+      {mappingDialog && (
+        <DataMappingDialog
+          isOpen={mappingDialog.isOpen}
+          onClose={() => setMappingDialog(null)}
+          onConfirm={handleMappingConfirm}
+          headers={mappingDialog.headers}
+          sampleData={mappingDialog.sampleData}
+          detectedMappings={mappingDialog.detectedMappings}
+          fileName={mappingDialog.fileName}
+        />
+      )}
     </div>
   );
 };

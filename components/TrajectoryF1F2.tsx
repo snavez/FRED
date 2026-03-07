@@ -18,17 +18,7 @@ const COLORS = [
 
 const BW_COLORS = ['#000000', '#525252', '#969696', '#d4d4d4'];
 
-const getLabel = (t: SpeechToken, key: string): string => {
-  if (!key || key === 'none') return '';
-  if (key === 'phoneme') return t.canonical;
-  if (key === 'syllable_mark') {
-    const val = parseInt(t.syllable_mark, 10);
-    if (isNaN(val)) return t.syllable_mark;
-    return val > 0 ? 'accepted' : 'rejected';
-  }
-  const val = (t as any)[key];
-  return val !== undefined && val !== null ? String(val) : '';
-};
+import { getLabel } from '../utils/getLabel';
 
 const PATTERN_MAP: Record<string, number[]> = {
     'solid': [],
@@ -98,10 +88,13 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
     Object.entries(combinedGroups).forEach(([key, tokens]) => {
       const tks = tokens as SpeechToken[];
       const path = [];
-      const start = Math.ceil((config.trajectoryOnset ?? 0) / 10) * 10;
-      const end = Math.floor((config.trajectoryOffset ?? 100) / 10) * 10;
-      
-      for (let t = start; t <= end; t += 10) {
+      // Derive time-steps from data rather than hardcoded 0-100 by 10
+      const allTimes = new Set<number>();
+      tks.forEach(tk => tk.trajectory.forEach(p => allTimes.add(p.time)));
+      const timeSteps = Array.from(allTimes).sort((a, b) => a - b)
+        .filter(t => t >= (config.trajectoryOnset ?? 0) && t <= (config.trajectoryOffset ?? 100));
+
+      for (const t of timeSteps) {
         let sumF1 = 0, sumF2 = 0, count = 0;
         tks.forEach(token => {
           const pt = token.trajectory.find(p => p.time === t);

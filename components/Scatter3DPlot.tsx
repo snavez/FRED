@@ -22,16 +22,20 @@ const SHAPES = [
   'plus', 'cross', 'asterisk'
 ];
 
-const getLabel = (t: SpeechToken, key: string): string => {
-  if (!key || key === 'none') return '';
-  if (key === 'phoneme') return t.canonical;
-  if (key === 'syllable_mark') {
-    const val = parseInt(t.syllable_mark, 10);
-    if (isNaN(val)) return t.syllable_mark;
-    return val > 0 ? 'accepted' : 'rejected';
+import { getLabel } from '../utils/getLabel';
+
+// Find nearest available time-point in a token's trajectory
+const findNearestTimePoint = (trajectory: { time: number }[], target: number): number | undefined => {
+  if (trajectory.length === 0) return undefined;
+  const exact = trajectory.find(p => p.time === target);
+  if (exact) return target;
+  let best = trajectory[0].time;
+  let bestDist = Math.abs(best - target);
+  for (const p of trajectory) {
+    const d = Math.abs(p.time - target);
+    if (d < bestDist) { best = p.time; bestDist = d; }
   }
-  const val = (t as any)[key];
-  return val !== undefined && val !== null ? String(val) : '';
+  return best;
 };
 
 // 3D Point Interface
@@ -320,7 +324,8 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
     const points: (Point3D & { px: number, py: number, depth: number })[] = [];
     
     data.forEach(t => {
-      const pt = t.trajectory.find(p => p.time === config.timePoint);
+      const nearestTime = findNearestTimePoint(t.trajectory, config.timePoint);
+      const pt = nearestTime !== undefined ? t.trajectory.find(p => p.time === nearestTime) : undefined;
       if (!pt) return;
 
       const f1 = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;

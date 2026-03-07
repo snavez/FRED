@@ -37,17 +37,7 @@ const DASH_PATTERNS = [
 // Names corresponding to DASH_PATTERNS indices for editor reconstruction
 const DASH_NAMES = ['solid', 'dash', 'dot', 'longdash', 'dotdash', 'solid'];
 
-const getLabel = (t: SpeechToken, key: string): string => {
-  if (!key || key === 'none') return '';
-  if (key === 'phoneme') return t.canonical;
-  if (key === 'syllable_mark') {
-    const val = parseInt(t.syllable_mark, 10);
-    if (isNaN(val)) return t.syllable_mark;
-    return val > 0 ? 'accepted' : 'rejected';
-  }
-  const val = (t as any)[key];
-  return val !== undefined && val !== null ? String(val) : '';
-};
+import { getLabel } from '../utils/getLabel';
 
 const lerp = (v0: number, v1: number, t: number) => v0 * (1 - t) + v1 * t;
 
@@ -125,21 +115,29 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
 
     Object.entries(combinedGroups).forEach(([compKey, tokens]) => {
       const tks = tokens as SpeechToken[];
-      const binCount = config.timeNormalized ? 11 : 50;
+
+      // Derive actual time-points from data for normalized mode
+      const allNormTimes = new Set<number>();
+      tks.forEach(tk => tk.trajectory.forEach(p => allNormTimes.add(p.time)));
+      const sortedNormTimes = Array.from(allNormTimes).sort((a, b) => a - b);
+      const normBinCount = sortedNormTimes.length || 11;
+
+      const binCount = config.timeNormalized ? normBinCount : 50;
       const f1Sums = new Array(binCount).fill(0);
       const f2Sums = new Array(binCount).fill(0);
       const counts = new Array(binCount).fill(0);
       const maxDur = Math.max(...tks.map(t => t.duration));
-      const binSize = config.timeNormalized ? 10 : maxDur / binCount;
+      const binSize = config.timeNormalized ? (sortedNormTimes.length > 1 ? sortedNormTimes[1] - sortedNormTimes[0] : 10) : maxDur / binCount;
 
       tks.forEach(t => {
          if (config.timeNormalized) {
              t.trajectory.forEach(p => {
-                 const idx = Math.round(p.time/10);
+                 // Map trajectory point time to bin index using sorted time-points
+                 const idx = sortedNormTimes.indexOf(p.time);
                  const f1 = config.useSmoothing ? (p.f1_smooth ?? p.f1) : p.f1;
                  const f2 = config.useSmoothing ? (p.f2_smooth ?? p.f2) : p.f2;
-                 if(idx>=0 && idx<=10 && !isNaN(f1) && !isNaN(f2)) { 
-                     f1Sums[idx]+=f1; f2Sums[idx]+=f2; counts[idx]++; 
+                 if(idx >= 0 && idx < normBinCount && !isNaN(f1) && !isNaN(f2)) {
+                     f1Sums[idx]+=f1; f2Sums[idx]+=f2; counts[idx]++;
                  }
              });
          } else {
@@ -148,11 +146,16 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
                  const time = i * binSize;
                  if(time > t.duration) continue;
                  const normTime = (time/t.duration)*100;
-                 const idx = Math.floor(normTime/10);
-                 const nextIdx = Math.ceil(normTime/10);
-                 if(idx < 0 || nextIdx > 10) continue;
-                 const p0 = t.trajectory.find(p => p.time === idx*10);
-                 const p1 = t.trajectory.find(p => p.time === nextIdx*10);
+                 // Find bracketing trajectory points
+                 let p0Idx = -1, p1Idx = -1;
+                 for (let j = 0; j < t.trajectory.length - 1; j++) {
+                     if (t.trajectory[j].time <= normTime && t.trajectory[j+1].time >= normTime) {
+                         p0Idx = j; p1Idx = j + 1; break;
+                     }
+                 }
+                 if (p0Idx < 0 || p1Idx < 0) continue;
+                 const p0 = t.trajectory[p0Idx];
+                 const p1 = t.trajectory[p1Idx];
                  if(p0 && p1) {
                      const f1_0 = config.useSmoothing ? (p0.f1_smooth ?? p0.f1) : p0.f1;
                      const f1_1 = config.useSmoothing ? (p1.f1_smooth ?? p1.f1) : p1.f1;
@@ -160,7 +163,8 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
                      const f2_1 = config.useSmoothing ? (p1.f2_smooth ?? p1.f2) : p1.f2;
 
                      if (!isNaN(f1_0) && !isNaN(f1_1) && !isNaN(f2_0) && !isNaN(f2_1)) {
-                        const alpha = (normTime - idx*10)/10;
+                        const span = p1.time - p0.time;
+                        const alpha = span > 0 ? (normTime - p0.time) / span : 0;
                         f1Sums[i] += lerp(f1_0, f1_1, alpha);
                         f2Sums[i] += lerp(f2_0, f2_1, alpha);
                         counts[i]++;
@@ -169,9 +173,10 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
              }
          }
       });
-      
+
       const mapPoints = (sums: number[], cnts: number[]) => sums.map((s, i) => ({
-          x: i * binSize, y: cnts[i] ? s/cnts[i] : NaN
+          x: config.timeNormalized ? sortedNormTimes[i] ?? (i * binSize) : i * binSize,
+          y: cnts[i] ? s/cnts[i] : NaN
       })).filter(p => !isNaN(p.y));
 
       result[compKey] = { f1: mapPoints(f1Sums, counts), f2: mapPoints(f2Sums, counts) };
@@ -626,7 +631,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     let minDist = 15;
 
     for (const t of data) {
-       const mid = t.trajectory[5]; 
+       const mid = t.trajectory[Math.floor(t.trajectory.length / 2)];
        if (!mid) continue;
        const tVal = config.timeNormalized ? mid.time : (mid.time / 100) * t.duration;
        const px = mapX(tVal);

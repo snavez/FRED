@@ -26,9 +26,10 @@ export interface SpeechToken {
   xmin: number;
   duration: number;
   trajectory: TrajectoryPoint[]; // 0 to 100 in 10% steps
+  customFields?: Record<string, string>;
 }
 
-export type VariableType = 'phoneme' | 'lexical_stress' | 'canonical_stress' | 'syllable_mark' | 'alignment' | 'word' | 'produced' | 'voice_pitch' | 'none';
+export type VariableType = string;
 
 export interface StyleOverrides {
   colors: Record<string, string>;
@@ -73,6 +74,9 @@ export interface PlotConfig {
   meanTrajectoryWidth: number;
   meanTrajectoryOpacity: number;
   showArrows: boolean;
+  showMeanTrajectoryPoints: boolean;
+  meanTrajectoryPointSize: number;
+  meanTrajectoryArrowSize: number;
   showReferenceVowels: boolean;
   selectedReferenceVowels: string[];
   referencePitchFilter: string[]; // Filter references by pitch
@@ -121,6 +125,9 @@ export interface PlotConfig {
   ellipseLineOpacity: number;
   ellipseFillOpacity: number;
 
+  // Tooltip
+  tooltipFields?: string[];
+
   // Ranges
   f1Range: [number, number];
   f2Range: [number, number];
@@ -131,16 +138,17 @@ export interface PlotConfig {
 }
 
 export interface FilterState {
-  mainType: 'vowel' | 'consonant' | 'all';
-  vowelCategory: 'monophthong' | 'diphthong' | 'all';
+  types: string[]; // canonical_type values (e.g. 'vowel', 'consonant')
+  vowelCategories: string[]; // 'monophthong', 'diphthong'
   phonemes: string[]; // canonical
   alignments: string[];
   produced: string[]; // allophones
-  words: string[]; // New word filter
+  words: string[];
   canonicalStress: string[];
   lexicalStress: string[];
   syllableMark: string[];
   voicePitch: string[];
+  customFilters?: Record<string, string[]>;
 }
 
 // Multi-Layer System
@@ -253,4 +261,33 @@ export interface ExportConfig {
 export interface PlotHandle {
   exportImage: () => void; // Legacy direct download
   generateImage: (config: ExportConfig) => string; // Returns Data URL
+}
+
+// Flexible file parsing types
+export type ColumnRole =
+  | 'file_id' | 'word' | 'syllable' | 'syllable_mark'
+  | 'canonical_stress' | 'lexical_stress' | 'canonical' | 'produced'
+  | 'alignment' | 'type' | 'canonical_type' | 'voice_pitch'
+  | 'xmin' | 'duration'
+  | 'formant'
+  | 'custom' | 'ignore';
+
+export interface ColumnMapping {
+  csvHeader: string;
+  role: ColumnRole;
+  timePoint?: number;
+  formant?: 'f1' | 'f2' | 'f3';
+  isSmooth?: boolean;
+  formantLabel?: string;
+  customFieldName?: string;
+  showInSidebar?: boolean;
+}
+
+export interface DatasetMeta {
+  fileName: string;
+  columnMappings: ColumnMapping[];
+  timePoints: number[];
+  customColumns: string[];
+  rowCount: number;
+  formantVariants?: string[];
 }

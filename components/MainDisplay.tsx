@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useCallback, useMemo } from 'react';
-import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, VariableType, StyleOverrides, Layer } from '../types';
+import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, VariableType, StyleOverrides, Layer, DatasetMeta } from '../types';
 import CanvasPlot from './CanvasPlot';
 import TrajectoryTimeSeries from './TrajectoryTimeSeries';
 import TrajectoryF1F2 from './TrajectoryF1F2';
@@ -9,7 +9,7 @@ import PhonemeDistributionPlot from './PhonemeDistributionPlot';
 import Scatter3DPlot from './Scatter3DPlot';
 import StyleEditor from './StyleEditor';
 import ExportDialog from './ExportDialog';
-import { Grid, LineChart, Table, Settings2, MoveUpRight, Printer, Check, Download, BarChart2, PieChart, Box, Waves, ArrowDown, ArrowUp, ArrowUpDown, Eye, EyeOff, Plus, X, ChevronUp, ChevronDown } from 'lucide-react';
+import { Grid, LineChart, Table, Settings2, MoveUpRight, Printer, Check, Download, BarChart2, PieChart, Box, Waves, ArrowDown, ArrowUp, ArrowUpDown, Eye, EyeOff, Plus, X, ChevronUp, ChevronDown, Layers, MessageSquare } from 'lucide-react';
 
 interface MainDisplayProps {
   layers: Layer[];
@@ -25,9 +25,10 @@ interface MainDisplayProps {
   setActiveConfig: React.Dispatch<React.SetStateAction<PlotConfig>>;
   globalReferences?: ReferenceCentroid[];
   updateStyleOverride: (fieldKey: 'colors' | 'shapes' | 'textures' | 'lineTypes', category: string, value: any, layerId?: string) => void;
+  datasetMeta?: DatasetMeta | null;
 }
 
-const VARIABLE_OPTIONS: { label: string, value: VariableType }[] = [
+const BUILT_IN_VARIABLE_OPTIONS: { label: string, value: VariableType }[] = [
   { label: 'None', value: 'none' },
   { label: 'Phoneme', value: 'phoneme' },
   { label: 'Word', value: 'word' },
@@ -39,11 +40,32 @@ const VARIABLE_OPTIONS: { label: string, value: VariableType }[] = [
   { label: 'Voice Pitch', value: 'voice_pitch' },
 ];
 
+// Non-linear opacity slider helpers: x^2 curve gives more travel at the transparent end
+const opacityToSlider = (opacity: number) => Math.sqrt(opacity);
+const sliderToOpacity = (slider: number) => slider * slider;
+
+const TOOLTIP_FIELD_OPTIONS: { key: string; label: string }[] = [
+  { key: 'file_id', label: 'File ID' },
+  { key: 'word', label: 'Word' },
+  { key: 'syllable', label: 'Syllable' },
+  { key: 'syllable_mark', label: 'Syllable Mark' },
+  { key: 'canonical_stress', label: 'Expected Stress' },
+  { key: 'lexical_stress', label: 'Transcribed Stress' },
+  { key: 'canonical', label: 'Phoneme' },
+  { key: 'produced', label: 'Allophone' },
+  { key: 'alignment', label: 'Alignment' },
+  { key: 'type', label: 'Type' },
+  { key: 'canonical_type', label: 'Vowel Category' },
+  { key: 'voice_pitch', label: 'Voice Pitch' },
+  { key: 'xmin', label: 'Time (xmin)' },
+  { key: 'duration', label: 'Duration' },
+];
+
 const MainDisplay: React.FC<MainDisplayProps> = ({
   layers, layerData, activeLayerId, setActiveLayerId,
   updateLayerConfig, addLayer, removeLayer, reorderLayer,
   toggleLayerVisibility, renameLayer, setActiveConfig,
-  globalReferences = [], updateStyleOverride
+  globalReferences = [], updateStyleOverride, datasetMeta
 }) => {
   const [activeTab, setActiveTab] = useState<'vowel' | '3d' | 'traj_f1f2' | 'traj_series' | 'duration' | 'dist' | 'table'>('vowel');
   const [showRefDropdown, setShowRefDropdown] = useState(false);
@@ -51,6 +73,24 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [editingLayerName, setEditingLayerName] = useState<string | null>(null);
   const [editingNameValue, setEditingNameValue] = useState('');
+  const [layerPanelOpen, setLayerPanelOpen] = useState(false);
+  const [showTooltipSettings, setShowTooltipSettings] = useState(false);
+
+  // Dynamic variable options (built-in + custom columns from dataset)
+  const variableOptions = useMemo(() => {
+    if (!datasetMeta?.customColumns.length) return BUILT_IN_VARIABLE_OPTIONS;
+    const custom = datasetMeta.customColumns.map(col => ({
+      label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      value: col,
+    }));
+    return [...BUILT_IN_VARIABLE_OPTIONS, ...custom];
+  }, [datasetMeta]);
+
+  // Dynamic time-points (from dataset or default 0-100 by 10)
+  const availableTimePoints = useMemo(() => {
+    if (datasetMeta?.timePoints.length) return datasetMeta.timePoints;
+    return [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+  }, [datasetMeta]);
 
   // Style overrides derived from active layer (no local state needed)
   const styleOverrides = useMemo(() => {
@@ -149,7 +189,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
         value={value}
         onChange={e => onChange(e.target.value as VariableType)}
       >
-        {VARIABLE_OPTIONS.map(opt => (
+        {variableOptions.map(opt => (
           <option key={opt.value} value={opt.value}>{opt.label}</option>
         ))}
       </select>
@@ -182,127 +222,213 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             <button onClick={() => setActiveTab('table')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'table' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Table size={16} /><span>Table</span></button>
           </div>
 
-          {/* Layer Panel for F1/F2 Tab */}
-          {activeTab === 'vowel' && (
-             <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-200 shadow-sm relative">
-                {/* Add Button */}
-                <div className="relative">
-                  <button
-                    onClick={() => setShowAddMenu(!showAddMenu)}
-                    disabled={layers.length >= 10}
-                    className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-bold transition-all ${layers.length >= 10 ? 'text-slate-300 cursor-not-allowed' : 'text-indigo-600 hover:bg-indigo-50'}`}
-                  >
-                    <Plus size={12} />
-                    <span>Add</span>
-                  </button>
-                  {showAddMenu && layers.length < 10 && (
-                    <div className="absolute top-full mt-1 left-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 py-1 min-w-[140px]">
-                      <button
-                        onClick={() => { addLayer('point'); setShowAddMenu(false); }}
-                        className="w-full px-3 py-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-indigo-50 flex items-center gap-2"
-                      >
-                        <span className="w-4 h-4 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-[9px] font-black">P</span>
-                        Point Layer
-                      </button>
-                      <button
-                        onClick={() => { addLayer('trajectory'); setShowAddMenu(false); }}
-                        className="w-full px-3 py-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-indigo-50 flex items-center gap-2"
-                      >
-                        <span className="w-4 h-4 rounded bg-emerald-100 text-emerald-600 flex items-center justify-center text-[9px] font-black">T</span>
-                        Trajectory Layer
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="w-px h-5 bg-slate-200"></div>
-
-                {/* Layer Chips */}
-                {layers.map((layer, idx) => (
-                  <div
-                    key={layer.id}
-                    className={`flex items-center gap-0.5 px-2 py-1 rounded text-xs font-bold transition-all cursor-pointer ${
-                      activeLayerId === layer.id
-                        ? 'bg-indigo-50 text-indigo-700 shadow-sm border border-indigo-200'
-                        : 'text-slate-500 hover:bg-slate-50'
-                    }`}
-                    onClick={() => setActiveLayerId(layer.id)}
-                  >
-                    {/* Type badge */}
-                    <span className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[8px] font-black shrink-0 ${
-                      layer.config.plotType === 'trajectory'
-                        ? 'bg-emerald-100 text-emerald-600'
-                        : 'bg-blue-100 text-blue-600'
-                    }`}>
-                      {layer.config.plotType === 'trajectory' ? 'T' : 'P'}
-                    </span>
-
-                    {/* Name (editable on double-click) */}
-                    {editingLayerName === layer.id ? (
-                      <input
-                        type="text"
-                        className="w-16 text-[10px] p-0.5 border rounded bg-white text-slate-700 outline-none"
-                        value={editingNameValue}
-                        onChange={e => setEditingNameValue(e.target.value)}
-                        onBlur={commitRename}
-                        onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditingLayerName(null); }}
-                        autoFocus
-                        onClick={e => e.stopPropagation()}
-                      />
-                    ) : (
-                      <span
-                        className="truncate max-w-[60px]"
-                        onDoubleClick={(e) => { e.stopPropagation(); startRename(layer.id, layer.name); }}
-                        title={layer.name}
-                      >
-                        {layer.name}
-                      </span>
-                    )}
-
-                    {/* Visibility toggle */}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); toggleLayerVisibility(layer.id); }}
-                      className="p-0.5 hover:bg-slate-200 rounded"
-                      title={layer.visible ? 'Hide layer' : 'Show layer'}
-                    >
-                      {layer.visible ? <Eye size={10} /> : <EyeOff size={10} className="text-slate-300" />}
-                    </button>
-
-                    {/* Reorder & Delete (non-background only) */}
-                    {!layer.isBackground && (
-                      <>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); reorderLayer(layer.id, 'up'); }}
-                          className="p-0.5 hover:bg-slate-200 rounded"
-                          title="Move up"
-                          disabled={idx <= 1}
-                        >
-                          <ChevronUp size={10} className={idx <= 1 ? 'text-slate-200' : ''} />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); reorderLayer(layer.id, 'down'); }}
-                          className="p-0.5 hover:bg-slate-200 rounded"
-                          title="Move down"
-                          disabled={idx >= layers.length - 1}
-                        >
-                          <ChevronDown size={10} className={idx >= layers.length - 1 ? 'text-slate-200' : ''} />
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); removeLayer(layer.id); }}
-                          className="p-0.5 hover:bg-red-100 rounded text-slate-400 hover:text-red-500"
-                          title="Delete layer"
-                        >
-                          <X size={10} />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ))}
-             </div>
-          )}
-
           {activeTab !== 'table' && (
              <div className="flex items-center gap-2">
+               {/* Layer Panel Button for F1/F2 Tab */}
+               {activeTab === 'vowel' && (
+                 <div className="relative">
+                   <button
+                     onClick={() => setLayerPanelOpen(!layerPanelOpen)}
+                     className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${layerPanelOpen ? 'bg-indigo-50 text-indigo-700 border-indigo-200 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                   >
+                     <Layers size={14} />
+                     <span>Layers ({layers.length})</span>
+                     <ChevronDown size={12} className={`transition-transform ${layerPanelOpen ? 'rotate-180' : ''}`} />
+                   </button>
+
+                   {/* Expanded Layer Panel Dropdown */}
+                   {layerPanelOpen && (
+                     <div className="absolute top-full mt-1 right-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 min-w-[240px] p-2">
+                       <div className="flex items-center justify-between mb-2 pb-2 border-b border-slate-100">
+                         <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Layers</span>
+                         <button onClick={() => setLayerPanelOpen(false)} className="p-0.5 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600">
+                           <X size={12} />
+                         </button>
+                       </div>
+
+                       {/* Layer Rows */}
+                       <div className="space-y-1 max-h-[300px] overflow-y-auto">
+                         {layers.map((layer, idx) => (
+                           <div
+                             key={layer.id}
+                             className={`flex items-center gap-1.5 px-2 py-1.5 rounded text-xs font-bold transition-all cursor-pointer ${
+                               activeLayerId === layer.id
+                                 ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                                 : 'text-slate-600 hover:bg-slate-50 border border-transparent'
+                             }`}
+                             onClick={() => setActiveLayerId(layer.id)}
+                           >
+                             {/* Type badge */}
+                             <span className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-black shrink-0 ${
+                               layer.config.plotType === 'trajectory'
+                                 ? 'bg-emerald-100 text-emerald-600'
+                                 : 'bg-blue-100 text-blue-600'
+                             }`}>
+                               {layer.config.plotType === 'trajectory' ? 'T' : 'P'}
+                             </span>
+
+                             {/* Name (editable on double-click) */}
+                             {editingLayerName === layer.id ? (
+                               <input
+                                 type="text"
+                                 className="flex-1 min-w-0 text-xs p-0.5 border rounded bg-white text-slate-700 outline-none"
+                                 value={editingNameValue}
+                                 onChange={e => setEditingNameValue(e.target.value)}
+                                 onBlur={commitRename}
+                                 onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditingLayerName(null); }}
+                                 autoFocus
+                                 onClick={e => e.stopPropagation()}
+                               />
+                             ) : (
+                               <span
+                                 className="flex-1 min-w-0 truncate"
+                                 onDoubleClick={(e) => { e.stopPropagation(); startRename(layer.id, layer.name); }}
+                                 title={layer.name}
+                               >
+                                 {layer.name}
+                               </span>
+                             )}
+
+                             {/* Visibility toggle */}
+                             <button
+                               onClick={(e) => { e.stopPropagation(); toggleLayerVisibility(layer.id); }}
+                               className="p-0.5 hover:bg-slate-200 rounded shrink-0"
+                               title={layer.visible ? 'Hide layer' : 'Show layer'}
+                             >
+                               {layer.visible ? <Eye size={12} /> : <EyeOff size={12} className="text-slate-300" />}
+                             </button>
+
+                             {/* Reorder & Delete (non-background only) */}
+                             {!layer.isBackground && (
+                               <>
+                                 <button
+                                   onClick={(e) => { e.stopPropagation(); reorderLayer(layer.id, 'up'); }}
+                                   className="p-0.5 hover:bg-slate-200 rounded shrink-0"
+                                   title="Move up"
+                                   disabled={idx <= 1}
+                                 >
+                                   <ChevronUp size={12} className={idx <= 1 ? 'text-slate-200' : ''} />
+                                 </button>
+                                 <button
+                                   onClick={(e) => { e.stopPropagation(); reorderLayer(layer.id, 'down'); }}
+                                   className="p-0.5 hover:bg-slate-200 rounded shrink-0"
+                                   title="Move down"
+                                   disabled={idx >= layers.length - 1}
+                                 >
+                                   <ChevronDown size={12} className={idx >= layers.length - 1 ? 'text-slate-200' : ''} />
+                                 </button>
+                                 <button
+                                   onClick={(e) => { e.stopPropagation(); removeLayer(layer.id); }}
+                                   className="p-0.5 hover:bg-red-100 rounded text-slate-400 hover:text-red-500 shrink-0"
+                                   title="Delete layer"
+                                 >
+                                   <X size={12} />
+                                 </button>
+                               </>
+                             )}
+                           </div>
+                         ))}
+                       </div>
+
+                       {/* Add Layer Button */}
+                       <div className="mt-2 pt-2 border-t border-slate-100">
+                         <div className="relative">
+                           <button
+                             onClick={(e) => { e.stopPropagation(); setShowAddMenu(!showAddMenu); }}
+                             disabled={layers.length >= 10}
+                             className={`w-full flex items-center justify-center gap-1 px-2 py-1.5 rounded text-xs font-bold transition-all ${layers.length >= 10 ? 'text-slate-300 cursor-not-allowed' : 'text-indigo-600 hover:bg-indigo-50 border border-dashed border-indigo-200'}`}
+                           >
+                             <Plus size={12} />
+                             <span>Add Layer</span>
+                           </button>
+                           {showAddMenu && layers.length < 10 && (
+                             <div className="absolute bottom-full mb-1 left-0 right-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 py-1">
+                               <button
+                                 onClick={() => { addLayer('point'); setShowAddMenu(false); }}
+                                 className="w-full px-3 py-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-indigo-50 flex items-center gap-2"
+                               >
+                                 <span className="w-4 h-4 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-[9px] font-black">P</span>
+                                 Point Layer
+                               </button>
+                               <button
+                                 onClick={() => { addLayer('trajectory'); setShowAddMenu(false); }}
+                                 className="w-full px-3 py-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-indigo-50 flex items-center gap-2"
+                               >
+                                 <span className="w-4 h-4 rounded bg-emerald-100 text-emerald-600 flex items-center justify-center text-[9px] font-black">T</span>
+                                 Trajectory Layer
+                               </button>
+                             </div>
+                           )}
+                         </div>
+                       </div>
+                     </div>
+                   )}
+                 </div>
+               )}
+
+               {/* Tooltip Field Selector */}
+               {(activeTab === 'vowel' || activeTab === '3d') && (
+                 <div className="relative">
+                   <button
+                     onClick={() => setShowTooltipSettings(!showTooltipSettings)}
+                     className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${showTooltipSettings ? 'bg-indigo-50 text-indigo-700 border-indigo-200 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                     title="Configure tooltip fields"
+                   >
+                     <MessageSquare size={14} />
+                     <span>Tooltip</span>
+                   </button>
+                   {showTooltipSettings && (
+                     <div className="absolute top-full mt-1 right-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 min-w-[220px] p-3">
+                       <div className="flex items-center justify-between mb-2 pb-2 border-b border-slate-100">
+                         <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Tooltip Fields</span>
+                         <button onClick={() => setShowTooltipSettings(false)} className="p-0.5 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600">
+                           <X size={12} />
+                         </button>
+                       </div>
+                       <div className="max-h-[300px] overflow-y-auto space-y-1">
+                         {(() => {
+                           const allFields = [
+                             ...TOOLTIP_FIELD_OPTIONS,
+                             ...(datasetMeta?.customColumns || []).map(col => ({
+                               key: col,
+                               label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+                             })),
+                           ];
+                           const selected = currentConfig.tooltipFields || [];
+                           const atMax = selected.length >= 10;
+                           return allFields.map(field => {
+                             const isChecked = selected.includes(field.key);
+                             return (
+                               <label
+                                 key={field.key}
+                                 className={`flex items-center gap-2 text-[11px] cursor-pointer hover:bg-slate-50 p-1 rounded ${!isChecked && atMax ? 'opacity-40 cursor-not-allowed' : ''}`}
+                               >
+                                 <input
+                                   type="checkbox"
+                                   className="rounded text-indigo-600"
+                                   checked={isChecked}
+                                   disabled={!isChecked && atMax}
+                                   onChange={() => {
+                                     const newFields = isChecked
+                                       ? selected.filter(k => k !== field.key)
+                                       : [...selected, field.key];
+                                     handleConfig('tooltipFields', newFields);
+                                   }}
+                                 />
+                                 <span className="text-slate-700 font-medium">{field.label}</span>
+                               </label>
+                             );
+                           });
+                         })()}
+                       </div>
+                       {(currentConfig.tooltipFields || []).length >= 10 && (
+                         <div className="mt-2 pt-2 border-t border-slate-100 text-[10px] text-slate-400 italic">Max 10 fields</div>
+                       )}
+                     </div>
+                   )}
+                 </div>
+               )}
+
                <button onClick={handleExportClick} className="flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all bg-white text-indigo-600 border-indigo-200 hover:bg-indigo-50"><Download size={14} /><span>Export</span></button>
                <button onClick={() => handleConfig('bwMode', !currentConfig.bwMode)} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${currentConfig.bwMode ? 'bg-slate-800 text-white border-slate-800 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}><Printer size={14} /><span>B&W</span></button>
              </div>
@@ -319,17 +445,17 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
             <div className="h-6 w-px bg-slate-300"></div>
 
-            {/* Config: Smoothing Toggle */}
-            {(activeTab === 'vowel' || activeTab === '3d' || activeTab === 'traj_f1f2' || activeTab === 'traj_series') && (
+            {/* Config: Formant Variant Toggle */}
+            {(activeTab === 'vowel' || activeTab === '3d' || activeTab === 'traj_f1f2' || activeTab === 'traj_series') && datasetMeta?.formantVariants && datasetMeta.formantVariants.length === 2 && (
                 <div className="flex items-center gap-1.5 mr-2">
                     <span className="font-semibold text-slate-600">Data:</span>
                     <button
                         onClick={() => handleConfig('useSmoothing', !currentConfig.useSmoothing)}
                         className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-bold border transition-all ${currentConfig.useSmoothing ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-500 border-slate-300 hover:bg-slate-50'}`}
-                        title="Toggle between Raw and Smoothed Data"
+                        title={`Toggle between ${datasetMeta.formantVariants[0]} and ${datasetMeta.formantVariants[1]} data`}
                     >
                         <Waves size={12} />
-                        <span>{currentConfig.useSmoothing ? 'Smooth' : 'Raw'}</span>
+                        <span>{currentConfig.useSmoothing ? datasetMeta.formantVariants[1] : datasetMeta.formantVariants[0]}</span>
                     </button>
                 </div>
             )}
@@ -403,7 +529,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                  renderVariableSelect('Group By', currentConfig.groupBy, v => handleConfig('groupBy', v))
             )}
 
-            {renderVariableSelect('Color By', currentConfig.colorBy, v => handleConfig('colorBy', v))}
+            {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
 
             {(activeTab === 'duration' || activeTab === 'dist') && (
                  renderVariableSelect('Texture By', currentConfig.textureBy, v => handleConfig('textureBy', v))
@@ -523,20 +649,17 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                    renderVariableSelect('Shape', currentConfig.shapeBy, (val) => handleConfig('shapeBy', val))
                  )}
 
-                 {/* Plot Type Toggle (Point vs Trajectory) */}
-                 <div className="flex items-center bg-slate-200 rounded p-0.5 ml-2">
-                    <button
-                        onClick={() => handleConfig('plotType', 'point')}
-                        className={`px-2 py-0.5 text-[10px] font-bold rounded ${currentConfig.plotType !== 'trajectory' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                 {/* Plot Type Select */}
+                 <div className="flex items-center gap-1.5 ml-2">
+                    <label className="font-semibold text-slate-600">Mode:</label>
+                    <select
+                        className="p-1.5 border border-slate-300 rounded bg-white text-slate-700 text-xs font-bold"
+                        value={currentConfig.plotType}
+                        onChange={e => handleConfig('plotType', e.target.value)}
                     >
-                        Point
-                    </button>
-                    <button
-                        onClick={() => handleConfig('plotType', 'trajectory')}
-                        className={`px-2 py-0.5 text-[10px] font-bold rounded ${currentConfig.plotType === 'trajectory' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                        Traj
-                    </button>
+                        <option value="point">Point</option>
+                        <option value="trajectory">Trajectory</option>
+                    </select>
                  </div>
 
                  {currentConfig.plotType !== 'trajectory' ? (
@@ -547,7 +670,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         value={currentConfig.timePoint}
                         onChange={e => handleConfig('timePoint', parseInt(e.target.value))}
                       >
-                        {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map(t => (
+                        {availableTimePoints.map(t => (
                           <option key={t} value={t}>{t}%</option>
                         ))}
                       </select>
@@ -562,7 +685,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                     value={currentConfig.trajectoryOnset ?? 0}
                                     onChange={e => handleConfig('trajectoryOnset', parseInt(e.target.value))}
                                 >
-                                    {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map(t => <option key={t} value={t}>{t}%</option>)}
+                                    {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
                                 </select>
                                 <span className="text-slate-400">-</span>
                                 <select
@@ -570,19 +693,16 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                     value={currentConfig.trajectoryOffset ?? 100}
                                     onChange={e => handleConfig('trajectoryOffset', parseInt(e.target.value))}
                                 >
-                                    {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map(t => <option key={t} value={t}>{t}%</option>)}
+                                    {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
                                 </select>
                             </div>
                         </div>
 
                         <div className="flex flex-col gap-0.5 ml-2 border-l border-slate-200 pl-2">
-                             <label className="flex items-center gap-1 cursor-pointer">
-                                <input type="checkbox" className="rounded text-indigo-600" checked={currentConfig.showIndividualLines} onChange={e => handleConfig('showIndividualLines', e.target.checked)} />
-                                <span className="text-[9px] font-bold text-slate-600">Lines</span>
-                             </label>
-                             {currentConfig.showIndividualLines && (
-                                <input type="range" min="0" max="1" step="0.1" value={currentConfig.trajectoryLineOpacity ?? 0.5} onChange={e => handleConfig('trajectoryLineOpacity', parseFloat(e.target.value))} className="w-12 h-1 accent-indigo-600" title="Line Opacity" />
-                             )}
+                             <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                                <span>Lines</span>
+                                <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.trajectoryLineOpacity ?? 0.5)} onChange={e => handleConfig('trajectoryLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-indigo-600" title="Individual Line Opacity (0 = hidden)" />
+                             </div>
                         </div>
                     </div>
                  )}
@@ -598,10 +718,16 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                            <span className="font-bold">Pts</span>
                          </label>
                          {currentConfig.showPoints && (
-                           <>
-                             <input type="range" min="1" max="10" title="Point Size" value={currentConfig.pointSize} onChange={e => handleConfig('pointSize', parseInt(e.target.value))} className="w-10 h-1 accent-indigo-600" />
-                             <input type="range" min="0" max="1" step="0.1" title="Point Opacity" value={currentConfig.pointOpacity} onChange={e => handleConfig('pointOpacity', parseFloat(e.target.value))} className="w-10 h-1 accent-indigo-600" />
-                           </>
+                           <div className="flex flex-col gap-0.5">
+                             <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                               <span>Size</span>
+                               <input type="range" min="1" max="10" title="Point Size" value={currentConfig.pointSize} onChange={e => handleConfig('pointSize', parseInt(e.target.value))} className="w-16 h-1 accent-indigo-600" />
+                             </div>
+                             <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                               <span>Opacity</span>
+                               <input type="range" min="0" max="1" step="0.02" title="Point Opacity" value={opacityToSlider(currentConfig.pointOpacity)} onChange={e => handleConfig('pointOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-indigo-600" />
+                             </div>
+                           </div>
                          )}
                        </div>
                    )}
@@ -627,11 +753,11 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                </div>
                                <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                   <span>Line</span>
-                                  <input type="range" min="0" max="1" step="0.1" title="Line Opacity" value={currentConfig.ellipseLineOpacity} onChange={e => handleConfig('ellipseLineOpacity', parseFloat(e.target.value))} className="w-10 h-1 accent-indigo-600" />
+                                  <input type="range" min="0" max="1" step="0.02" title="Line Opacity" value={opacityToSlider(currentConfig.ellipseLineOpacity)} onChange={e => handleConfig('ellipseLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-10 h-1 accent-indigo-600" />
                                </div>
                                <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                   <span>Fill</span>
-                                  <input type="range" min="0" max="1" step="0.1" title="Fill Opacity" value={currentConfig.ellipseFillOpacity} onChange={e => handleConfig('ellipseFillOpacity', parseFloat(e.target.value))} className="w-10 h-1 accent-indigo-600" />
+                                  <input type="range" min="0" max="1" step="0.02" title="Fill Opacity" value={opacityToSlider(currentConfig.ellipseFillOpacity)} onChange={e => handleConfig('ellipseFillOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-10 h-1 accent-indigo-600" />
                                </div>
                            </div>
                          </div>
@@ -653,14 +779,15 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                      {(currentConfig.plotType === 'trajectory' ? currentConfig.showMeanTrajectories : currentConfig.showCentroids) && (
                         <>
                            {currentConfig.plotType === 'trajectory' ? (
+                                <>
                                 <div className="flex flex-col gap-0.5">
                                      <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                         <span>Width</span>
-                                        <input type="range" min="1" max="10" step="0.5" title="Mean Width" value={currentConfig.meanTrajectoryWidth ?? 3} onChange={e => handleConfig('meanTrajectoryWidth', parseFloat(e.target.value))} className="w-10 h-1 accent-indigo-600" />
+                                        <input type="range" min="1" max="10" step="0.5" title="Mean Line Width" value={currentConfig.meanTrajectoryWidth ?? 3} onChange={e => handleConfig('meanTrajectoryWidth', parseFloat(e.target.value))} className="w-16 h-1 accent-indigo-600" />
                                      </div>
                                      <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                        <span>Op</span>
-                                        <input type="range" min="0" max="1" step="0.1" title="Mean Opacity" value={currentConfig.meanTrajectoryOpacity ?? 1} onChange={e => handleConfig('meanTrajectoryOpacity', parseFloat(e.target.value))} className="w-10 h-1 accent-indigo-600" />
+                                        <span>Opacity</span>
+                                        <input type="range" min="0" max="1" step="0.02" title="Mean Line Opacity" value={opacityToSlider(currentConfig.meanTrajectoryOpacity ?? 1)} onChange={e => handleConfig('meanTrajectoryOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-indigo-600" />
                                      </div>
                                      <div className="flex items-center gap-1">
                                         <label className="flex items-center gap-1 cursor-pointer text-[9px] text-slate-500">
@@ -668,16 +795,44 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                             <span>Lbl</span>
                                         </label>
                                         {currentConfig.showTrajectoryLabels && (
-                                            <input type="range" min="8" max="72" step="1" title="Label Size" value={currentConfig.meanTrajectoryLabelSize || 12} onChange={e => handleConfig('meanTrajectoryLabelSize', parseFloat(e.target.value))} className="w-10 h-1 accent-indigo-600" />
+                                            <input type="range" min="8" max="72" step="1" title="Label Size" value={currentConfig.meanTrajectoryLabelSize || 12} onChange={e => handleConfig('meanTrajectoryLabelSize', parseFloat(e.target.value))} className="w-16 h-1 accent-indigo-600" />
                                         )}
                                      </div>
                                 </div>
+                                <div className="w-px h-8 bg-slate-200"></div>
+                                <div className="flex flex-col gap-0.5">
+                                     <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                                        <label className="flex items-center gap-1 cursor-pointer">
+                                            <input type="checkbox" className="rounded text-indigo-600" checked={currentConfig.showMeanTrajectoryPoints} onChange={e => handleConfig('showMeanTrajectoryPoints', e.target.checked)} />
+                                            <span>Pts</span>
+                                        </label>
+                                        {currentConfig.showMeanTrajectoryPoints && (
+                                            <input type="range" min="1" max="10" step="0.5" title="Mean Point Size" value={currentConfig.meanTrajectoryPointSize ?? 4} onChange={e => handleConfig('meanTrajectoryPointSize', parseFloat(e.target.value))} className="w-12 h-1 accent-indigo-600" />
+                                        )}
+                                     </div>
+                                     <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                                        <label className="flex items-center gap-1 cursor-pointer">
+                                            <input type="checkbox" className="rounded text-indigo-600" checked={currentConfig.showArrows} onChange={e => handleConfig('showArrows', e.target.checked)} />
+                                            <span>Arrow</span>
+                                        </label>
+                                        {currentConfig.showArrows && (
+                                            <input type="range" min="1" max="8" step="0.5" title="Arrow Size" value={currentConfig.meanTrajectoryArrowSize ?? 3} onChange={e => handleConfig('meanTrajectoryArrowSize', parseFloat(e.target.value))} className="w-12 h-1 accent-indigo-600" />
+                                        )}
+                                     </div>
+                                </div>
+                                </>
                            ) : (
                                 <>
                                    {activeTab === 'vowel' && (
                                        <div className="flex flex-col gap-0.5">
-                                            <input type="range" min="4" max="20" title="Centroid Size" value={currentConfig.centroidSize} onChange={e => handleConfig('centroidSize', parseInt(e.target.value))} className="w-10 h-1 accent-indigo-600" />
-                                            <input type="range" min="0" max="1" step="0.1" title="Centroid Opacity" value={currentConfig.centroidOpacity} onChange={e => handleConfig('centroidOpacity', parseFloat(e.target.value))} className="w-10 h-1 accent-indigo-600" />
+                                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                                              <span>Size</span>
+                                              <input type="range" min="4" max="20" title="Centroid Size" value={currentConfig.centroidSize} onChange={e => handleConfig('centroidSize', parseInt(e.target.value))} className="w-16 h-1 accent-indigo-600" />
+                                            </div>
+                                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                                              <span>Opacity</span>
+                                              <input type="range" min="0" max="1" step="0.02" title="Centroid Opacity" value={opacityToSlider(currentConfig.centroidOpacity)} onChange={e => handleConfig('centroidOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-indigo-600" />
+                                            </div>
                                        </div>
                                    )}
 
@@ -718,7 +873,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
                    <div className="flex items-center gap-1 ml-2">
                      <span className="text-slate-500 font-bold">Line Opacity</span>
-                     <input type="range" min="0.01" max="1" step="0.05" value={currentConfig.trajectoryLineOpacity} onChange={e => handleConfig('trajectoryLineOpacity', parseFloat(e.target.value))} className="w-16 h-1 accent-indigo-600" />
+                     <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.trajectoryLineOpacity)} onChange={e => handleConfig('trajectoryLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-indigo-600" />
                    </div>
 
                    <div className="flex items-center gap-1 ml-2">
@@ -728,7 +883,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
                    <div className="flex items-center gap-1 ml-2">
                      <span className="text-slate-500 font-bold">Mean Opacity</span>
-                     <input type="range" min="0.1" max="1" step="0.05" value={currentConfig.meanTrajectoryOpacity} onChange={e => handleConfig('meanTrajectoryOpacity', parseFloat(e.target.value))} className="w-16 h-1 accent-indigo-600" />
+                     <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.meanTrajectoryOpacity)} onChange={e => handleConfig('meanTrajectoryOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-indigo-600" />
                    </div>
 
                    {activeTab === 'traj_f1f2' && (
@@ -777,15 +932,15 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                 </div>
                                 <div className="flex items-center justify-between text-[10px] text-slate-500">
                                     <span>Label Opacity</span>
-                                    <input type="range" min="0" max="1" step="0.1" value={currentConfig.refVowelLabelOpacity} onChange={e => handleConfig('refVowelLabelOpacity', parseFloat(e.target.value))} className="w-24 h-1 accent-indigo-600" />
+                                    <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.refVowelLabelOpacity)} onChange={e => handleConfig('refVowelLabelOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-24 h-1 accent-indigo-600" />
                                 </div>
                                 <div className="flex items-center justify-between text-[10px] text-slate-500">
                                     <span>Ellipse Opacity</span>
-                                    <input type="range" min="0" max="1" step="0.1" value={currentConfig.refVowelEllipseLineOpacity} onChange={e => handleConfig('refVowelEllipseLineOpacity', parseFloat(e.target.value))} className="w-24 h-1 accent-indigo-600" />
+                                    <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.refVowelEllipseLineOpacity)} onChange={e => handleConfig('refVowelEllipseLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-24 h-1 accent-indigo-600" />
                                 </div>
                                 <div className="flex items-center justify-between text-[10px] text-slate-500">
                                     <span>Fill Opacity</span>
-                                    <input type="range" min="0" max="1" step="0.1" value={currentConfig.refVowelEllipseFillOpacity} onChange={e => handleConfig('refVowelEllipseFillOpacity', parseFloat(e.target.value))} className="w-24 h-1 accent-indigo-600" />
+                                    <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.refVowelEllipseFillOpacity)} onChange={e => handleConfig('refVowelEllipseFillOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-24 h-1 accent-indigo-600" />
                                 </div>
                             </div>
                             <div className="max-h-32 overflow-y-auto space-y-1">
@@ -819,6 +974,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             layers={layers}
             layerData={layerData}
             onLegendClick={handleLegendClick}
+            datasetMeta={datasetMeta}
           />
         )}
         {activeTab === '3d' && (
@@ -927,9 +1083,9 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
         defaultTitle={bgConfig.colorBy !== 'none' ? bgConfig.colorBy : bgConfig.groupBy}
       />
 
-      {/* Close add menu on click outside */}
-      {showAddMenu && (
-        <div className="fixed inset-0 z-40" onClick={() => setShowAddMenu(false)}></div>
+      {/* Close dropdowns on click outside */}
+      {(showAddMenu || layerPanelOpen || showTooltipSettings) && (
+        <div className="fixed inset-0 z-40" onClick={() => { setShowAddMenu(false); setLayerPanelOpen(false); setShowTooltipSettings(false); }}></div>
       )}
     </div>
   );

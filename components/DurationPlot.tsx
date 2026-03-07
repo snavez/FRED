@@ -13,12 +13,7 @@ const COLORS = [
   '#ec4899', '#06b6d4', '#84cc16', '#64748b', '#dc2626'
 ];
 
-const getLabel = (t: SpeechToken, key: string): string => {
-  if (!key || key === 'none') return '';
-  if (key === 'phoneme') return t.canonical;
-  const val = (t as any)[key];
-  return val !== undefined ? String(val) : '';
-};
+import { getLabel } from '../utils/getLabel';
 
 // Statistical Helper
 const calculateStats = (tokens: SpeechToken[]) => {

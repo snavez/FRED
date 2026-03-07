@@ -1,12 +1,13 @@
 
 // ... existing imports
 import React, { useRef, useEffect, useState, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
-import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, Layer } from '../types';
+import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, Layer, DatasetMeta } from '../types';
 
 interface CanvasPlotProps {
   layers: Layer[];
   layerData: Record<string, SpeechToken[]>;
   onLegendClick?: (category: string, currentStyles: any, event: React.MouseEvent, layerId?: string) => void;
+  datasetMeta?: DatasetMeta | null;
 }
 
 const COLORS = [
@@ -23,16 +24,20 @@ const SHAPES = [
   'plus', 'cross', 'asterisk'
 ];
 
-const getLabel = (t: SpeechToken, key: string): string => {
-  if (!key || key === 'none') return '';
-  if (key === 'phoneme') return t.canonical;
-  if (key === 'syllable_mark') {
-    const val = parseInt(t.syllable_mark, 10);
-    if (isNaN(val)) return t.syllable_mark;
-    return val > 0 ? 'accepted' : 'rejected';
+import { getLabel } from '../utils/getLabel';
+
+// Find nearest available time-point in a token's trajectory
+const findNearestTimePoint = (trajectory: { time: number }[], target: number): number | undefined => {
+  if (trajectory.length === 0) return undefined;
+  const exact = trajectory.find(p => p.time === target);
+  if (exact) return target;
+  let best = trajectory[0].time;
+  let bestDist = Math.abs(best - target);
+  for (const p of trajectory) {
+    const d = Math.abs(p.time - target);
+    if (d < bestDist) { best = p.time; bestDist = d; }
   }
-  const val = (t as any)[key];
-  return val !== undefined && val !== null ? String(val) : '';
+  return best;
 };
 
 const drawShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: number, size: number, scale: number, drawScale: number = 1) => {
@@ -82,6 +87,28 @@ const LINE_TYPE_PATTERNS: Record<string, number[]> = {
     'dotdash': [20, 5, 5, 5]
 };
 const DEFAULT_LINE_TYPE_NAMES = ['solid', 'dash', 'dot', 'longdash', 'dotdash'];
+
+// Tooltip field label lookup
+const TOOLTIP_LABELS: Record<string, string> = {
+  file_id: 'File ID', word: 'Word', syllable: 'Syllable', syllable_mark: 'Syllable Mark',
+  canonical_stress: 'Expected Stress', lexical_stress: 'Transcribed Stress',
+  canonical: 'Phoneme', produced: 'Allophone', alignment: 'Alignment',
+  type: 'Type', canonical_type: 'Vowel Category', voice_pitch: 'Voice Pitch',
+  xmin: 'Time (xmin)', duration: 'Duration',
+};
+
+// Get tooltip field value from a token
+const getTooltipValue = (token: SpeechToken, field: string): string => {
+  // Built-in fields with formatting
+  if (field === 'xmin') return `${token.xmin.toFixed(3)}s`;
+  if (field === 'duration') return `${token.duration.toFixed(3)}s`;
+  // Built-in string fields
+  if (field in token && field !== 'id' && field !== 'trajectory' && field !== 'customFields') {
+    return String((token as any)[field] ?? '');
+  }
+  // Custom fields
+  return token.customFields?.[field] ?? '';
+};
 
 // Reusable function to compute mappings for a layer
 function computeMappings(data: SpeechToken[], config: PlotConfig, styleOverrides?: StyleOverrides) {
@@ -248,11 +275,12 @@ const Legend = ({ layers, allMappings, onLegendClick }: {
   );
 };
 
-const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData, onLegendClick }, ref) => {
+const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData, onLegendClick, datasetMeta }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [hoveredToken, setHoveredToken] = useState<SpeechToken | null>(null);
+  const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
   const isDragging = useRef(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
 
@@ -282,74 +310,63 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     drawScale: number,
     exportConfig?: ExportConfig
   ) => {
-    // 1. Draw Individual Lines
-    if (config.showIndividualLines) {
-        ctx.globalAlpha = config.trajectoryLineOpacity !== undefined ? config.trajectoryLineOpacity : 0.5;
-        ctx.lineWidth = (1 * drawScale) / scale;
+    // 1. Draw Individual Lines (opacity controls visibility; 0 = hidden)
+    {
+        const lineOpacity = config.trajectoryLineOpacity !== undefined ? config.trajectoryLineOpacity : 0.5;
+        if (lineOpacity > 0) {
+            ctx.globalAlpha = lineOpacity;
+            ctx.lineWidth = (1 * drawScale) / scale;
 
-        data.forEach(t => {
-            const color = mappings.colorKey ? (mappings.colorMap[getLabel(t, mappings.colorKey)] || '#64748b') : (config.bwMode ? '#000' : '#64748b');
-            const lineTypeVal = mappings.lineTypeKey ? getLabel(t, mappings.lineTypeKey) : '';
-            const lineDash = mappings.lineTypeKey ? (mappings.lineTypeMap[lineTypeVal] || []) : [];
+            data.forEach(t => {
+                const color = mappings.colorKey ? (mappings.colorMap[getLabel(t, mappings.colorKey)] || '#64748b') : (config.bwMode ? '#000' : '#64748b');
+                const lineTypeVal = mappings.lineTypeKey ? getLabel(t, mappings.lineTypeKey) : '';
+                const lineDash = mappings.lineTypeKey ? (mappings.lineTypeMap[lineTypeVal] || []) : [];
 
-            ctx.strokeStyle = color;
-            ctx.setLineDash(lineDash.map((d: number) => (d * config.lineWidth * drawScale) / scale));
+                ctx.strokeStyle = color;
+                ctx.setLineDash(lineDash.map((d: number) => (d * config.lineWidth * drawScale) / scale));
 
-            const pts = t.trajectory
-                .filter(p => p.time >= (config.trajectoryOnset ?? 0) && p.time <= (config.trajectoryOffset ?? 100))
-                .map(p => {
-                    const f1 = config.useSmoothing ? (p.f1_smooth ?? p.f1) : p.f1;
-                    const f2 = config.useSmoothing ? (p.f2_smooth ?? p.f2) : p.f2;
-                    if (f1 === undefined || f2 === undefined || isNaN(f1) || isNaN(f2)) return null;
-                    return { x: mapX(f2), y: mapY(f1) };
-                }).filter(p => p !== null) as {x: number, y: number}[];
+                const pts = t.trajectory
+                    .filter(p => p.time >= (config.trajectoryOnset ?? 0) && p.time <= (config.trajectoryOffset ?? 100))
+                    .map(p => {
+                        const f1 = config.useSmoothing ? (p.f1_smooth ?? p.f1) : p.f1;
+                        const f2 = config.useSmoothing ? (p.f2_smooth ?? p.f2) : p.f2;
+                        if (f1 === undefined || f2 === undefined || isNaN(f1) || isNaN(f2)) return null;
+                        return { x: mapX(f2), y: mapY(f1) };
+                    }).filter(p => p !== null) as {x: number, y: number}[];
 
-            if (pts.length < 2) return;
+                if (pts.length < 2) return;
 
-            ctx.beginPath();
-            pts.forEach((p, i) => {
-                if (i === 0) ctx.moveTo(p.x, p.y);
-                else ctx.lineTo(p.x, p.y);
-            });
-            ctx.stroke();
-
-            // Draw points on trajectory if enabled
-            if (config.showPoints) {
-                const pointSize = (config.pointSize * drawScale) / scale;
-                ctx.save();
-                ctx.globalAlpha = config.pointOpacity;
-                ctx.fillStyle = color;
-                pts.forEach(p => {
-                    ctx.beginPath();
-                    ctx.arc(p.x, p.y, pointSize, 0, Math.PI * 2);
-                    ctx.fill();
-                });
-                ctx.restore();
-            }
-
-            // Draw arrows
-            if (config.showArrows && pts.length > 1) {
-                const last = pts[pts.length - 1];
-                const prev = pts[pts.length - 2];
-                const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
-                const lw = 1; // individual line width
-                const arrowLen = (6 * lw * drawScale) / scale;
-                const arrowWidth = (3 * lw * drawScale) / scale;
-
-                ctx.save();
-                ctx.translate(last.x, last.y);
-                ctx.rotate(angle);
-                ctx.fillStyle = color;
                 ctx.beginPath();
-                ctx.moveTo(0, 0);
-                ctx.lineTo(-arrowLen, -arrowWidth);
-                ctx.lineTo(-arrowLen, arrowWidth);
-                ctx.closePath();
-                ctx.fill();
-                ctx.restore();
-            }
-        });
-        ctx.setLineDash([]);
+                pts.forEach((p, i) => {
+                    if (i === 0) ctx.moveTo(p.x, p.y);
+                    else ctx.lineTo(p.x, p.y);
+                });
+                ctx.stroke();
+
+                // Draw arrows on individual lines
+                if (config.showArrows && pts.length > 1) {
+                    const last = pts[pts.length - 1];
+                    const prev = pts[pts.length - 2];
+                    const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
+                    const lw = 1;
+                    const arrowLen = (6 * lw * drawScale) / scale;
+                    const arrowWidth = (3 * lw * drawScale) / scale;
+
+                    ctx.save();
+                    ctx.translate(last.x, last.y);
+                    ctx.rotate(angle);
+                    ctx.fillStyle = color;
+                    ctx.beginPath();
+                    ctx.moveTo(0, 0);
+                    ctx.lineTo(-arrowLen, -arrowWidth);
+                    ctx.lineTo(-arrowLen, arrowWidth);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.restore();
+                }
+            });
+            ctx.setLineDash([]);
+        }
     }
 
     // 2. Draw Mean Trajectories
@@ -367,7 +384,11 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
                 if (mappings.lineTypeKey) { lineDash = mappings.lineTypeMap[key] || []; }
             }
 
-            const timeSteps = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].filter(t => t >= (config.trajectoryOnset ?? 0) && t <= (config.trajectoryOffset ?? 100));
+            // Derive time-steps from data rather than hardcoded 0-100
+            const allTimes = new Set<number>();
+            tokens.forEach(tk => tk.trajectory.forEach(p => allTimes.add(p.time)));
+            const timeSteps = Array.from(allTimes).sort((a, b) => a - b)
+              .filter(t => t >= (config.trajectoryOnset ?? 0) && t <= (config.trajectoryOffset ?? 100));
             const meanPts = timeSteps.map(t => {
                 let sumF1 = 0, sumF2 = 0, count = 0;
                 tokens.forEach(token => {
@@ -399,14 +420,26 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
             ctx.stroke();
             ctx.setLineDash([]);
 
+            // Draw points on mean trajectory if enabled
+            if (config.showMeanTrajectoryPoints) {
+                const ptSize = ((config.meanTrajectoryPointSize || 4) * drawScale) / scale;
+                ctx.fillStyle = groupColor;
+                meanPts.forEach(p => {
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, ptSize, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            }
+
             // Draw arrow at end of mean trajectory
             if (config.showArrows && meanPts.length > 1) {
                 const last = meanPts[meanPts.length - 1];
                 const prev = meanPts[meanPts.length - 2];
                 const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
+                const arrowScale = config.meanTrajectoryArrowSize || 3;
                 const mw = config.meanTrajectoryWidth || 3;
-                const arrowLen = (3 * mw * drawScale) / scale;
-                const arrowWidth = (1.5 * mw * drawScale) / scale;
+                const arrowLen = (arrowScale * mw * drawScale) / scale;
+                const arrowWidth = (arrowScale * 0.5 * mw * drawScale) / scale;
 
                 ctx.save();
                 ctx.setLineDash([]);
@@ -469,7 +502,8 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         else if (mappings.colorKey) { groupColor = mappings.colorMap[key] || groupColor; }
 
         const pts = tokens.map(t => {
-          const p = t.trajectory.find(pt => pt.time === config.timePoint);
+          const nearestTime = findNearestTimePoint(t.trajectory, config.timePoint);
+          const p = nearestTime !== undefined ? t.trajectory.find(pt => pt.time === nearestTime) : undefined;
           const f1 = config.useSmoothing && p ? (p.f1_smooth ?? p.f1) : p?.f1;
           const f2 = config.useSmoothing && p ? (p.f2_smooth ?? p.f2) : p?.f2;
           if (!p || f1 === undefined || f2 === undefined || isNaN(f1) || isNaN(f2)) return null;
@@ -508,7 +542,8 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     if (config.showPoints) {
       ctx.globalAlpha = config.pointOpacity;
       data.forEach(t => {
-        const pt = t.trajectory.find(p => p.time === config.timePoint);
+        const nearestTime = findNearestTimePoint(t.trajectory, config.timePoint);
+        const pt = nearestTime !== undefined ? t.trajectory.find(p => p.time === nearestTime) : undefined;
         if (!pt) return;
         const f1 = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
         const f2 = config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
@@ -541,7 +576,8 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         }
 
         const pts = tokens.map(t => {
-          const p = t.trajectory.find(pt => pt.time === config.timePoint);
+          const nearestTime = findNearestTimePoint(t.trajectory, config.timePoint);
+          const p = nearestTime !== undefined ? t.trajectory.find(pt => pt.time === nearestTime) : undefined;
           const f1 = config.useSmoothing && p ? (p.f1_smooth ?? p.f1) : p?.f1;
           const f2 = config.useSmoothing && p ? (p.f2_smooth ?? p.f2) : p?.f2;
           if (!p || f1 === undefined || f2 === undefined || isNaN(f1) || isNaN(f2)) return null;
@@ -974,6 +1010,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         return bgConfig.invertY ? norm * dprHeight : (1 - norm) * dprHeight;
       };
       let closest: SpeechToken | null = null;
+      let closestLayerId: string | null = null;
       let minDist = 15 / transform.scale;
 
       // Check all visible layers for hover
@@ -996,10 +1033,12 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
               if (dist < minDist) {
                 minDist = dist;
                 closest = t;
+                closestLayerId = layer.id;
               }
             });
           } else {
-            const pt = t.trajectory.find(p => p.time === layerConfig.timePoint);
+            const nearestTime = findNearestTimePoint(t.trajectory, layerConfig.timePoint);
+            const pt = nearestTime !== undefined ? t.trajectory.find(p => p.time === nearestTime) : undefined;
             if (!pt) return;
             const f1 = layerConfig.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
             const f2 = layerConfig.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
@@ -1010,11 +1049,13 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
             if (dist < minDist) {
               minDist = dist;
               closest = t;
+              closestLayerId = layer.id;
             }
           }
         });
       });
       setHoveredToken(closest);
+      setHoveredLayerId(closestLayerId);
     }
   };
 
@@ -1041,18 +1082,30 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         <button onClick={() => setTransform(t => ({ ...t, scale: t.scale * 0.8 }))} className="w-8 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 font-bold">-</button>
         <button onClick={() => setTransform({ x: 0, y: 0, scale: 1 })} className="px-3 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 text-[10px] font-bold">RESET VIEW</button>
       </div>
-      {hoveredToken && (
-        <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-16 top-16 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]">
-          <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-indigo-400">File ID: {hoveredToken.file_id}</div>
-          <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-             <p><span className="text-slate-400 font-bold uppercase text-[9px]">Word:</span> {hoveredToken.word}</p>
-             <p><span className="text-slate-400 font-bold uppercase text-[9px]">Syllable:</span> {hoveredToken.syllable}</p>
-             <p><span className="text-slate-400 font-bold uppercase text-[9px]">Phoneme:</span> {hoveredToken.canonical}</p>
-             <p><span className="text-slate-400 font-bold uppercase text-[9px]">Allophone:</span> {hoveredToken.produced}</p>
-             <p className="col-span-2"><span className="text-slate-400 font-bold uppercase text-[9px]">Time (xmin):</span> {hoveredToken.xmin.toFixed(3)}s</p>
+      {hoveredToken && (() => {
+        const hoveredLayer = hoveredLayerId ? layers.find(l => l.id === hoveredLayerId) : layers[0];
+        const fields = hoveredLayer?.config.tooltipFields || ['file_id', 'word', 'canonical', 'produced', 'xmin', 'duration'];
+        const getFieldLabel = (key: string) => {
+          if (TOOLTIP_LABELS[key]) return TOOLTIP_LABELS[key];
+          // Custom field — title-case the key
+          return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        };
+        const [firstField, ...restFields] = fields;
+        return (
+          <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-16 top-16 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]">
+            {firstField && (
+              <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-indigo-400">
+                {getFieldLabel(firstField)}: {getTooltipValue(hoveredToken, firstField)}
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+              {restFields.map(field => (
+                <p key={field}><span className="text-slate-400 font-bold uppercase text-[9px]">{getFieldLabel(field)}:</span> {getTooltipValue(hoveredToken, field)}</p>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
       <div className="absolute right-4 top-4 max-h-[85%] overflow-y-auto w-64 z-40">
         <Legend layers={layers} allMappings={allMappings} onLegendClick={onLegendClick} />
       </div>

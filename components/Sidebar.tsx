@@ -1,7 +1,7 @@
 
-import React, { useMemo, useState } from 'react';
-import { Filter, Layers, Database, Upload, Search } from 'lucide-react';
-import { PlotConfig, FilterState, SpeechToken } from '../types';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
+import { Filter, Database, Upload, Search, Settings2 } from 'lucide-react';
+import { PlotConfig, FilterState, SpeechToken, DatasetMeta, ColumnRole } from '../types';
 import { isMonophthong } from '../services/csvParser';
 
 interface SidebarProps {
@@ -13,65 +13,191 @@ interface SidebarProps {
   tokenCount: number;
   totalCount: number;
   handleFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  activeLayerName?: string; // undefined for background, layer name for non-background
+  activeLayerName?: string;
+  datasetMeta?: DatasetMeta | null;
+  onToggleFieldVisibility?: (key: string, visible: boolean) => void;
 }
 
+/** Built-in filter fields and the column roles that enable them */
+const BUILTIN_FILTER_FIELDS: { key: string, label: string, roles: ColumnRole[] }[] = [
+  { key: 'type', label: 'Type', roles: ['type', 'canonical_type'] },
+  { key: 'vowelCategory', label: 'Vowel Category', roles: ['type', 'canonical_type'] },
+  { key: 'canonical', label: 'Phonemes', roles: ['canonical'] },
+  { key: 'word', label: 'Words', roles: ['word'] },
+  { key: 'alignment', label: 'Alignments', roles: ['alignment'] },
+  { key: 'produced', label: 'Allophones', roles: ['produced'] },
+  { key: 'canonical_stress', label: 'Expected Stress', roles: ['canonical_stress'] },
+  { key: 'lexical_stress', label: 'Transcribed Stress', roles: ['lexical_stress'] },
+  { key: 'syllable_mark', label: 'Syllable Mark', roles: ['syllable_mark'] },
+  { key: 'voice_pitch', label: 'Voice Pitch', roles: ['voice_pitch'] },
+];
+
 const Sidebar: React.FC<SidebarProps> = ({
-  filters, setFilters, data, tokenCount, totalCount, handleFileUpload, activeLayerName
+  filters, setFilters, data, tokenCount, totalCount, handleFileUpload, activeLayerName, datasetMeta, onToggleFieldVisibility
 }) => {
   const [wordSearch, setWordSearch] = useState('');
+  const [showFieldSettings, setShowFieldSettings] = useState(false);
+  const fieldSettingsRef = useRef<HTMLDivElement>(null);
+
+  // Close popover on outside click
+  useEffect(() => {
+    if (!showFieldSettings) return;
+    const handleClick = (e: MouseEvent) => {
+      if (fieldSettingsRef.current && !fieldSettingsRef.current.contains(e.target as Node)) {
+        setShowFieldSettings(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showFieldSettings]);
+
   const updateFilters = (update: Partial<FilterState>) => setFilters(prev => ({ ...prev, ...update }));
 
-  // Dynamic Options based on current filter state
+  // --- Field visibility helpers ---
+  const isFieldVisible = (key: string): boolean => {
+    if (!datasetMeta) return false;
+    const field = BUILTIN_FILTER_FIELDS.find(f => f.key === key);
+    if (field) {
+      return field.roles.some(r => {
+        const mapping = datasetMeta.columnMappings.find(m => m.role === r);
+        return mapping ? mapping.showInSidebar !== false : false;
+      });
+    }
+    const mapping = datasetMeta.columnMappings.find(m => m.role === 'custom' && m.customFieldName === key);
+    return mapping ? mapping.showInSidebar !== false : false;
+  };
+
+  // Visibility flags
+  const showType = isFieldVisible('type');
+  const showVowelCat = isFieldVisible('vowelCategory');
+  const showPhonemes = isFieldVisible('canonical');
+  const showWords = isFieldVisible('word');
+  const showAlignments = isFieldVisible('alignment');
+  const showProduced = isFieldVisible('produced');
+  const showCanStress = isFieldVisible('canonical_stress');
+  const showLexStress = isFieldVisible('lexical_stress');
+  const showSylMark = isFieldVisible('syllable_mark');
+  const showVoicePitch = isFieldVisible('voice_pitch');
+
+  // --- Popover entries: all fields available in the dataset ---
+  const popoverEntries = useMemo(() => {
+    if (!datasetMeta) return [];
+    const entries: { key: string, label: string, visible: boolean }[] = [];
+
+    BUILTIN_FILTER_FIELDS.forEach(f => {
+      if (f.roles.some(r => datasetMeta.columnMappings.some(m => m.role === r))) {
+        entries.push({
+          key: f.key,
+          label: f.label,
+          visible: f.roles.some(r => {
+            const mapping = datasetMeta.columnMappings.find(m => m.role === r);
+            return mapping ? mapping.showInSidebar !== false : false;
+          })
+        });
+      }
+    });
+
+    datasetMeta.customColumns.forEach(col => {
+      const mapping = datasetMeta.columnMappings.find(m => m.role === 'custom' && m.customFieldName === col);
+      entries.push({
+        key: col,
+        label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+        visible: mapping ? mapping.showInSidebar !== false : true
+      });
+    });
+
+    return entries;
+  }, [datasetMeta]);
+
+  const toggleFieldInPopover = (entry: { key: string, visible: boolean }) => {
+    if (!datasetMeta) return;
+    const field = BUILTIN_FILTER_FIELDS.find(f => f.key === entry.key);
+    if (field) {
+      field.roles.forEach(r => {
+        if (datasetMeta.columnMappings.some(m => m.role === r)) {
+          onToggleFieldVisibility?.(r, !entry.visible);
+        }
+      });
+    } else {
+      onToggleFieldVisibility?.(entry.key, !entry.visible);
+    }
+  };
+
+  // --- Dynamic filter options (narrowed by higher-level selections) ---
+
+  // Type options: always from full data
+  const typeOptions = useMemo(() => {
+    return Array.from(new Set(data.map(t => t.canonical_type?.toLowerCase()).filter(Boolean))).sort();
+  }, [data]);
+
+  // Pre-filter data by selected types (used to narrow downstream options)
+  const typeFilteredData = useMemo(() => {
+    if (filters.types.length === 0 || filters.types.length >= typeOptions.length) return data;
+    const typeSet = new Set(filters.types);
+    return data.filter(t => typeSet.has(t.canonical_type?.toLowerCase()));
+  }, [data, filters.types, typeOptions.length]);
+
+  // Vowel category options: narrowed by type selection
+  const vowelCategoryOptions = useMemo(() => {
+    const cats: string[] = [];
+    const vowels = typeFilteredData.filter(t => t.canonical_type?.toLowerCase() === 'vowel');
+    if (vowels.some(t => isMonophthong(t.canonical))) cats.push('monophthong');
+    if (vowels.some(t => !isMonophthong(t.canonical))) cats.push('diphthong');
+    return cats;
+  }, [typeFilteredData]);
+
+  // Further filter by vowel category (for phonemes/words/produced)
+  const categoryFilteredData = useMemo(() => {
+    if (filters.vowelCategories.length === 0 || filters.vowelCategories.length >= vowelCategoryOptions.length) return typeFilteredData;
+    const catSet = new Set(filters.vowelCategories);
+    return typeFilteredData.filter(t => {
+      if (t.canonical_type?.toLowerCase() !== 'vowel') return true; // non-vowels unaffected
+      const cat = isMonophthong(t.canonical) ? 'monophthong' : 'diphthong';
+      return catSet.has(cat);
+    });
+  }, [typeFilteredData, filters.vowelCategories, vowelCategoryOptions.length]);
+
+  // Phoneme options: narrowed by type + category
   const phonemeOptions = useMemo(() => {
-    let baseSet = data;
-    if (filters.mainType !== 'all') {
-      baseSet = baseSet.filter(t => t.canonical_type.toLowerCase() === filters.mainType);
-    }
-    if (filters.mainType === 'vowel' && filters.vowelCategory !== 'all') {
-      baseSet = baseSet.filter(t => {
-        const mono = isMonophthong(t.canonical);
-        return filters.vowelCategory === 'monophthong' ? mono : !mono;
-      });
-    }
-    return Array.from(new Set(baseSet.map(t => t.canonical))).sort();
-  }, [data, filters.mainType, filters.vowelCategory]);
+    return Array.from(new Set(categoryFilteredData.map(t => t.canonical).filter(Boolean))).sort();
+  }, [categoryFilteredData]);
 
-  const alignmentOptions = ['exact', 'substitution', 'insertion', 'deletion'];
+  // Further filter by phonemes (for words/produced)
+  const phonemeFilteredData = useMemo(() => {
+    if (filters.phonemes.length === 0 || filters.phonemes.length >= phonemeOptions.length) return categoryFilteredData;
+    const phonemeSet = new Set(filters.phonemes);
+    return categoryFilteredData.filter(t => phonemeSet.has(t.canonical));
+  }, [categoryFilteredData, filters.phonemes, phonemeOptions.length]);
 
-  const producedOptions = useMemo(() => {
-    let baseSet = data;
-    if (filters.phonemes.length > 0) {
-      baseSet = baseSet.filter(t => filters.phonemes.includes(t.canonical));
-    }
-    return Array.from(new Set(baseSet.map(t => t.produced))).sort();
-  }, [data, filters.phonemes]);
-
+  // Word options: narrowed by type + category + phonemes
   const wordOptions = useMemo(() => {
-    let baseSet = data;
-    // Apply higher level filters to restrict word list to relevant subset
-    if (filters.mainType !== 'all') {
-      baseSet = baseSet.filter(t => t.canonical_type.toLowerCase() === filters.mainType);
-    }
-    if (filters.mainType === 'vowel' && filters.vowelCategory !== 'all') {
-      baseSet = baseSet.filter(t => {
-        const mono = isMonophthong(t.canonical);
-        return filters.vowelCategory === 'monophthong' ? mono : !mono;
-      });
-    }
-    if (filters.phonemes.length > 0) {
-      baseSet = baseSet.filter(t => filters.phonemes.includes(t.canonical));
-    }
-    
-    return Array.from(new Set(baseSet.map(t => t.word))).sort();
-  }, [data, filters.mainType, filters.vowelCategory, filters.phonemes]);
+    return Array.from(new Set(phonemeFilteredData.map(t => t.word).filter(Boolean))).sort();
+  }, [phonemeFilteredData]);
+
+  // Produced options: narrowed by type + category + phonemes
+  const producedOptions = useMemo(() => {
+    return Array.from(new Set(phonemeFilteredData.map(t => t.produced).filter(Boolean))).sort();
+  }, [phonemeFilteredData]);
+
+  // Independent options (from full data)
+  const alignmentOptions = useMemo(() => {
+    return Array.from(new Set(data.map(t => t.alignment).filter(Boolean))).sort();
+  }, [data]);
 
   const syllableMarkOptions = useMemo(() => {
-    return Array.from(new Set(data.map(t => t.syllable_mark))).sort();
+    return Array.from(new Set(data.map(t => t.syllable_mark).filter(Boolean))).sort();
   }, [data]);
 
   const voicePitchOptions = useMemo(() => {
-    return Array.from(new Set(data.map(t => t.voice_pitch))).filter(Boolean).sort();
+    return Array.from(new Set(data.map(t => t.voice_pitch).filter(Boolean))).sort();
+  }, [data]);
+
+  const canonicalStressOptions = useMemo(() => {
+    return Array.from(new Set(data.map(t => t.canonical_stress).filter(Boolean))).sort();
+  }, [data]);
+
+  const lexicalStressOptions = useMemo(() => {
+    return Array.from(new Set(data.map(t => t.lexical_stress).filter(Boolean))).sort();
   }, [data]);
 
   const toggleListFilter = (key: keyof FilterState, val: string) => {
@@ -84,6 +210,52 @@ const Sidebar: React.FC<SidebarProps> = ({
       return wordOptions.filter(w => w.toLowerCase().includes(wordSearch.toLowerCase()));
   }, [wordOptions, wordSearch]);
 
+  // Custom field visibility
+  const visibleCustomColumns = useMemo(() => {
+    if (!datasetMeta) return [];
+    return datasetMeta.customColumns.filter(col => {
+      const mapping = datasetMeta.columnMappings.find(m => m.role === 'custom' && m.customFieldName === col);
+      return mapping ? mapping.showInSidebar !== false : true;
+    });
+  }, [datasetMeta]);
+
+  const hasData = data.length > 0;
+  const hasAnyFilters = showType || showVowelCat || showPhonemes || showWords || showAlignments || showProduced || showCanStress || showLexStress || showSylMark || showVoicePitch || visibleCustomColumns.length > 0;
+
+  /** Reusable button-toggle filter section */
+  const renderFilterSection = (
+    label: string,
+    options: string[],
+    selected: string[],
+    filterKey: keyof FilterState,
+    displayFn?: (v: string) => string,
+    maxHeight?: string
+  ) => {
+    const allSelected = options.length > 0 && options.every(o => selected.includes(o));
+    return (
+      <div>
+        <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex justify-between items-center">
+          <span>{label}</span>
+          <span className="flex gap-2">
+            <button onClick={() => updateFilters({ [filterKey]: options })} className={`hover:underline ${allSelected ? 'text-indigo-600 font-extrabold' : 'text-slate-400'}`}>All</button>
+            <button onClick={() => updateFilters({ [filterKey]: [] })} className={`hover:underline ${selected.length === 0 ? 'text-indigo-600 font-extrabold' : 'text-slate-400'}`}>Clear</button>
+          </span>
+        </label>
+        <div className={`overflow-y-auto border border-slate-200 rounded p-1.5 flex flex-wrap gap-1 ${maxHeight || 'max-h-24'}`}>
+          {options.map(v => (
+            <button
+              key={v}
+              onClick={() => toggleListFilter(filterKey, v)}
+              className={`px-2 py-0.5 rounded text-[11px] border ${selected.includes(v) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
+            >
+              {displayFn ? displayFn(v) : v}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <aside className="w-80 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-y-auto">
       {activeLayerName && (
@@ -92,7 +264,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
       <div className="p-5 space-y-6">
-        
+
         {/* Global Dataset Controls */}
         <section>
            <h2 className="text-[11px] font-bold text-slate-400 uppercase tracking-widest flex items-center mb-4">
@@ -101,209 +273,177 @@ const Sidebar: React.FC<SidebarProps> = ({
           <label className="flex flex-col items-center justify-center w-full h-16 border-2 border-dashed border-slate-200 rounded-lg cursor-pointer bg-slate-50 hover:bg-slate-100 transition-colors mb-3">
             <div className="flex items-center space-x-2">
               <Upload size={14} className="text-slate-400" />
-              <p className="text-[11px] text-slate-500 font-medium">Load CSV</p>
+              <p className="text-[11px] text-slate-500 font-medium">Load CSV / TSV</p>
             </div>
-            <input type="file" className="hidden" accept=".csv" onChange={handleFileUpload} />
+            <input type="file" className="hidden" accept=".csv,.tsv,.txt" onChange={handleFileUpload} />
           </label>
-          <div className="text-[10px] text-slate-500 font-bold uppercase flex justify-between items-center">
-            <span>Tokens: {tokenCount.toLocaleString()} / {totalCount.toLocaleString()}</span>
-            <span className="text-indigo-600">{Math.round((tokenCount / totalCount) * 100 || 0)}%</span>
-          </div>
+          {hasData && (
+            <div className="text-[10px] text-slate-500 font-bold uppercase flex justify-between items-center">
+              <span>Tokens: {tokenCount.toLocaleString()} / {totalCount.toLocaleString()}</span>
+              <span className="text-indigo-600">{Math.round((tokenCount / totalCount) * 100 || 0)}%</span>
+            </div>
+          )}
         </section>
 
-        {/* Hierarchical Filtering */}
-        <section className="pt-2 border-t border-slate-100">
-          <h2 className="text-[11px] font-bold text-slate-400 uppercase tracking-widest flex items-center mb-4">
-            <Filter size={14} className="mr-2" /> Hierarchical Selection
-          </h2>
-          
-          <div className="space-y-4">
-             {/* 1. Main Type */}
-             <div>
-               <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">1. Type</label>
-               <select 
-                className="w-full text-xs p-2 border border-slate-200 rounded"
-                value={filters.mainType}
-                onChange={e => updateFilters({ mainType: e.target.value as any, phonemes: [], produced: [], words: [] })}
-               >
-                 <option value="all">All Types</option>
-                 <option value="vowel">Vowels</option>
-                 <option value="consonant">Consonants</option>
-               </select>
-             </div>
+        {/* --- ALL FILTER SECTIONS: only shown when data is loaded --- */}
+        {hasData && hasAnyFilters && (
+          <section className="pt-2 border-t border-slate-100">
+            {/* Filters header with unified gear icon */}
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-[11px] font-bold text-slate-400 uppercase tracking-widest flex items-center">
+                <Filter size={14} className="mr-2" /> Filters
+              </h2>
+              {popoverEntries.length > 0 && (
+                <div className="relative" ref={fieldSettingsRef}>
+                  <button
+                    onClick={() => setShowFieldSettings(!showFieldSettings)}
+                    className={`p-1 rounded transition-colors ${showFieldSettings ? 'bg-indigo-100 text-indigo-600' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'}`}
+                    title="Configure visible filters"
+                  >
+                    <Settings2 size={14} />
+                  </button>
+                  {showFieldSettings && (
+                    <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-20 w-56 py-2 max-h-80 overflow-y-auto">
+                      <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase border-b border-slate-100 mb-1">Show in sidebar</div>
+                      {popoverEntries.map(entry => (
+                        <label key={entry.key} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={entry.visible}
+                            onChange={() => toggleFieldInPopover(entry)}
+                            className="rounded text-indigo-600"
+                          />
+                          <span className="text-xs text-slate-700">{entry.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
-             {/* 2. Vowel Category */}
-             {filters.mainType === 'vowel' && (
-               <div>
-                 <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">2. Category</label>
-                 <div className="flex bg-slate-50 p-1 rounded">
-                   {['all', 'monophthong', 'diphthong'].map(cat => (
-                     <button
-                      key={cat}
-                      onClick={() => updateFilters({ vowelCategory: cat as any, phonemes: [], produced: [], words: [] })}
-                      className={`flex-1 py-1 text-[10px] capitalize rounded ${filters.vowelCategory === cat ? 'bg-white shadow-sm font-bold text-indigo-600' : 'text-slate-500'}`}
-                     >
-                       {cat}
-                     </button>
-                   ))}
-                 </div>
-               </div>
-             )}
+            <div className="space-y-4">
+              {/* Type */}
+              {showType && renderFilterSection('Type', typeOptions, filters.types, 'types')}
 
-             {/* 3. Phonemes */}
-             <div>
-               <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex justify-between">
-                 <span>3. Phonemes</span>
-                 <button onClick={() => updateFilters({ phonemes: [] })} className="text-indigo-600 hover:underline">Clear</button>
-               </label>
-               <div className="max-h-24 overflow-y-auto border border-slate-200 rounded p-1.5 flex flex-wrap gap-1">
-                 {phonemeOptions.map(ph => (
-                   <button
-                    key={ph}
-                    onClick={() => toggleListFilter('phonemes', ph)}
-                    className={`px-2 py-0.5 rounded text-[11px] border ${filters.phonemes.includes(ph) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
-                   >
-                     {ph}
-                   </button>
-                 ))}
-               </div>
-             </div>
-             
-             {/* 4. Words (With Search) */}
-             <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex justify-between">
-                   <span>4. Words ({filteredWordOptions.length})</span>
-                   <button onClick={() => updateFilters({ words: [] })} className="text-indigo-600 hover:underline">Clear</button>
-                </label>
-                
-                <div className="relative mb-1.5">
-                    <input 
-                      type="text" 
+              {/* Vowel Category */}
+              {showVowelCat && vowelCategoryOptions.length > 0 && renderFilterSection(
+                'Vowel Category', vowelCategoryOptions, filters.vowelCategories, 'vowelCategories',
+                v => v.charAt(0).toUpperCase() + v.slice(1)
+              )}
+
+              {/* Phonemes */}
+              {showPhonemes && renderFilterSection('Phonemes', phonemeOptions, filters.phonemes, 'phonemes')}
+
+              {/* Words (with search) */}
+              {showWords && (
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex justify-between items-center">
+                    <span>Words ({filteredWordOptions.length})</span>
+                    <span className="flex gap-2">
+                      <button onClick={() => updateFilters({ words: wordOptions })} className={`hover:underline ${wordOptions.length > 0 && wordOptions.every(o => filters.words.includes(o)) ? 'text-indigo-600 font-extrabold' : 'text-slate-400'}`}>All</button>
+                      <button onClick={() => updateFilters({ words: [] })} className={`hover:underline ${filters.words.length === 0 ? 'text-indigo-600 font-extrabold' : 'text-slate-400'}`}>Clear</button>
+                    </span>
+                  </label>
+
+                  <div className="relative mb-1.5">
+                    <input
+                      type="text"
                       placeholder="Search words..."
                       className="w-full pl-7 pr-2 py-1 text-[11px] border border-slate-200 rounded focus:outline-none focus:border-indigo-500"
                       value={wordSearch}
                       onChange={e => setWordSearch(e.target.value)}
                     />
                     <Search size={10} className="absolute left-2 top-2 text-slate-400" />
-                </div>
+                  </div>
 
-                <div className="max-h-32 overflow-y-auto border border-slate-200 rounded p-1.5 flex flex-wrap gap-1">
-                 {filteredWordOptions.length > 0 ? (
-                    filteredWordOptions.slice(0, 100).map(word => (
+                  <div className="max-h-32 overflow-y-auto border border-slate-200 rounded p-1.5 flex flex-wrap gap-1">
+                    {filteredWordOptions.length > 0 ? (
+                      filteredWordOptions.slice(0, 100).map(word => (
                         <button
-                            key={word}
-                            onClick={() => toggleListFilter('words', word)}
-                            className={`px-2 py-0.5 rounded text-[11px] border ${filters.words.includes(word) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
+                          key={word}
+                          onClick={() => toggleListFilter('words', word)}
+                          className={`px-2 py-0.5 rounded text-[11px] border ${filters.words.includes(word) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
                         >
-                            {word}
+                          {word}
                         </button>
-                    ))
-                 ) : (
-                    <span className="text-[10px] text-slate-400 p-1">No words match</span>
-                 )}
-                 {filteredWordOptions.length > 100 && (
-                     <div className="w-full text-center text-[9px] text-slate-400 pt-1 italic">
+                      ))
+                    ) : (
+                      <span className="text-[10px] text-slate-400 p-1">No words match</span>
+                    )}
+                    {filteredWordOptions.length > 100 && (
+                      <div className="w-full text-center text-[9px] text-slate-400 pt-1 italic">
                         + {filteredWordOptions.length - 100} more (search to find)
-                     </div>
-                 )}
-               </div>
-             </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
-             {/* 5. Alignments (Deselected by default) */}
-             <div>
-               <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 block">5. Alignments</label>
-               <div className="flex flex-wrap gap-1.5">
-                 {alignmentOptions.map(a => (
-                   <button
-                    key={a}
-                    onClick={() => toggleListFilter('alignments', a)}
-                    className={`px-2 py-0.5 rounded text-[11px] border ${filters.alignments.includes(a) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
-                   >
-                     {a}
-                   </button>
-                 ))}
-               </div>
-             </div>
+              {/* Alignments */}
+              {showAlignments && renderFilterSection('Alignments', alignmentOptions, filters.alignments, 'alignments')}
 
-             {/* 6. Allophones (Produced) */}
-             <div>
-               <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex justify-between">
-                 <span>6. Allophones (Produced)</span>
-                 <button onClick={() => updateFilters({ produced: [] })} className="text-indigo-600 hover:underline">Clear</button>
-               </label>
-               <div className="max-h-24 overflow-y-auto border border-slate-200 rounded p-1.5 flex flex-wrap gap-1">
-                 {producedOptions.map(pr => (
-                   <button
-                    key={pr}
-                    onClick={() => toggleListFilter('produced', pr)}
-                    className={`px-2 py-0.5 rounded text-[11px] border ${filters.produced.includes(pr) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
-                   >
-                     {pr}
-                   </button>
-                 ))}
-               </div>
-             </div>
-          </div>
-        </section>
+              {/* Allophones */}
+              {showProduced && renderFilterSection('Allophones (Produced)', producedOptions, filters.produced, 'produced')}
 
-        {/* Additional Filters */}
-        <section className="pt-2 border-t border-slate-100">
-          <h2 className="text-[11px] font-bold text-slate-400 uppercase tracking-widest flex items-center mb-4">
-            <Layers size={14} className="mr-2" /> Contrast variables
-          </h2>
-          <div className="space-y-4">
-            <div>
-              <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Expected Stress</label>
-              <div className="flex gap-1.5">
-                {['0', '1'].map(v => (
-                  <button key={v} onClick={() => toggleListFilter('canonicalStress', v)} 
-                    className={`flex-1 py-1 rounded text-[11px] border ${filters.canonicalStress.includes(v) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-slate-200 text-slate-500'}`}>
-                    {v === '1' ? 'Stressed' : 'Unstressed'}
-                  </button>
-                ))}
-              </div>
+              {/* Expected Stress */}
+              {showCanStress && renderFilterSection(
+                'Expected Stress', canonicalStressOptions, filters.canonicalStress, 'canonicalStress',
+                v => v === '1' ? 'Stressed' : v === '0' ? 'Unstressed' : v
+              )}
+
+              {/* Transcribed Stress */}
+              {showLexStress && renderFilterSection(
+                'Transcribed Stress', lexicalStressOptions, filters.lexicalStress, 'lexicalStress',
+                v => v === '0' ? 'Unstressed' : v === '1' ? 'Primary' : v === '2' ? 'Secondary' : v
+              )}
+
+              {/* Syllable Mark */}
+              {showSylMark && renderFilterSection('Syllable Mark', syllableMarkOptions, filters.syllableMark, 'syllableMark')}
+
+              {/* Voice Pitch */}
+              {showVoicePitch && renderFilterSection('Voice Pitch', voicePitchOptions, filters.voicePitch, 'voicePitch')}
+
+              {/* Custom Fields */}
+              {visibleCustomColumns.map(col => {
+                const rawVals: string[] = data.map(t => t.customFields?.[col] ?? '').filter(v => v !== '');
+                const uniqueVals = Array.from(new Set(rawVals)).sort();
+                const selected = filters.customFilters?.[col] || [];
+                const allSelected = uniqueVals.length > 0 && uniqueVals.every(o => selected.includes(o));
+                const toggleCustom = (val: string) => {
+                  const next = selected.includes(val) ? selected.filter(v => v !== val) : [...selected, val];
+                  setFilters(prev => ({
+                    ...prev,
+                    customFilters: { ...(prev.customFilters || {}), [col]: next }
+                  }));
+                };
+                const label = col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                return (
+                  <div key={col}>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex justify-between items-center">
+                      <span>{label}</span>
+                      <span className="flex gap-2">
+                        <button onClick={() => setFilters(prev => ({ ...prev, customFilters: { ...(prev.customFilters || {}), [col]: uniqueVals } }))} className={`hover:underline ${allSelected ? 'text-indigo-600 font-extrabold' : 'text-slate-400'}`}>All</button>
+                        <button onClick={() => setFilters(prev => ({ ...prev, customFilters: { ...(prev.customFilters || {}), [col]: [] } }))} className={`hover:underline ${selected.length === 0 ? 'text-indigo-600 font-extrabold' : 'text-slate-400'}`}>Clear</button>
+                      </span>
+                    </label>
+                    <div className="max-h-24 overflow-y-auto border border-slate-200 rounded p-1.5 flex flex-wrap gap-1">
+                      {uniqueVals.map(v => (
+                        <button
+                          key={v}
+                          onClick={() => toggleCustom(v)}
+                          className={`px-2 py-0.5 rounded text-[11px] border ${selected.includes(v) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
+                        >
+                          {v}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Transcribed Stress</label>
-              <div className="flex gap-1">
-                {['0', '1', '2'].map(v => (
-                  <button key={v} onClick={() => toggleListFilter('lexicalStress', v)} 
-                    className={`flex-1 py-1 rounded text-[11px] border ${filters.lexicalStress.includes(v) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-slate-200 text-slate-500'}`}>
-                    {v === '0' ? 'Un' : v === '1' ? 'Prim' : 'Sec'}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 flex justify-between">
-                <span>Syllable Mark</span>
-                <button onClick={() => updateFilters({ syllableMark: [] })} className="text-indigo-600 hover:underline">Clear</button>
-              </label>
-              <div className="flex flex-wrap gap-1">
-                {syllableMarkOptions.map(v => (
-                  <button key={v} onClick={() => toggleListFilter('syllableMark', v)} 
-                    className={`min-w-[30px] px-2 py-1 rounded text-[11px] border ${filters.syllableMark.includes(v) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-slate-200 text-slate-500'}`}>
-                    {v}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 flex justify-between">
-                <span>Voice Pitch</span>
-                <button onClick={() => updateFilters({ voicePitch: [] })} className="text-indigo-600 hover:underline">Clear</button>
-              </label>
-              <div className="flex flex-wrap gap-1">
-                {voicePitchOptions.map(v => (
-                  <button key={v} onClick={() => toggleListFilter('voicePitch', v)} 
-                    className={`px-2 py-1 rounded text-[11px] border ${filters.voicePitch.includes(v) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-slate-200 text-slate-500'}`}>
-                    {v}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
+          </section>
+        )}
       </div>
     </aside>
   );

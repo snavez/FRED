@@ -131,7 +131,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
   const handleDownload = () => {
       if (previewUrl) {
           const link = document.createElement('a');
-          link.download = `vowelvision_export_${Date.now()}.png`;
+          link.download = `fred_export_${Date.now()}.png`;
           link.href = previewUrl;
           link.click();
           onClose();

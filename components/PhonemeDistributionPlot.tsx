@@ -16,17 +16,7 @@ const COLORS = [
   '#2563eb', '#059669', '#d97706', '#7c3aed', '#db2777'
 ];
 
-const getLabel = (t: SpeechToken, key: string): string => {
-  if (!key || key === 'none') return '';
-  if (key === 'phoneme') return t.canonical;
-  if (key === 'syllable_mark') {
-    const val = parseInt(t.syllable_mark, 10);
-    if (isNaN(val)) return t.syllable_mark;
-    return val > 0 ? 'accepted' : 'rejected';
-  }
-  const val = (t as any)[key];
-  return val !== undefined && val !== null ? String(val) : '';
-};
+import { getLabel } from '../utils/getLabel';
 
 const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({ data, config, styleOverrides, onLegendClick }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
