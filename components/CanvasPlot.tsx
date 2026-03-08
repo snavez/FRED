@@ -690,21 +690,19 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
           ctx.fillText(label, mx, my);
         } else {
           const centroidSize = (config.centroidSize * drawScale) / scale;
-          // White halo background
+          // White halo: always draw as the filled (closed) variant
+          const closedShape = shape.replace('-open', '');
           ctx.save();
           ctx.fillStyle = 'white';
           ctx.strokeStyle = 'white';
-          // For open shapes, draw as filled for the white background
-          const bgShape = shape.replace('-open', '');
-          drawShape(ctx, bgShape, mx, my, centroidSize + ((2*drawScale)/scale), scale, drawScale);
+          drawShape(ctx, closedShape, mx, my, centroidSize + ((2*drawScale)/scale), scale, drawScale);
           ctx.fill();
           ctx.restore();
-          // Colored centroid — always draw filled so centroids are prominent
+          // Colored centroid — draw the actual shape (respecting open/closed)
           ctx.fillStyle = groupColor;
           ctx.strokeStyle = groupColor;
-          drawShape(ctx, bgShape, mx, my, centroidSize, scale, drawScale);
-          ctx.fill();
-          if (!['plus', 'cross', 'asterisk'].includes(shape)) {
+          drawShape(ctx, shape, mx, my, centroidSize, scale, drawScale);
+          if (!['plus', 'cross', 'asterisk'].includes(shape) && !shape.endsWith('-open')) {
             ctx.strokeStyle = 'white';
             ctx.lineWidth = (2 * drawScale) / scale;
             ctx.stroke();
