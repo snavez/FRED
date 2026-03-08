@@ -53,7 +53,7 @@ const drawShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: n
     case 'asterisk': ctx.moveTo(x - size, y); ctx.lineTo(x + size, y); ctx.moveTo(x, y - size); ctx.lineTo(x, y + size); const s2 = size * 0.7; ctx.moveTo(x - s2, y - s2); ctx.lineTo(x + s2, y + s2); ctx.moveTo(x + s2, y - s2); ctx.lineTo(x - s2, y + s2); break;
     default: ctx.arc(x, y, size, 0, Math.PI * 2);
   }
-  const lineWidth = strokeWidth ?? (4 * drawScale) / scale;
+  const lineWidth = strokeWidth ?? (2 * drawScale) / scale;
   if (shape.endsWith('-open') || ['plus', 'cross', 'asterisk'].includes(shape)) {
     ctx.lineWidth = lineWidth; ctx.stroke();
   } else {
@@ -325,11 +325,11 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     if (width === 0 || height === 0) return null;
 
     const CELL_SIZE = 20; // pixels per grid cell
-    // Extend grid beyond canvas bounds so outlier points outside the f1/f2 range are hoverable
-    const originX = -width;
-    const originY = -height;
-    const gridW = width * 3;
-    const gridH = height * 3;
+    // Extend grid well beyond canvas bounds so extreme outliers are hoverable
+    const originX = -width * 2;
+    const originY = -height * 2;
+    const gridW = width * 5;
+    const gridH = height * 5;
     const cols = Math.ceil(gridW / CELL_SIZE);
     const rows = Math.ceil(gridH / CELL_SIZE);
     const grid: { token: SpeechToken; layerId: string; x: number; y: number }[][] = new Array(cols * rows);
@@ -699,7 +699,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
           ctx.restore();
           // Colored centroid — draw the actual shape (respecting open/closed)
           // Scale stroke width with centroid size for open shapes
-          const centroidStroke = centroidSize * 0.15;
+          const centroidStroke = centroidSize * 0.25;
           ctx.fillStyle = groupColor;
           ctx.strokeStyle = groupColor;
           drawShape(ctx, shape, mx, my, centroidSize, scale, drawScale, centroidStroke);
