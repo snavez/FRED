@@ -1,7 +1,7 @@
 
 import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig } from '../types';
-import { Layers, Rotate3D, Box, LayoutTemplate } from 'lucide-react';
+import { Layers, Rotate3D, Box, LayoutTemplate, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, RotateCcw, RotateCw } from 'lucide-react';
 
 interface Scatter3DPlotProps {
   data: SpeechToken[];
@@ -103,6 +103,55 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
   const isDragging = useRef(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
   const dragMode = useRef<'pan' | 'rotate'>('pan');
+
+  // Animated rotation
+  const animationRef = useRef<number | null>(null);
+  const rotationRef = useRef(rotation);
+  rotationRef.current = rotation; // Always keep ref in sync with state
+  const [rotationStep, setRotationStep] = useState(15);
+
+  const animateRotation = useCallback((deltaAlpha: number, deltaBeta: number) => {
+    // Cancel any existing animation
+    if (animationRef.current !== null) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+    }
+
+    const duration = 300; // ms
+    const startTime = performance.now();
+    // Read current rotation from ref (captures mid-animation position on rapid clicks)
+    const startAlpha = rotationRef.current.alpha;
+    const startBeta = rotationRef.current.beta;
+
+    const animate = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // Ease-out cubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+
+      setRotation({
+        alpha: (startAlpha + deltaAlpha * eased) % 360,
+        beta: (startBeta + deltaBeta * eased) % 360,
+      });
+
+      if (progress < 1) {
+        animationRef.current = requestAnimationFrame(animate);
+      } else {
+        animationRef.current = null;
+      }
+    };
+
+    animationRef.current = requestAnimationFrame(animate);
+  }, []);
+
+  // Cleanup animation on unmount
+  useEffect(() => {
+    return () => {
+      if (animationRef.current !== null) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, []);
 
   // Axis Align Handlers
   const alignView = (axisPair: 'f1f2' | 'f2f3' | 'f1f3') => {
@@ -442,6 +491,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
 
     // Draw Centroids & Labels
     if (config.showCentroids) {
+       ctx.globalAlpha = config.centroidOpacity ?? 1;
        Object.entries(groups).forEach(([key, groupPts]) => {
            if (groupPts.length === 0) return;
            let mx=0, my=0, mz=0;
@@ -490,6 +540,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                drawShape(ctx, shape, projM.x, projM.y, cSize, drawScale, centroidStroke);
            }
        });
+       ctx.globalAlpha = 1;
     }
 
     // Draw Points
@@ -834,6 +885,87 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
         onWheel={handleWheel}
         className="cursor-move w-full h-full"
       />
+      {/* Rotation Control Widget */}
+      <div className="absolute bottom-4 right-4 z-20 pointer-events-auto">
+          <div className="bg-white/95 backdrop-blur border border-slate-200 rounded-xl shadow-lg p-2 flex flex-col items-center gap-1">
+              {/* Vertical label */}
+              <div className="text-[8px] text-slate-400 font-semibold tracking-wider uppercase">Rotate</div>
+
+              {/* D-pad layout */}
+              <div className="relative w-[88px] h-[88px]">
+                  {/* Up */}
+                  <button
+                      onClick={() => animateRotation(0, rotationStep)}
+                      title={`Tilt up ${rotationStep}°`}
+                      className="absolute top-0 left-1/2 -translate-x-1/2 w-7 h-7 flex items-center justify-center rounded-md bg-slate-100 hover:bg-sky-100 hover:text-sky-700 text-slate-600 transition-colors active:bg-sky-200"
+                  >
+                      <ChevronUp size={16} strokeWidth={2.5} />
+                  </button>
+                  {/* Down */}
+                  <button
+                      onClick={() => animateRotation(0, -rotationStep)}
+                      title={`Tilt down ${rotationStep}°`}
+                      className="absolute bottom-0 left-1/2 -translate-x-1/2 w-7 h-7 flex items-center justify-center rounded-md bg-slate-100 hover:bg-sky-100 hover:text-sky-700 text-slate-600 transition-colors active:bg-sky-200"
+                  >
+                      <ChevronDown size={16} strokeWidth={2.5} />
+                  </button>
+                  {/* Left */}
+                  <button
+                      onClick={() => animateRotation(-rotationStep, 0)}
+                      title={`Rotate left ${rotationStep}°`}
+                      className="absolute left-0 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-md bg-slate-100 hover:bg-sky-100 hover:text-sky-700 text-slate-600 transition-colors active:bg-sky-200"
+                  >
+                      <ChevronLeft size={16} strokeWidth={2.5} />
+                  </button>
+                  {/* Right */}
+                  <button
+                      onClick={() => animateRotation(rotationStep, 0)}
+                      title={`Rotate right ${rotationStep}°`}
+                      className="absolute right-0 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-md bg-slate-100 hover:bg-sky-100 hover:text-sky-700 text-slate-600 transition-colors active:bg-sky-200"
+                  >
+                      <ChevronRight size={16} strokeWidth={2.5} />
+                  </button>
+                  {/* Roll Left (CCW) */}
+                  <button
+                      onClick={() => animateRotation(-rotationStep, -rotationStep)}
+                      title={`Roll CCW ${rotationStep}°`}
+                      className="absolute top-0 left-0 w-6 h-6 flex items-center justify-center rounded-md bg-slate-50 hover:bg-amber-50 hover:text-amber-700 text-slate-400 transition-colors active:bg-amber-100"
+                  >
+                      <RotateCcw size={12} strokeWidth={2} />
+                  </button>
+                  {/* Roll Right (CW) */}
+                  <button
+                      onClick={() => animateRotation(rotationStep, rotationStep)}
+                      title={`Roll CW ${rotationStep}°`}
+                      className="absolute top-0 right-0 w-6 h-6 flex items-center justify-center rounded-md bg-slate-50 hover:bg-amber-50 hover:text-amber-700 text-slate-400 transition-colors active:bg-amber-100"
+                  >
+                      <RotateCw size={12} strokeWidth={2} />
+                  </button>
+                  {/* Center: degree display */}
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-500 select-none">
+                      {rotationStep}°
+                  </div>
+              </div>
+
+              {/* Step size slider */}
+              <div className="flex items-center gap-1 w-full px-1">
+                  <span className="text-[8px] text-slate-400">5°</span>
+                  <input
+                      type="range"
+                      min="5"
+                      max="90"
+                      step="5"
+                      value={rotationStep}
+                      onChange={e => setRotationStep(parseInt(e.target.value))}
+                      className="flex-1 h-1 accent-sky-600"
+                      title={`Step: ${rotationStep}°`}
+                  />
+                  <span className="text-[8px] text-slate-400">90°</span>
+              </div>
+          </div>
+      </div>
+
+      {/* Help + Reset */}
       <div className="absolute bottom-4 left-4 flex flex-col space-y-2 pointer-events-none">
           <div className="bg-slate-900/80 text-white p-2 rounded text-[10px] backdrop-blur">
               <p>Drag to Pan</p>

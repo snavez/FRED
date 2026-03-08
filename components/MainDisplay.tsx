@@ -862,7 +862,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                 </>
                            ) : (
                                 <>
-                                   {activeTab === 'vowel' && (
+                                   {(activeTab === 'vowel' || activeTab === '3d') && (
                                        <div className="flex flex-col gap-0.5">
                                             <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                               <span>Size</span>

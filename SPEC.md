@@ -71,9 +71,15 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 - **Performance**: Spatial grid index for O(1) hover hit-testing; `requestAnimationFrame` throttling; hover state uses refs to avoid triggering canvas redraws
 
 ### 3D F1/F2/F3 Scatter
-- Three.js-based 3D scatter with orbit controls
+- Canvas-based orthographic 3D scatter plot
 - Point and trajectory modes
 - Adjustable F1, F2, F3 ranges
+- Quick-align buttons (F1 vs F2, F2 vs F3, F1 vs F3) with correct axis orientation
+- **Rotation control widget** — D-pad style directional arrows for predictable rotation with smooth animation (ease-out cubic, 300ms). Configurable step size (5°–90°). Diagonal roll buttons (CW/CCW). Complements shift+drag free rotation
+- Centroid size/opacity sliders in sidebar (shared with F1/F2 plot)
+- Combined color+shape legend when same variable mapped to both
+- Ellipse line width respects config slider
+- 360° unclamped rotation (alpha around Y, beta around X)
 
 ### Trajectory Time Series
 - Line plots of formant trajectories over normalized time
