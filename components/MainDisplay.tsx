@@ -76,14 +76,42 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   const [layerPanelOpen, setLayerPanelOpen] = useState(false);
   const [showTooltipSettings, setShowTooltipSettings] = useState(false);
 
-  // Dynamic variable options (built-in + custom columns from dataset)
+  // Dynamic variable options: built-in + custom columns, filtered to sidebar-active fields
   const variableOptions = useMemo(() => {
-    if (!datasetMeta?.customColumns.length) return BUILT_IN_VARIABLE_OPTIONS;
-    const custom = datasetMeta.customColumns.map(col => ({
-      label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-      value: col,
-    }));
-    return [...BUILT_IN_VARIABLE_OPTIONS, ...custom];
+    // Map variable option values to column roles ('phoneme' → 'canonical', others match directly)
+    const VARIABLE_TO_ROLE: Record<string, string> = { 'phoneme': 'canonical' };
+
+    // Build sets of sidebar-active roles and custom field names
+    const sidebarActiveRoles = new Set<string>();
+    const sidebarActiveCustom = new Set<string>();
+    if (datasetMeta?.columnMappings) {
+      for (const m of datasetMeta.columnMappings) {
+        if (m.showInSidebar) {
+          if (m.role === 'custom' && m.customFieldName) {
+            sidebarActiveCustom.add(m.customFieldName);
+          } else {
+            sidebarActiveRoles.add(m.role);
+          }
+        }
+      }
+    }
+
+    // Filter built-in options: 'none' always shown, others only if sidebar-active
+    const builtIn = BUILT_IN_VARIABLE_OPTIONS.filter(opt => {
+      if (opt.value === 'none') return true;
+      const role = VARIABLE_TO_ROLE[opt.value] || opt.value;
+      return sidebarActiveRoles.has(role);
+    });
+
+    // Filter custom columns to sidebar-active only
+    const custom = (datasetMeta?.customColumns || [])
+      .filter(col => sidebarActiveCustom.has(col))
+      .map(col => ({
+        label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+        value: col,
+      }));
+
+    return [...builtIn, ...custom];
   }, [datasetMeta]);
 
   // Dynamic time-points (from dataset or default 0-100 by 10)
@@ -174,9 +202,12 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
   const getActiveChannels = () => {
     const active = { color: false, shape: false, texture: false, lineType: false };
+    const isTrajectory = currentConfig.plotType === 'trajectory';
     if (currentConfig.colorBy !== 'none') active.color = true;
-    if ((activeTab === 'vowel' || activeTab === '3d') && currentConfig.shapeBy !== 'none') active.shape = true;
-    if ((activeTab === 'vowel' || activeTab === 'traj_f1f2' || activeTab === 'traj_series') && currentConfig.lineTypeBy !== 'none') active.lineType = true;
+    // Shapes: point mode only (F1/F2 + 3D), not trajectory
+    if ((activeTab === 'vowel' || activeTab === '3d') && !isTrajectory && currentConfig.shapeBy !== 'none') active.shape = true;
+    // Line type: trajectory mode on F1/F2, or dedicated trajectory tabs
+    if (((activeTab === 'vowel' && isTrajectory) || activeTab === 'traj_f1f2' || activeTab === 'traj_series') && currentConfig.lineTypeBy !== 'none') active.lineType = true;
     if ((activeTab === 'dist' || activeTab === 'duration') && currentConfig.textureBy !== 'none') active.texture = true;
     return active;
   };
@@ -214,12 +245,12 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
       <div className="flex flex-col space-y-2 shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex bg-white p-1 rounded-lg border border-slate-200 w-fit shadow-sm overflow-x-auto">
-            <button onClick={() => setActiveTab('vowel')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'vowel' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Grid size={16} /><span>F1/F2</span></button>
-            <button onClick={() => setActiveTab('3d')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === '3d' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Box size={16} /><span>3D F1/F2/F3</span></button>
-            <button onClick={() => setActiveTab('traj_series')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'traj_series' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><LineChart size={16} /><span>Time Series</span></button>
-            <button onClick={() => setActiveTab('duration')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'duration' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><BarChart2 size={16} /><span>Duration</span></button>
-            <button onClick={() => setActiveTab('dist')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'dist' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><PieChart size={16} /><span>Phoneme Dist.</span></button>
-            <button onClick={() => setActiveTab('table')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'table' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Table size={16} /><span>Table</span></button>
+            <button onClick={() => setActiveTab('vowel')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'vowel' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Grid size={16} /><span>F1/F2</span></button>
+            <button onClick={() => setActiveTab('3d')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === '3d' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Box size={16} /><span>3D F1/F2/F3</span></button>
+            <button onClick={() => setActiveTab('traj_series')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'traj_series' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><LineChart size={16} /><span>Time Series</span></button>
+            <button onClick={() => setActiveTab('duration')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'duration' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><BarChart2 size={16} /><span>Duration</span></button>
+            <button onClick={() => setActiveTab('dist')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'dist' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><PieChart size={16} /><span>Phoneme Dist.</span></button>
+            <button onClick={() => setActiveTab('table')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'table' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Table size={16} /><span>Table</span></button>
           </div>
 
           {activeTab !== 'table' && (
@@ -229,7 +260,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                  <div className="relative">
                    <button
                      onClick={() => setLayerPanelOpen(!layerPanelOpen)}
-                     className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${layerPanelOpen ? 'bg-indigo-50 text-indigo-700 border-indigo-200 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                     className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${layerPanelOpen ? 'bg-sky-50 text-sky-800 border-sky-200 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
                    >
                      <Layers size={14} />
                      <span>Layers ({layers.length})</span>
@@ -253,7 +284,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                              key={layer.id}
                              className={`flex items-center gap-1.5 px-2 py-1.5 rounded text-xs font-bold transition-all cursor-pointer ${
                                activeLayerId === layer.id
-                                 ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                                 ? 'bg-sky-50 text-sky-800 border border-sky-200'
                                  : 'text-slate-600 hover:bg-slate-50 border border-transparent'
                              }`}
                              onClick={() => setActiveLayerId(layer.id)}
@@ -336,7 +367,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                            <button
                              onClick={(e) => { e.stopPropagation(); setShowAddMenu(!showAddMenu); }}
                              disabled={layers.length >= 10}
-                             className={`w-full flex items-center justify-center gap-1 px-2 py-1.5 rounded text-xs font-bold transition-all ${layers.length >= 10 ? 'text-slate-300 cursor-not-allowed' : 'text-indigo-600 hover:bg-indigo-50 border border-dashed border-indigo-200'}`}
+                             className={`w-full flex items-center justify-center gap-1 px-2 py-1.5 rounded text-xs font-bold transition-all ${layers.length >= 10 ? 'text-slate-300 cursor-not-allowed' : 'text-sky-700 hover:bg-sky-50 border border-dashed border-sky-200'}`}
                            >
                              <Plus size={12} />
                              <span>Add Layer</span>
@@ -345,14 +376,14 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                              <div className="absolute bottom-full mb-1 left-0 right-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 py-1">
                                <button
                                  onClick={() => { addLayer('point'); setShowAddMenu(false); }}
-                                 className="w-full px-3 py-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-indigo-50 flex items-center gap-2"
+                                 className="w-full px-3 py-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-sky-50 flex items-center gap-2"
                                >
                                  <span className="w-4 h-4 rounded bg-blue-100 text-blue-600 flex items-center justify-center text-[9px] font-black">P</span>
                                  Point Layer
                                </button>
                                <button
                                  onClick={() => { addLayer('trajectory'); setShowAddMenu(false); }}
-                                 className="w-full px-3 py-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-indigo-50 flex items-center gap-2"
+                                 className="w-full px-3 py-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-sky-50 flex items-center gap-2"
                                >
                                  <span className="w-4 h-4 rounded bg-emerald-100 text-emerald-600 flex items-center justify-center text-[9px] font-black">T</span>
                                  Trajectory Layer
@@ -371,7 +402,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                  <div className="relative">
                    <button
                      onClick={() => setShowTooltipSettings(!showTooltipSettings)}
-                     className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${showTooltipSettings ? 'bg-indigo-50 text-indigo-700 border-indigo-200 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                     className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${showTooltipSettings ? 'bg-sky-50 text-sky-800 border-sky-200 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
                      title="Configure tooltip fields"
                    >
                      <MessageSquare size={14} />
@@ -411,7 +442,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                >
                                  <input
                                    type="checkbox"
-                                   className="rounded text-indigo-600"
+                                   className="rounded text-sky-700"
                                    checked={isChecked}
                                    disabled={!isChecked && atMax}
                                    onChange={() => {
@@ -435,7 +466,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                  </div>
                )}
 
-               <button onClick={handleExportClick} className="flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all bg-white text-indigo-600 border-indigo-200 hover:bg-indigo-50"><Download size={14} /><span>Export</span></button>
+               <button onClick={handleExportClick} className="flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all bg-white text-sky-700 border-sky-200 hover:bg-sky-50"><Download size={14} /><span>Export</span></button>
                <button onClick={() => handleConfig('bwMode', !currentConfig.bwMode)} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${currentConfig.bwMode ? 'bg-slate-800 text-white border-slate-800 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}><Printer size={14} /><span>B&W</span></button>
              </div>
           )}
@@ -451,18 +482,20 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
             <div className="h-6 w-px bg-slate-300"></div>
 
-            {/* Config: Formant Variant Toggle */}
-            {(activeTab === 'vowel' || activeTab === '3d' || activeTab === 'traj_f1f2' || activeTab === 'traj_series') && datasetMeta?.formantVariants && datasetMeta.formantVariants.length === 2 && (
+            {/* Config: Formant Variant Dropdown */}
+            {(activeTab === 'vowel' || activeTab === '3d' || activeTab === 'traj_f1f2' || activeTab === 'traj_series') && datasetMeta?.formantVariants && datasetMeta.formantVariants.length >= 2 && (
                 <div className="flex items-center gap-1.5 mr-2">
-                    <span className="font-semibold text-slate-600">Data:</span>
-                    <button
-                        onClick={() => handleConfig('useSmoothing', !currentConfig.useSmoothing)}
-                        className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-bold border transition-all ${currentConfig.useSmoothing ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-500 border-slate-300 hover:bg-slate-50'}`}
-                        title={`Toggle between ${datasetMeta.formantVariants[0]} and ${datasetMeta.formantVariants[1]} data`}
+                    <span className="font-semibold text-slate-600 flex items-center gap-1"><Waves size={12} />Data:</span>
+                    <select
+                        value={currentConfig.useSmoothing ? datasetMeta.formantVariants[1] : datasetMeta.formantVariants[0]}
+                        onChange={e => handleConfig('useSmoothing', e.target.value !== datasetMeta!.formantVariants![0])}
+                        className="text-xs p-1 border border-slate-200 rounded bg-white font-bold text-slate-700"
+                        title="Select formant data variant"
                     >
-                        <Waves size={12} />
-                        <span>{currentConfig.useSmoothing ? datasetMeta.formantVariants[1] : datasetMeta.formantVariants[0]}</span>
-                    </button>
+                        {datasetMeta.formantVariants.map(variant => (
+                            <option key={variant} value={variant}>{variant}</option>
+                        ))}
+                    </select>
                 </div>
             )}
 
@@ -633,7 +666,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                             {currentConfig.distValueMode === 'percentage' && currentConfig.distBarMode === 'stacked' && (
                                 <button
                                     onClick={() => handleConfig('distNormalize', !currentConfig.distNormalize)}
-                                    className={`p-1 border rounded text-[10px] ${currentConfig.distNormalize ? 'bg-indigo-100 border-indigo-300 text-indigo-700' : 'bg-white border-slate-300 text-slate-600'}`}
+                                    className={`p-1 border rounded text-[10px] ${currentConfig.distNormalize ? 'bg-sky-100 border-sky-200 text-sky-800' : 'bg-white border-slate-300 text-slate-600'}`}
                                     title="Normalize each stack to 100%"
                                 >
                                     100%
@@ -707,7 +740,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         <div className="flex flex-col gap-0.5 ml-2 border-l border-slate-200 pl-2">
                              <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                 <span>Lines</span>
-                                <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.trajectoryLineOpacity ?? 0.5)} onChange={e => handleConfig('trajectoryLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-indigo-600" title="Individual Line Opacity (0 = hidden)" />
+                                <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.trajectoryLineOpacity ?? 0.5)} onChange={e => handleConfig('trajectoryLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" title="Individual Line Opacity (0 = hidden)" />
                              </div>
                         </div>
                     </div>
@@ -720,18 +753,18 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                    {currentConfig.plotType !== 'trajectory' && (
                        <div className="flex items-center gap-1.5">
                          <label className="flex items-center gap-1 cursor-pointer" title="Show Individual Points">
-                           <input type="checkbox" className="rounded text-indigo-600" checked={currentConfig.showPoints} onChange={e => handleConfig('showPoints', e.target.checked)} />
+                           <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showPoints} onChange={e => handleConfig('showPoints', e.target.checked)} />
                            <span className="font-bold">Pts</span>
                          </label>
                          {currentConfig.showPoints && (
                            <div className="flex flex-col gap-0.5">
                              <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                <span>Size</span>
-                               <input type="range" min="1" max="10" title="Point Size" value={currentConfig.pointSize} onChange={e => handleConfig('pointSize', parseInt(e.target.value))} className="w-16 h-1 accent-indigo-600" />
+                               <input type="range" min="1" max="10" title="Point Size" value={currentConfig.pointSize} onChange={e => handleConfig('pointSize', parseInt(e.target.value))} className="w-16 h-1 accent-slate-600" />
                              </div>
                              <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                <span>Opacity</span>
-                               <input type="range" min="0" max="1" step="0.02" title="Point Opacity" value={opacityToSlider(currentConfig.pointOpacity)} onChange={e => handleConfig('pointOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-indigo-600" />
+                               <input type="range" min="0" max="1" step="0.02" title="Point Opacity" value={opacityToSlider(currentConfig.pointOpacity)} onChange={e => handleConfig('pointOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
                              </div>
                            </div>
                          )}
@@ -744,7 +777,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                    {(activeTab === 'vowel' || activeTab === '3d') && currentConfig.plotType !== 'trajectory' && (
                      <div className="flex items-center gap-1.5 border-r border-slate-200 pr-2">
                        <label className="flex items-center gap-1 cursor-pointer" title="Show Standard Deviation Ellipses">
-                         <input type="checkbox" className="rounded text-indigo-600" checked={currentConfig.showEllipses} onChange={e => handleConfig('showEllipses', e.target.checked)} />
+                         <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showEllipses} onChange={e => handleConfig('showEllipses', e.target.checked)} />
                          <span className="font-bold">Ellip</span>
                        </label>
                        {currentConfig.showEllipses && (
@@ -755,15 +788,15 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                            <div className="flex flex-col gap-0.5">
                                <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                   <span>Width</span>
-                                  <input type="range" min="0.5" max="8" step="0.5" title="Line Width" value={currentConfig.ellipseLineWidth} onChange={e => handleConfig('ellipseLineWidth', parseFloat(e.target.value))} className="w-10 h-1 accent-indigo-600" />
+                                  <input type="range" min="0.5" max="8" step="0.5" title="Line Width" value={currentConfig.ellipseLineWidth} onChange={e => handleConfig('ellipseLineWidth', parseFloat(e.target.value))} className="w-10 h-1 accent-slate-600" />
                                </div>
                                <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                   <span>Line</span>
-                                  <input type="range" min="0" max="1" step="0.02" title="Line Opacity" value={opacityToSlider(currentConfig.ellipseLineOpacity)} onChange={e => handleConfig('ellipseLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-10 h-1 accent-indigo-600" />
+                                  <input type="range" min="0" max="1" step="0.02" title="Line Opacity" value={opacityToSlider(currentConfig.ellipseLineOpacity)} onChange={e => handleConfig('ellipseLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-10 h-1 accent-slate-600" />
                                </div>
                                <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                   <span>Fill</span>
-                                  <input type="range" min="0" max="1" step="0.02" title="Fill Opacity" value={opacityToSlider(currentConfig.ellipseFillOpacity)} onChange={e => handleConfig('ellipseFillOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-10 h-1 accent-indigo-600" />
+                                  <input type="range" min="0" max="1" step="0.02" title="Fill Opacity" value={opacityToSlider(currentConfig.ellipseFillOpacity)} onChange={e => handleConfig('ellipseFillOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-10 h-1 accent-slate-600" />
                                </div>
                            </div>
                          </div>
@@ -776,7 +809,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                      <label className="flex items-center gap-1 cursor-pointer" title="Show Means">
                        <input
                             type="checkbox"
-                            className="rounded text-indigo-600"
+                            className="rounded text-sky-700"
                             checked={currentConfig.plotType === 'trajectory' ? currentConfig.showMeanTrajectories : currentConfig.showCentroids}
                             onChange={e => handleConfig(currentConfig.plotType === 'trajectory' ? 'showMeanTrajectories' : 'showCentroids', e.target.checked)}
                        />
@@ -789,19 +822,19 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                 <div className="flex flex-col gap-0.5">
                                      <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                         <span>Width</span>
-                                        <input type="range" min="1" max="10" step="0.5" title="Mean Line Width" value={currentConfig.meanTrajectoryWidth ?? 3} onChange={e => handleConfig('meanTrajectoryWidth', parseFloat(e.target.value))} className="w-16 h-1 accent-indigo-600" />
+                                        <input type="range" min="1" max="10" step="0.5" title="Mean Line Width" value={currentConfig.meanTrajectoryWidth ?? 3} onChange={e => handleConfig('meanTrajectoryWidth', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
                                      </div>
                                      <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                         <span>Opacity</span>
-                                        <input type="range" min="0" max="1" step="0.02" title="Mean Line Opacity" value={opacityToSlider(currentConfig.meanTrajectoryOpacity ?? 1)} onChange={e => handleConfig('meanTrajectoryOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-indigo-600" />
+                                        <input type="range" min="0" max="1" step="0.02" title="Mean Line Opacity" value={opacityToSlider(currentConfig.meanTrajectoryOpacity ?? 1)} onChange={e => handleConfig('meanTrajectoryOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
                                      </div>
                                      <div className="flex items-center gap-1">
                                         <label className="flex items-center gap-1 cursor-pointer text-[9px] text-slate-500">
-                                            <input type="checkbox" className="rounded text-indigo-600" checked={currentConfig.showTrajectoryLabels} onChange={e => handleConfig('showTrajectoryLabels', e.target.checked)} />
+                                            <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showTrajectoryLabels} onChange={e => handleConfig('showTrajectoryLabels', e.target.checked)} />
                                             <span>Lbl</span>
                                         </label>
                                         {currentConfig.showTrajectoryLabels && (
-                                            <input type="range" min="8" max="72" step="1" title="Label Size" value={currentConfig.meanTrajectoryLabelSize || 12} onChange={e => handleConfig('meanTrajectoryLabelSize', parseFloat(e.target.value))} className="w-16 h-1 accent-indigo-600" />
+                                            <input type="range" min="8" max="72" step="1" title="Label Size" value={currentConfig.meanTrajectoryLabelSize || 12} onChange={e => handleConfig('meanTrajectoryLabelSize', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
                                         )}
                                      </div>
                                 </div>
@@ -809,20 +842,20 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                 <div className="flex flex-col gap-0.5">
                                      <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                         <label className="flex items-center gap-1 cursor-pointer">
-                                            <input type="checkbox" className="rounded text-indigo-600" checked={currentConfig.showMeanTrajectoryPoints} onChange={e => handleConfig('showMeanTrajectoryPoints', e.target.checked)} />
+                                            <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showMeanTrajectoryPoints} onChange={e => handleConfig('showMeanTrajectoryPoints', e.target.checked)} />
                                             <span>Pts</span>
                                         </label>
                                         {currentConfig.showMeanTrajectoryPoints && (
-                                            <input type="range" min="1" max="10" step="0.5" title="Mean Point Size" value={currentConfig.meanTrajectoryPointSize ?? 4} onChange={e => handleConfig('meanTrajectoryPointSize', parseFloat(e.target.value))} className="w-12 h-1 accent-indigo-600" />
+                                            <input type="range" min="1" max="10" step="0.5" title="Mean Point Size" value={currentConfig.meanTrajectoryPointSize ?? 4} onChange={e => handleConfig('meanTrajectoryPointSize', parseFloat(e.target.value))} className="w-12 h-1 accent-slate-600" />
                                         )}
                                      </div>
                                      <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                         <label className="flex items-center gap-1 cursor-pointer">
-                                            <input type="checkbox" className="rounded text-indigo-600" checked={currentConfig.showArrows} onChange={e => handleConfig('showArrows', e.target.checked)} />
+                                            <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showArrows} onChange={e => handleConfig('showArrows', e.target.checked)} />
                                             <span>Arrow</span>
                                         </label>
                                         {currentConfig.showArrows && (
-                                            <input type="range" min="1" max="8" step="0.5" title="Arrow Size" value={currentConfig.meanTrajectoryArrowSize ?? 3} onChange={e => handleConfig('meanTrajectoryArrowSize', parseFloat(e.target.value))} className="w-12 h-1 accent-indigo-600" />
+                                            <input type="range" min="1" max="8" step="0.5" title="Arrow Size" value={currentConfig.meanTrajectoryArrowSize ?? 3} onChange={e => handleConfig('meanTrajectoryArrowSize', parseFloat(e.target.value))} className="w-12 h-1 accent-slate-600" />
                                         )}
                                      </div>
                                 </div>
@@ -833,21 +866,21 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                        <div className="flex flex-col gap-0.5">
                                             <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                               <span>Size</span>
-                                              <input type="range" min="4" max="20" title="Centroid Size" value={currentConfig.centroidSize} onChange={e => handleConfig('centroidSize', parseInt(e.target.value))} className="w-16 h-1 accent-indigo-600" />
+                                              <input type="range" min="4" max="20" title="Centroid Size" value={currentConfig.centroidSize} onChange={e => handleConfig('centroidSize', parseInt(e.target.value))} className="w-16 h-1 accent-slate-600" />
                                             </div>
                                             <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                               <span>Opacity</span>
-                                              <input type="range" min="0" max="1" step="0.02" title="Centroid Opacity" value={opacityToSlider(currentConfig.centroidOpacity)} onChange={e => handleConfig('centroidOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-indigo-600" />
+                                              <input type="range" min="0" max="1" step="0.02" title="Centroid Opacity" value={opacityToSlider(currentConfig.centroidOpacity)} onChange={e => handleConfig('centroidOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
                                             </div>
                                        </div>
                                    )}
 
                                    <label className="flex items-center gap-1 cursor-pointer text-[10px] text-slate-500 ml-1">
-                                    <input type="checkbox" className="rounded text-indigo-600" checked={currentConfig.labelAsCentroid} onChange={e => handleConfig('labelAsCentroid', e.target.checked)} />
+                                    <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.labelAsCentroid} onChange={e => handleConfig('labelAsCentroid', e.target.checked)} />
                                     <span>Txt</span>
                                    </label>
                                    {currentConfig.labelAsCentroid && (
-                                     <input type="range" min="8" max="72" title="Text Size" value={currentConfig.labelSize} onChange={e => handleConfig('labelSize', parseInt(e.target.value))} className="w-10 h-1 accent-indigo-600" />
+                                     <input type="range" min="8" max="72" title="Text Size" value={currentConfig.labelSize} onChange={e => handleConfig('labelSize', parseInt(e.target.value))} className="w-10 h-1 accent-slate-600" />
                                    )}
                                 </>
                            )}
@@ -879,17 +912,17 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
                    <div className="flex items-center gap-1 ml-2">
                      <span className="text-slate-500 font-bold">Line Opacity</span>
-                     <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.trajectoryLineOpacity)} onChange={e => handleConfig('trajectoryLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-indigo-600" />
+                     <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.trajectoryLineOpacity)} onChange={e => handleConfig('trajectoryLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
                    </div>
 
                    <div className="flex items-center gap-1 ml-2">
                      <span className="text-slate-500 font-bold">Mean Width</span>
-                     <input type="range" min="1" max="10" step="0.5" value={currentConfig.meanTrajectoryWidth} onChange={e => handleConfig('meanTrajectoryWidth', parseFloat(e.target.value))} className="w-16 h-1 accent-indigo-600" />
+                     <input type="range" min="1" max="10" step="0.5" value={currentConfig.meanTrajectoryWidth} onChange={e => handleConfig('meanTrajectoryWidth', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
                    </div>
 
                    <div className="flex items-center gap-1 ml-2">
                      <span className="text-slate-500 font-bold">Mean Opacity</span>
-                     <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.meanTrajectoryOpacity)} onChange={e => handleConfig('meanTrajectoryOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-indigo-600" />
+                     <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.meanTrajectoryOpacity)} onChange={e => handleConfig('meanTrajectoryOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
                    </div>
 
                    {activeTab === 'traj_f1f2' && (
@@ -899,14 +932,14 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                             handleConfig('showReferenceVowels', !currentConfig.showReferenceVowels);
                             if (!currentConfig.showReferenceVowels) setShowRefDropdown(true);
                             }}
-                            className={`flex items-center gap-1.5 cursor-pointer px-2 py-1 rounded border shadow-sm transition-colors ${currentConfig.showReferenceVowels ? 'bg-indigo-50 border-indigo-200 text-indigo-800' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
+                            className={`flex items-center gap-1.5 cursor-pointer px-2 py-1 rounded border shadow-sm transition-colors ${currentConfig.showReferenceVowels ? 'bg-sky-50 border-sky-200 text-sky-800' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
                         >
                             <Check size={12} className={currentConfig.showReferenceVowels ? 'opacity-100' : 'opacity-0'} />
                             <span>Refs</span>
                         </button>
 
                         {currentConfig.showReferenceVowels && (
-                            <button onClick={() => setShowRefDropdown(!showRefDropdown)} className="ml-1 text-[10px] text-indigo-600 underline font-bold">Config</button>
+                            <button onClick={() => setShowRefDropdown(!showRefDropdown)} className="ml-1 text-[10px] text-sky-700 underline font-bold">Config</button>
                         )}
                         {showRefDropdown && currentConfig.showReferenceVowels && (
                             <div className="absolute top-full mt-2 left-0 bg-white border border-slate-200 rounded-lg shadow-xl p-3 w-64 z-50">
@@ -922,7 +955,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                         <button
                                             key={p}
                                             onClick={() => togglePitchFilter(p)}
-                                            className={`px-2 py-0.5 rounded text-[10px] border ${(currentConfig.referencePitchFilter || []).includes(p) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-500'}`}
+                                            className={`px-2 py-0.5 rounded text-[10px] border ${(currentConfig.referencePitchFilter || []).includes(p) ? 'bg-slate-600 text-white border-slate-600' : 'bg-slate-50 border-slate-200 text-slate-500'}`}
                                         >
                                             {p}
                                         </button>
@@ -934,31 +967,31 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                             <div className="mb-3 space-y-2 pb-3 border-b border-slate-100 mt-3">
                                 <div className="flex items-center justify-between text-[10px] text-slate-500">
                                     <span>Label Size</span>
-                                    <input type="range" min="8" max="24" value={currentConfig.refVowelLabelSize} onChange={e => handleConfig('refVowelLabelSize', parseInt(e.target.value))} className="w-24 h-1 accent-indigo-600" />
+                                    <input type="range" min="8" max="24" value={currentConfig.refVowelLabelSize} onChange={e => handleConfig('refVowelLabelSize', parseInt(e.target.value))} className="w-24 h-1 accent-slate-600" />
                                 </div>
                                 <div className="flex items-center justify-between text-[10px] text-slate-500">
                                     <span>Label Opacity</span>
-                                    <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.refVowelLabelOpacity)} onChange={e => handleConfig('refVowelLabelOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-24 h-1 accent-indigo-600" />
+                                    <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.refVowelLabelOpacity)} onChange={e => handleConfig('refVowelLabelOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-24 h-1 accent-slate-600" />
                                 </div>
                                 <div className="flex items-center justify-between text-[10px] text-slate-500">
                                     <span>Ellipse Opacity</span>
-                                    <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.refVowelEllipseLineOpacity)} onChange={e => handleConfig('refVowelEllipseLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-24 h-1 accent-indigo-600" />
+                                    <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.refVowelEllipseLineOpacity)} onChange={e => handleConfig('refVowelEllipseLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-24 h-1 accent-slate-600" />
                                 </div>
                                 <div className="flex items-center justify-between text-[10px] text-slate-500">
                                     <span>Fill Opacity</span>
-                                    <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.refVowelEllipseFillOpacity)} onChange={e => handleConfig('refVowelEllipseFillOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-24 h-1 accent-indigo-600" />
+                                    <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.refVowelEllipseFillOpacity)} onChange={e => handleConfig('refVowelEllipseFillOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-24 h-1 accent-slate-600" />
                                 </div>
                             </div>
                             <div className="max-h-32 overflow-y-auto space-y-1">
                                 {globalReferences.map(ref => (
                                 <label key={ref.canonical} className="flex items-center space-x-2 text-[11px] cursor-pointer hover:bg-slate-50 p-1 rounded">
-                                    <input type="checkbox" checked={currentConfig.selectedReferenceVowels.includes(ref.canonical)} onChange={() => toggleReferenceVowel(ref.canonical)} className="rounded text-indigo-600" />
+                                    <input type="checkbox" checked={currentConfig.selectedReferenceVowels.includes(ref.canonical)} onChange={() => toggleReferenceVowel(ref.canonical)} className="rounded text-sky-700" />
                                     <span className="font-mono font-bold text-slate-700">{ref.canonical}</span>
                                 </label>
                                 ))}
                             </div>
                             <div className="pt-2 mt-2 border-t border-slate-100 flex justify-between text-[10px]">
-                                <button onClick={selectAllRefVowels} className="text-indigo-600 hover:underline">All</button>
+                                <button onClick={selectAllRefVowels} className="text-sky-700 hover:underline">All</button>
                                 <button onClick={clearRefVowels} className="text-slate-400 hover:underline">None</button>
                             </div>
                             </div>
@@ -1047,9 +1080,9 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     const f2_mean = token.trajectory.length > 0 ? token.trajectory.reduce((acc, p) => acc + (currentConfig.useSmoothing ? (p.f2_smooth ?? p.f2) : p.f2), 0) / token.trajectory.length : 0;
                     const f3_mean = token.trajectory.length > 0 ? token.trajectory.reduce((acc, p) => acc + (currentConfig.useSmoothing ? (p.f3_smooth ?? p.f3) : p.f3), 0) / token.trajectory.length : 0;
                     return (
-                      <tr key={token.id} className="hover:bg-indigo-50/40 transition-colors">
+                      <tr key={token.id} className="hover:bg-sky-50/40 transition-colors">
                         <td className="px-4 py-2 text-slate-900 font-semibold">{token.word}</td>
-                        <td className="px-4 py-2 font-mono text-indigo-600 font-bold">{token.canonical}</td>
+                        <td className="px-4 py-2 font-mono text-sky-700 font-bold">{token.canonical}</td>
                         <td className="px-4 py-2 text-slate-500 font-mono">{token.produced}</td>
                         <td className="px-4 py-2 text-slate-600 text-right font-mono">{token.duration.toFixed(3)}</td>
                         <td className="px-4 py-2 text-slate-600 text-right font-mono">{Math.round(f1_mean)}</td>
@@ -1077,6 +1110,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
           currentStyles={editingItem.currentStyles}
           onUpdate={handleStyleUpdate}
           onClose={() => setEditingItem(null)}
+          bwMode={currentConfig.bwMode}
         />
       )}
 
@@ -1087,6 +1121,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
         plotRef={plotRef}
         layers={layers}
         defaultTitle={bgConfig.colorBy !== 'none' ? bgConfig.colorBy : bgConfig.groupBy}
+        activeTab={activeTab}
       />
 
       {/* Close dropdowns on click outside */}

@@ -463,12 +463,17 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
         const plotWidth = baseWidth * graphScaleX;
         const plotHeight = baseHeight * graphScaleY;
 
-        // Margins
+        // Dynamic margins based on font sizes
+        const bottomMarginBase = Math.max(150, exportConfig.xAxisLabelSize * 1.5 + 30);
+        const leftMarginBase = Math.max(180, exportConfig.yAxisLabelSize * 1.5 + 80);
+        const topMarginBase = exportConfig.showPlotTitle
+            ? Math.max(200, (exportConfig.plotTitleSize || 128) + 100)
+            : Math.max(100, exportConfig.tickLabelSize + 40);
         const margin = {
-            top: (100 * drawScale) + ((exportConfig.graphY || 0) * drawScale),
+            top: (topMarginBase * drawScale) + ((exportConfig.graphY || 0) * drawScale),
             right: (50 * drawScale),
-            bottom: (130 * drawScale), 
-            left: (160 * drawScale) + ((exportConfig.graphX || 0) * drawScale)
+            bottom: bottomMarginBase * drawScale,
+            left: (leftMarginBase * drawScale) + ((exportConfig.graphX || 0) * drawScale)
         };
 
         // Legend Calculation
@@ -477,8 +482,9 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
         let ly = 0;
 
         if (exportConfig.showLegend) {
+            const legendSpace = Math.max(800, exportConfig.legendItemSize * 15, exportConfig.legendTitleSize * 10);
             if (exportConfig.legendPosition === 'right') {
-                legendWidth = 800 * drawScale;
+                legendWidth = legendSpace * drawScale;
                 lx = margin.left + plotWidth + (40 * drawScale);
                 ly = margin.top;
             } else if (exportConfig.legendPosition === 'bottom') {
@@ -522,11 +528,11 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
         ctx.textAlign = 'center';
         
         const xLabelX = (plotWidth / 2) + ((exportConfig.xAxisLabelX || 0) * drawScale);
-        const xLabelY = plotHeight + (85 * drawScale) + ((exportConfig.xAxisLabelY || 0) * drawScale);
+        const xLabelY = plotHeight + (bottomMarginBase * 0.55 * drawScale) + ((exportConfig.xAxisLabelY || 0) * drawScale);
         ctx.fillText(config.timeNormalized ? "Normalized Time (%)" : "Duration (s)", xLabelX, xLabelY);
-        
+
         ctx.save();
-        const yAxisX = -(150 * drawScale) + ((exportConfig.yAxisLabelX || 0) * drawScale);
+        const yAxisX = -(leftMarginBase * 0.65 * drawScale) + ((exportConfig.yAxisLabelX || 0) * drawScale);
         const yAxisY = (plotHeight / 2) + ((exportConfig.yAxisLabelY || 0) * drawScale);
         
         // Translate to center of Y axis area relative to plot origin (which is margin.left, margin.top)
@@ -570,8 +576,8 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
         exportImage: () => {
             // Legacy support 
             const defaultExportConfig: ExportConfig = {
-                scale: 3, xAxisLabelSize: 48, yAxisLabelSize: 48, tickLabelSize: 28, dataLabelSize: 24,
-                showLegend: true, legendTitleSize: 36, legendItemSize: 24,
+                scale: 3, xAxisLabelSize: 96, yAxisLabelSize: 96, tickLabelSize: 64, dataLabelSize: 64,
+                showLegend: true, legendTitleSize: 96, legendItemSize: 64,
                 showColorLegend: true, colorLegendTitle: config.colorBy.toUpperCase(),
                 showShapeLegend: true, shapeLegendTitle: '',
                 showTextureLegend: true, textureLegendTitle: '',
@@ -678,7 +684,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
        {/* Tooltip ... */}
        {hoveredToken && (
         <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-16 top-16 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]">
-          <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-indigo-400">File ID: {hoveredToken.file_id}</div>
+          <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-sky-400">File ID: {hoveredToken.file_id}</div>
           <div className="grid grid-cols-2 gap-x-2 gap-y-1">
              <p><span className="text-slate-400 font-bold uppercase text-[9px]">Word:</span> {hoveredToken.word}</p>
              <p><span className="text-slate-400 font-bold uppercase text-[9px]">Phoneme:</span> {hoveredToken.canonical}</p>

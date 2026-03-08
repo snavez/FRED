@@ -723,12 +723,17 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
        const plotW = baseWidth * graphScaleX;
        const plotH = baseHeight * graphScaleY;
        
-       // Tighter margins for export to reduce whitespace
-       const margin = { 
-           top: (80 * drawScale) + ((exportConfig.graphY || 0) * drawScale), 
-           right: 60 * drawScale, 
-           bottom: 160 * drawScale, 
-           left: (120 * drawScale) + ((exportConfig.graphX || 0) * drawScale)
+       // Dynamic margins based on font sizes
+       const bottomMarginBase = Math.max(180, exportConfig.xAxisLabelSize * 1.5 + 30);
+       const leftMarginBase = Math.max(140, exportConfig.yAxisLabelSize * 1.2 + 40);
+       const topMarginBase = exportConfig.showPlotTitle
+           ? Math.max(200, (exportConfig.plotTitleSize || 128) + 100)
+           : Math.max(80, exportConfig.tickLabelSize + 20);
+       const margin = {
+           top: (topMarginBase * drawScale) + ((exportConfig.graphY || 0) * drawScale),
+           right: 60 * drawScale,
+           bottom: bottomMarginBase * drawScale,
+           left: (leftMarginBase * drawScale) + ((exportConfig.graphX || 0) * drawScale)
        };
        
        // Legend Calculation
@@ -737,8 +742,9 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
        let ly = 0;
 
        if (exportConfig.showLegend) {
+           const legendSpace = Math.max(800, exportConfig.legendItemSize * 15, exportConfig.legendTitleSize * 10);
            if (exportConfig.legendPosition === 'right') {
-               legendW = 800 * drawScale;
+               legendW = legendSpace * drawScale;
                lx = margin.left + plotW + (80 * drawScale);
                ly = margin.top + (50 * drawScale);
            } else if (exportConfig.legendPosition === 'bottom') {
@@ -817,9 +823,9 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
             // Legacy support
             const defaultExportConfig: ExportConfig = {
                 scale: 3, 
-                xAxisLabelSize: 32, yAxisLabelSize: 32, 
-                tickLabelSize: 24, dataLabelSize: 24,
-                showLegend: true, legendTitleSize: 36, legendItemSize: 24,
+                xAxisLabelSize: 96, yAxisLabelSize: 96,
+                tickLabelSize: 64, dataLabelSize: 64,
+                showLegend: true, legendTitleSize: 96, legendItemSize: 64,
                 showColorLegend: true, colorLegendTitle: config.colorBy.toUpperCase(),
                 showShapeLegend: true, shapeLegendTitle: '',
                 showTextureLegend: true, textureLegendTitle: '',

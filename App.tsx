@@ -501,13 +501,12 @@ const App: React.FC = () => {
         <Header
           tokenCount={activeLayerData.length}
           isLoading={isLoading}
-          data={activeLayerData}
         />
 
         <main className="flex-1 p-4 overflow-hidden">
           {isLoading ? (
             <div className="h-full w-full flex flex-col items-center justify-center space-y-4">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-slate-600"></div>
               <p className="text-slate-500 font-medium">Processing Acoustic Tokens...</p>
             </div>
           ) : (

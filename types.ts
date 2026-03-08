@@ -253,7 +253,7 @@ export interface ExportConfig {
   showOverlayLineTypeLegend?: boolean;
   overlayLineTypeLegendTitle?: string;
 
-  // Canvas Dimensions (Optional - if set, overrides dynamic sizing)
+  // Canvas Dimensions (auto-computed; kept for other plot components)
   canvasWidth?: number;
   canvasHeight?: number;
 }

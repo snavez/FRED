@@ -40,7 +40,7 @@ const findNearestTimePoint = (trajectory: { time: number }[], target: number): n
   return best;
 };
 
-const drawShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: number, size: number, scale: number, drawScale: number = 1) => {
+const drawShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: number, size: number, scale: number, drawScale: number = 1, strokeWidth?: number) => {
   ctx.beginPath();
   switch (shape) {
     case 'circle': case 'circle-open': ctx.arc(x, y, size, 0, Math.PI * 2); break;
@@ -53,7 +53,7 @@ const drawShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: n
     case 'asterisk': ctx.moveTo(x - size, y); ctx.lineTo(x + size, y); ctx.moveTo(x, y - size); ctx.lineTo(x, y + size); const s2 = size * 0.7; ctx.moveTo(x - s2, y - s2); ctx.lineTo(x + s2, y + s2); ctx.moveTo(x + s2, y - s2); ctx.lineTo(x - s2, y + s2); break;
     default: ctx.arc(x, y, size, 0, Math.PI * 2);
   }
-  const lineWidth = (2 * drawScale) / scale;
+  const lineWidth = strokeWidth ?? (2 * drawScale) / scale;
   if (shape.endsWith('-open') || ['plus', 'cross', 'asterisk'].includes(shape)) {
     ctx.lineWidth = lineWidth; ctx.stroke();
   } else {
@@ -177,9 +177,11 @@ const Legend = ({ layers, allMappings, onLegendClick }: {
     allMappings: Record<string, any>,
     onLegendClick?: any
 }) => {
-  const renderSection = (m: any, titleSuffix: string = '', layerId?: string) => {
+  const renderSection = (m: any, titleSuffix: string = '', layerId?: string, plotType?: string) => {
       if (!m) return null;
-      const { colorMap, shapeMap, lineTypeMap, lineTypeNameMap, colorKey, shapeKey, lineTypeKey, colorCounts, shapeCounts, lineTypeCounts } = m;
+      const { colorMap, shapeMap, lineTypeMap, lineTypeNameMap, colorKey, lineTypeKey, colorCounts, shapeCounts, lineTypeCounts } = m;
+      // In trajectory mode shapes don't apply — ignore shapeKey for legend
+      const shapeKey = plotType === 'trajectory' ? null : m.shapeKey;
 
       const handleClick = (key: string, type: 'color' | 'shape' | 'lineType', e: React.MouseEvent) => {
         if (onLegendClick) {
@@ -205,7 +207,14 @@ const Legend = ({ layers, allMappings, onLegendClick }: {
                    <div key={key} className="flex justify-between items-center text-[10px] cursor-pointer hover:bg-slate-100 p-1 rounded"
                         onClick={(e) => handleClick(key, 'color', e)}>
                      <div className="flex items-center space-x-2">
-                        {lineTypeKey === colorKey ? (
+                        {plotType === 'trajectory' ? (
+                          <svg width="24" height="4" className="shrink-0">
+                            <line x1="0" y1="2" x2="24" y2="2" stroke={colorMap[key]} strokeWidth="2"
+                              strokeDasharray={lineTypeKey === colorKey && lineTypeMap[key]?.length ? lineTypeMap[key].join(',') : 'none'} />
+                          </svg>
+                        ) : shapeKey === colorKey ? (
+                          <ShapeIcon shape={shapeMap[key]} color={colorMap[key]} />
+                        ) : lineTypeKey === colorKey ? (
                           <svg width="24" height="4" className="shrink-0">
                             <line x1="0" y1="2" x2="24" y2="2" stroke={colorMap[key]} strokeWidth="2"
                               strokeDasharray={lineTypeMap[key]?.length ? lineTypeMap[key].join(',') : 'none'} />
@@ -269,7 +278,7 @@ const Legend = ({ layers, allMappings, onLegendClick }: {
            const m = allMappings[layer.id];
            if (!m) return null;
            const showTitle = layers.filter(l => l.visible).length > 1;
-           return <React.Fragment key={layer.id}>{renderSection(m, showTitle ? layer.name : '', layer.id)}</React.Fragment>;
+           return <React.Fragment key={layer.id}>{renderSection(m, showTitle ? layer.name : '', layer.id, layer.config.plotType)}</React.Fragment>;
          })}
     </div>
   );
@@ -279,13 +288,23 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
-  const [hoveredToken, setHoveredToken] = useState<SpeechToken | null>(null);
-  const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
+  // Hover state uses refs + lightweight state to avoid triggering canvas redraws
+  const hoveredTokenRef = useRef<SpeechToken | null>(null);
+  const hoveredLayerIdRef = useRef<string | null>(null);
+  const [hoverTick, setHoverTick] = useState(0); // lightweight trigger for tooltip re-render only
+  const hoveredToken = hoveredTokenRef.current;
+  const hoveredLayerId = hoveredLayerIdRef.current;
+  const hoverRafRef = useRef<number | null>(null); // for requestAnimationFrame throttling
   const isDragging = useRef(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
 
   // Background layer always controls coordinate space
   const bgConfig = layers[0].config;
+
+  // Cleanup RAF on unmount
+  useEffect(() => {
+    return () => { if (hoverRafRef.current !== null) cancelAnimationFrame(hoverRafRef.current); };
+  }, []);
 
   // Compute mappings for all layers
   const allMappings = useMemo(() => {
@@ -296,6 +315,72 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     });
     return result;
   }, [layers, layerData]);
+
+  // Spatial grid index for O(1) hover hit-testing (rebuilt when data/config changes)
+  const spatialGrid = useMemo(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return null;
+    const { width, height } = container.getBoundingClientRect();
+    if (width === 0 || height === 0) return null;
+
+    const CELL_SIZE = 20; // pixels per grid cell
+    // Extend grid well beyond canvas bounds so extreme outliers are hoverable
+    const originX = -width * 2;
+    const originY = -height * 2;
+    const gridW = width * 5;
+    const gridH = height * 5;
+    const cols = Math.ceil(gridW / CELL_SIZE);
+    const rows = Math.ceil(gridH / CELL_SIZE);
+    const grid: { token: SpeechToken; layerId: string; x: number; y: number }[][] = new Array(cols * rows);
+
+    const mapX = (f2: number) => {
+      const norm = (f2 - bgConfig.f2Range[0]) / (bgConfig.f2Range[1] - bgConfig.f2Range[0]);
+      return bgConfig.invertX ? (1 - norm) * width : norm * width;
+    };
+    const mapY = (f1: number) => {
+      const norm = (f1 - bgConfig.f1Range[0]) / (bgConfig.f1Range[1] - bgConfig.f1Range[0]);
+      return bgConfig.invertY ? norm * height : (1 - norm) * height;
+    };
+
+    const addToGrid = (px: number, py: number, token: SpeechToken, layerId: string) => {
+      const col = Math.floor((px - originX) / CELL_SIZE);
+      const row = Math.floor((py - originY) / CELL_SIZE);
+      if (col >= 0 && col < cols && row >= 0 && row < rows) {
+        const idx = row * cols + col;
+        if (!grid[idx]) grid[idx] = [];
+        grid[idx].push({ token, layerId, x: px, y: py });
+      }
+    };
+
+    layers.forEach(layer => {
+      if (!layer.visible) return;
+      const data = layerData[layer.id] || [];
+      const config = layer.config;
+      data.forEach(t => {
+        if (config.plotType === 'trajectory') {
+          const pts = t.trajectory
+            .filter(p => p.time >= (config.trajectoryOnset ?? 0) && p.time <= (config.trajectoryOffset ?? 100));
+          pts.forEach(pt => {
+            const f1 = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
+            const f2 = config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
+            if (isNaN(f1) || isNaN(f2)) return;
+            addToGrid(mapX(f2), mapY(f1), t, layer.id);
+          });
+        } else {
+          const nearestTime = findNearestTimePoint(t.trajectory, config.timePoint);
+          const pt = nearestTime !== undefined ? t.trajectory.find(p => p.time === nearestTime) : undefined;
+          if (!pt) return;
+          const f1 = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
+          const f2 = config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
+          if (isNaN(f1) || isNaN(f2)) return;
+          addToGrid(mapX(f2), mapY(f1), t, layer.id);
+        }
+      });
+    });
+
+    return { grid, cols, rows, cellSize: CELL_SIZE, originX, originY };
+  }, [layers, layerData, bgConfig.f1Range, bgConfig.f2Range, bgConfig.invertX, bgConfig.invertY]);
 
   // Helper functions for drawing individual layers
   const drawTrajectoryLayer = (
@@ -604,17 +689,21 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
           ctx.fillText(label, mx, my);
         } else {
           const centroidSize = (config.centroidSize * drawScale) / scale;
+          // White halo: always draw as the filled (closed) variant
+          const closedShape = shape.replace('-open', '');
           ctx.save();
           ctx.fillStyle = 'white';
           ctx.strokeStyle = 'white';
-          drawShape(ctx, shape, mx, my, centroidSize + ((2*drawScale)/scale), scale, drawScale);
+          drawShape(ctx, closedShape, mx, my, centroidSize + ((2*drawScale)/scale), scale, drawScale);
           ctx.fill();
-          ctx.stroke();
           ctx.restore();
+          // Colored centroid — draw the actual shape (respecting open/closed)
+          // Scale stroke width with centroid size for open shapes
+          const centroidStroke = centroidSize * 0.25;
           ctx.fillStyle = groupColor;
           ctx.strokeStyle = groupColor;
-          drawShape(ctx, shape, mx, my, centroidSize, scale, drawScale);
-          if (!['plus', 'cross', 'asterisk'].includes(shape)) {
+          drawShape(ctx, shape, mx, my, centroidSize, scale, drawScale, centroidStroke);
+          if (!['plus', 'cross', 'asterisk'].includes(shape) && !shape.endsWith('-open')) {
             ctx.strokeStyle = 'white';
             ctx.lineWidth = (2 * drawScale) / scale;
             ctx.stroke();
@@ -726,9 +815,11 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
           lineTypeTitle: string;
       }
 
-      const drawSection = (m: any, opts: SectionOpts, titleSuffix: string = '') => {
+      const drawSection = (m: any, opts: SectionOpts, titleSuffix: string = '', layerPlotType?: string) => {
           if (!m) return;
-          const { colorMap, shapeMap, lineTypeMap, colorKey, shapeKey, lineTypeKey, colorCounts, shapeCounts, lineTypeCounts } = m;
+          const { colorMap, shapeMap, lineTypeMap, colorKey, lineTypeKey, colorCounts, shapeCounts, lineTypeCounts } = m;
+          // In trajectory mode shapes don't apply
+          const shapeKey = layerPlotType === 'trajectory' ? null : m.shapeKey;
 
           if (opts.showColor && colorKey) {
               ctx.font = `bold ${fontSizeTitle}px Inter`;
@@ -741,7 +832,22 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
               Object.entries(colorMap).sort().forEach(([k, c]) => {
                   const count = colorCounts ? (colorCounts[k] || 0) : 0;
                   ctx.fillStyle = c as string;
-                  ctx.beginPath(); ctx.arc(x + (circleSize), curY + (circleSize/2), circleSize, 0, Math.PI*2); ctx.fill();
+                  ctx.strokeStyle = c as string;
+                  if (layerPlotType === 'trajectory') {
+                    // Trajectory: always draw colored line segment
+                    ctx.lineWidth = (2 * drawScale);
+                    ctx.setLineDash(lineTypeKey === colorKey && lineTypeMap[k]?.length ? (lineTypeMap[k] as number[]).map((d: number) => d * drawScale) : []);
+                    ctx.beginPath();
+                    ctx.moveTo(x, curY + (circleSize/2));
+                    ctx.lineTo(x + (circleSize * 2), curY + (circleSize/2));
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                  } else if (shapeKey === colorKey && shapeMap[k]) {
+                    // Combined: draw colored shape
+                    drawShape(ctx, shapeMap[k] as string, x + (circleSize), curY + (circleSize/2), (circleSize * 0.8), 1, drawScale);
+                  } else {
+                    ctx.beginPath(); ctx.arc(x + (circleSize), curY + (circleSize/2), circleSize, 0, Math.PI*2); ctx.fill();
+                  }
                   ctx.fillStyle = '#334155';
                   ctx.fillText(`${k} ${count ? `(n=${count})` : ''}`, x + xOffset, curY + (circleSize/2));
                   curY += spacing;
@@ -817,7 +923,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
               lineTypeTitle: layerLegendCfg?.lineTypeTitle || '',
           };
 
-          drawSection(m, opts, showMultiple ? ` (${layer.name})` : '');
+          drawSection(m, opts, showMultiple ? ` (${layer.name})` : '', layer.config.plotType);
       });
   };
 
@@ -834,29 +940,39 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       const graphX = (exportConfig.graphX || 0) * drawScale;
       const graphY = (exportConfig.graphY || 0) * drawScale;
 
+      // Dynamic margins based on font sizes so nothing overflows the canvas
+      const bottomMarginBase = Math.max(160, exportConfig.xAxisLabelSize * 1.5 + 30);
+      const leftMarginBase = Math.max(220, exportConfig.yAxisLabelSize * 1.5 + 100);
+      const topMarginBase = exportConfig.showPlotTitle
+          ? Math.max(200, (exportConfig.plotTitleSize || 128) + 100)
+          : Math.max(100, exportConfig.tickLabelSize + 40);
+
       const margin = {
-          top: ((exportConfig.showPlotTitle ? 200 : 100) * drawScale) + graphY,
+          top: (topMarginBase * drawScale) + graphY,
           right: 100 * drawScale,
-          bottom: 140 * drawScale,
-          left: (200 * drawScale) + graphX
+          bottom: bottomMarginBase * drawScale,
+          left: (leftMarginBase * drawScale) + graphX
       };
 
       let legendSpaceRight = 0;
       let legendSpaceBottom = 0;
 
       if (exportConfig.showLegend) {
+          // Scale legend space with font sizes so text fits
+          const legendSpace = Math.max(800, exportConfig.legendItemSize * 15, exportConfig.legendTitleSize * 10);
           if (exportConfig.legendPosition === 'right') {
-              legendSpaceRight = 800 * drawScale;
+              legendSpaceRight = legendSpace * drawScale;
           } else if (exportConfig.legendPosition === 'bottom') {
-              legendSpaceBottom = 800 * drawScale;
+              legendSpaceBottom = legendSpace * drawScale;
           }
       }
 
       const plotWidth = basePlotWidth * drawScale;
       const plotHeight = basePlotHeight * drawScale;
 
-      offscreen.width = (exportConfig.canvasWidth ? exportConfig.canvasWidth * drawScale : Math.max(100, plotWidth + legendSpaceRight + margin.left + margin.right));
-      offscreen.height = (exportConfig.canvasHeight ? exportConfig.canvasHeight * drawScale : Math.max(100, plotHeight + legendSpaceBottom + margin.top + margin.bottom));
+      // Always auto-size canvas to fit all elements
+      offscreen.width = Math.max(100, plotWidth + legendSpaceRight + margin.left + margin.right);
+      offscreen.height = Math.max(100, plotHeight + legendSpaceBottom + margin.top + margin.bottom);
       const ctx = offscreen.getContext('2d');
       if (!ctx) return '';
 
@@ -891,14 +1007,14 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       ctx.font = `bold ${xAxisSize}px Inter, sans-serif`;
       ctx.textAlign = 'center';
       const xAxisTitleX = (plotWidth / 2) + ((exportConfig.xAxisLabelX || 0) * drawScale);
-      const xAxisTitleY = plotHeight + (85 * drawScale) + ((exportConfig.xAxisLabelY || 0) * drawScale);
+      const xAxisTitleY = plotHeight + (bottomMarginBase * 0.55 * drawScale) + ((exportConfig.xAxisLabelY || 0) * drawScale);
       ctx.fillText('F2 (Hz)', xAxisTitleX, xAxisTitleY);
 
       const yAxisSize = exportConfig.yAxisLabelSize * drawScale;
       ctx.font = `bold ${yAxisSize}px Inter, sans-serif`;
       ctx.save();
 
-      const yAxisTitleX = -(160 * drawScale) + ((exportConfig.yAxisLabelX || 0) * drawScale);
+      const yAxisTitleX = -(leftMarginBase * 0.65 * drawScale) + ((exportConfig.yAxisLabelX || 0) * drawScale);
       const yAxisTitleY = (plotHeight / 2) + ((exportConfig.yAxisLabelY || 0) * drawScale);
       ctx.translate(yAxisTitleX, yAxisTitleY);
       ctx.rotate(-Math.PI / 2);
@@ -933,7 +1049,8 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
               ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
           }
 
-          drawLegend(ctx, lx, ly, legendSpaceRight || (800 * drawScale), drawScale, exportConfig);
+          const legendDrawWidth = legendSpaceRight || (Math.max(800, exportConfig.legendItemSize * 15) * drawScale);
+          drawLegend(ctx, lx, ly, legendDrawWidth, drawScale, exportConfig);
           ctx.restore();
       }
 
@@ -943,10 +1060,10 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     return {
         exportImage: () => {
             const defaultExportConfig: ExportConfig = {
-                scale: 3, xAxisLabelSize: 32, yAxisLabelSize: 32, tickLabelSize: 24, dataLabelSize: 24,
-                showLegend: true, legendTitleSize: 36, legendItemSize: 24,
+                scale: 3, xAxisLabelSize: 96, yAxisLabelSize: 96, tickLabelSize: 64, dataLabelSize: 64,
+                showLegend: true, legendTitleSize: 96, legendItemSize: 64,
                 legendPosition: 'right', legendX: 0, legendY: 0,
-                showPlotTitle: false, plotTitle: 'Vowel Space Plot', plotTitleSize: 48,
+                showPlotTitle: false, plotTitle: 'Vowel Space Plot', plotTitleSize: 128,
                 showColorLegend: true, colorLegendTitle: 'COLOR',
                 showShapeLegend: true, shapeLegendTitle: 'SHAPE',
                 showTextureLegend: true, textureLegendTitle: 'TEXTURE',
@@ -994,72 +1111,71 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
       lastMousePos.current = { x: e.clientX, y: e.clientY };
     } else {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      const mouseX = (e.clientX - rect.left - transform.x) / transform.scale;
-      const mouseY = (e.clientY - rect.top - transform.y) / transform.scale;
-      const dprWidth = canvas.width / window.devicePixelRatio;
-      const dprHeight = canvas.height / window.devicePixelRatio;
-      const mapX = (f2: number) => {
-        const norm = (f2 - bgConfig.f2Range[0]) / (bgConfig.f2Range[1] - bgConfig.f2Range[0]);
-        return bgConfig.invertX ? (1 - norm) * dprWidth : norm * dprWidth;
-      };
-      const mapY = (f1: number) => {
-        const norm = (f1 - bgConfig.f1Range[0]) / (bgConfig.f1Range[1] - bgConfig.f1Range[0]);
-        return bgConfig.invertY ? norm * dprHeight : (1 - norm) * dprHeight;
-      };
-      let closest: SpeechToken | null = null;
-      let closestLayerId: string | null = null;
-      let minDist = 15 / transform.scale;
+      // Throttle hover hit-testing to one per animation frame
+      const clientX = e.clientX;
+      const clientY = e.clientY;
+      if (hoverRafRef.current !== null) return; // already pending
+      hoverRafRef.current = requestAnimationFrame(() => {
+        hoverRafRef.current = null;
+        if (!spatialGrid) return;
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = (clientX - rect.left - transform.x) / transform.scale;
+        const mouseY = (clientY - rect.top - transform.y) / transform.scale;
 
-      // Check all visible layers for hover
-      layers.forEach(layer => {
-        if (!layer.visible) return;
-        const data = layerData[layer.id] || [];
-        const layerConfig = layer.config;
-        data.forEach(t => {
-          if (layerConfig.plotType === 'trajectory') {
-            // For trajectory, check all trajectory points
-            const pts = t.trajectory
-              .filter(p => p.time >= (layerConfig.trajectoryOnset ?? 0) && p.time <= (layerConfig.trajectoryOffset ?? 100));
-            pts.forEach(pt => {
-              const f1 = layerConfig.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
-              const f2 = layerConfig.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
-              if (isNaN(f1) || isNaN(f2)) return;
-              const tx = mapX(f2);
-              const ty = mapY(f1);
-              const dist = Math.sqrt((tx - mouseX)**2 + (ty - mouseY)**2);
+        // Spatial grid lookup: check mouse cell + 8 neighbors
+        const { grid, cols, rows, cellSize, originX, originY } = spatialGrid;
+        const col = Math.floor((mouseX - originX) / cellSize);
+        const row = Math.floor((mouseY - originY) / cellSize);
+        let closest: SpeechToken | null = null;
+        let closestLayerId: string | null = null;
+        let minDist = 15 / transform.scale;
+
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            const r = row + dr;
+            const c = col + dc;
+            if (r < 0 || r >= rows || c < 0 || c >= cols) continue;
+            const cell = grid[r * cols + c];
+            if (!cell) continue;
+            for (let i = 0; i < cell.length; i++) {
+              const entry = cell[i];
+              const dx = entry.x - mouseX;
+              const dy = entry.y - mouseY;
+              const dist = Math.sqrt(dx * dx + dy * dy);
               if (dist < minDist) {
                 minDist = dist;
-                closest = t;
-                closestLayerId = layer.id;
+                closest = entry.token;
+                closestLayerId = entry.layerId;
               }
-            });
-          } else {
-            const nearestTime = findNearestTimePoint(t.trajectory, layerConfig.timePoint);
-            const pt = nearestTime !== undefined ? t.trajectory.find(p => p.time === nearestTime) : undefined;
-            if (!pt) return;
-            const f1 = layerConfig.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
-            const f2 = layerConfig.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
-            if (isNaN(f1) || isNaN(f2)) return;
-            const tx = mapX(f2);
-            const ty = mapY(f1);
-            const dist = Math.sqrt((tx - mouseX)**2 + (ty - mouseY)**2);
-            if (dist < minDist) {
-              minDist = dist;
-              closest = t;
-              closestLayerId = layer.id;
             }
           }
-        });
+        }
+
+        // Only trigger re-render if hover actually changed
+        if (hoveredTokenRef.current !== closest) {
+          hoveredTokenRef.current = closest;
+          hoveredLayerIdRef.current = closestLayerId;
+          setHoverTick(t => t + 1); // lightweight re-render for tooltip only
+        }
       });
-      setHoveredToken(closest);
-      setHoveredLayerId(closestLayerId);
     }
   };
 
-  const handleMouseUp = () => isDragging.current = false;
+  const handleMouseUp = () => { isDragging.current = false; };
+  const handleMouseLeave = () => {
+    isDragging.current = false;
+    if (hoverRafRef.current !== null) {
+      cancelAnimationFrame(hoverRafRef.current);
+      hoverRafRef.current = null;
+    }
+    if (hoveredTokenRef.current !== null) {
+      hoveredTokenRef.current = null;
+      hoveredLayerIdRef.current = null;
+      setHoverTick(t => t + 1);
+    }
+  };
 
   const handleWheel = (e: React.WheelEvent) => {
     const scaleFactor = e.deltaY > 0 ? 0.95 : 1.05;
@@ -1073,7 +1189,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+        onMouseLeave={handleMouseLeave}
         onWheel={handleWheel}
         className="cursor-move"
       />
@@ -1088,7 +1204,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         if (fields.length === 0) {
           return (
             <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-16 top-16 border border-slate-700 backdrop-blur-md min-w-[200px]">
-              <p className="text-slate-400 italic text-center">Select fields from the <span className="text-indigo-400 font-bold">Tooltip</span> dropdown to see token data here.</p>
+              <p className="text-slate-400 italic text-center">Select fields from the <span className="text-sky-400 font-bold">Tooltip</span> dropdown to see token data here.</p>
             </div>
           );
         }
@@ -1101,7 +1217,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         return (
           <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-16 top-16 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]">
             {firstField && (
-              <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-indigo-400">
+              <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-sky-400">
                 {getFieldLabel(firstField)}: {getTooltipValue(hoveredToken, firstField)}
               </div>
             )}

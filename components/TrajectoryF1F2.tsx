@@ -42,7 +42,11 @@ const DASH_NAMES = ['solid', 'dash', 'dot', 'longdash', 'dotdash', 'solid'];
 const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, config, globalReferences, styleOverrides, onLegendClick }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [hoveredToken, setHoveredToken] = useState<SpeechToken | null>(null);
+  // Hover state uses refs + lightweight tick to avoid triggering canvas redraws
+  const hoveredTokenRef = useRef<SpeechToken | null>(null);
+  const [hoverTick, setHoverTick] = useState(0);
+  const hoveredToken = hoveredTokenRef.current;
+  const hoverRafRef = useRef<number | null>(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const isDragging = useRef(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
@@ -402,8 +406,19 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
           ctx.font = `${fontSizeItem}px Inter`;
           sortedKeys.forEach(k => {
               const count = groups[k]?.length || 0;
-              ctx.fillStyle = colorMap[k];
-              ctx.beginPath(); ctx.arc(x + circleSize, curY + circleSize/2, circleSize, 0, Math.PI*2); ctx.fill();
+              // Trajectory legend always uses line icons (not dots)
+              ctx.strokeStyle = colorMap[k];
+              ctx.lineWidth = (isExport ? 4 : 2) * drawScale;
+              if (config.lineTypeBy === config.colorBy && lineStyles[k]) {
+                ctx.setLineDash((lineStyles[k] || []).map(v => v * drawScale));
+              } else {
+                ctx.setLineDash([]);
+              }
+              ctx.beginPath();
+              ctx.moveTo(x, curY + circleSize/2);
+              ctx.lineTo(x + (isExport ? 50 : 25) * drawScale, curY + circleSize/2);
+              ctx.stroke();
+              ctx.setLineDash([]);
               ctx.fillStyle = '#334155';
               ctx.fillText(`${k} (n=${count})`, x + xOffset, curY + circleSize/2);
               curY += spacing;
@@ -411,7 +426,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
           curY += fontSizeTitle;
       }
 
-      if (isInLegend && showLineType && config.lineTypeBy !== 'none') {
+      if (isInLegend && showLineType && config.lineTypeBy !== 'none' && config.lineTypeBy !== config.colorBy) {
           ctx.font = `bold ${fontSizeTitle}px Inter`;
           ctx.fillStyle = '#0f172a';
           ctx.fillText(lineTypeTitle, x, curY);
@@ -451,11 +466,16 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         const plotWidth = baseWidth * graphScaleX;
         const plotHeight = baseHeight * graphScaleY;
 
-        // Margins
+        // Dynamic margins based on font sizes
+        const bottomMarginBase = Math.max(160, exportConfig.xAxisLabelSize * 1.5 + 30);
+        const leftMarginBase = Math.max(220, exportConfig.yAxisLabelSize * 1.5 + 100);
+        const topMarginBase = exportConfig.showPlotTitle
+            ? Math.max(200, (exportConfig.plotTitleSize || 128) + 100)
+            : Math.max(100, exportConfig.tickLabelSize + 40);
         const margin = {
-            top: (100 * drawScale) + ((exportConfig.graphY || 0) * drawScale),
-            bottom: (140 * drawScale),
-            left: (200 * drawScale) + ((exportConfig.graphX || 0) * drawScale),
+            top: (topMarginBase * drawScale) + ((exportConfig.graphY || 0) * drawScale),
+            bottom: bottomMarginBase * drawScale,
+            left: (leftMarginBase * drawScale) + ((exportConfig.graphX || 0) * drawScale),
             right: (100 * drawScale)
         };
 
@@ -465,8 +485,9 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         let ly = 0;
 
         if (exportConfig.showLegend) {
+            const legendSpace = Math.max(800, exportConfig.legendItemSize * 15, exportConfig.legendTitleSize * 10);
             if (exportConfig.legendPosition === 'right') {
-                legendWidth = 800 * drawScale;
+                legendWidth = legendSpace * drawScale;
                 lx = margin.left + plotWidth + (40 * drawScale);
                 ly = margin.top;
             } else if (exportConfig.legendPosition === 'bottom') {
@@ -520,7 +541,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         ctx.textAlign = 'center';
         
         const xLabelX = (plotWidth / 2) + ((exportConfig.xAxisLabelX || 0) * drawScale);
-        const xLabelY = plotHeight + (85 * drawScale) + ((exportConfig.xAxisLabelY || 0) * drawScale);
+        const xLabelY = plotHeight + (bottomMarginBase * 0.55 * drawScale) + ((exportConfig.xAxisLabelY || 0) * drawScale);
         ctx.fillText('F2 (Hz)', xLabelX, xLabelY);
         
         ctx.save();
@@ -541,7 +562,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         ctx.restore(); // Undo the previous save
         ctx.save();
         
-        const yAxisX = margin.left - (160 * drawScale) + ((exportConfig.yAxisLabelX || 0) * drawScale);
+        const yAxisX = margin.left - (leftMarginBase * 0.65 * drawScale) + ((exportConfig.yAxisLabelX || 0) * drawScale);
         const yAxisY = margin.top + (plotHeight / 2) + ((exportConfig.yAxisLabelY || 0) * drawScale);
         
         ctx.translate(yAxisX, yAxisY);
@@ -586,11 +607,11 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
             // Default Config for legacy direct call
             const defaultExportConfig: ExportConfig = {
                 scale: drawScale,
-                xAxisLabelSize: 48,
-                yAxisLabelSize: 48,
-                tickLabelSize: 28,
-                dataLabelSize: 24,
-                showLegend: true, legendTitleSize: 36, legendItemSize: 24,
+                xAxisLabelSize: 96,
+                yAxisLabelSize: 96,
+                tickLabelSize: 64,
+                dataLabelSize: 64,
+                showLegend: true, legendTitleSize: 96, legendItemSize: 64,
                 showColorLegend: true, colorLegendTitle: config.colorBy.toUpperCase(),
                 showShapeLegend: true, shapeLegendTitle: '',
                 showTextureLegend: true, textureLegendTitle: '',
@@ -630,6 +651,50 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
     }
   }, [data, config, transform, colorMap, renderPlot]);
 
+  // Spatial grid for O(1) hover hit-testing
+  const spatialGrid = useMemo(() => {
+    const container = containerRef.current;
+    if (!container) return null;
+    const { width, height } = container.getBoundingClientRect();
+    if (width === 0 || height === 0) return null;
+    const CELL_SIZE = 20;
+    const cols = Math.ceil(width / CELL_SIZE);
+    const rows = Math.ceil(height / CELL_SIZE);
+    const grid: { token: SpeechToken; x: number; y: number }[][] = new Array(cols * rows);
+
+    const mapX = (f2: number) => {
+      const norm = (f2 - config.f2Range[0]) / (config.f2Range[1] - config.f2Range[0]);
+      return config.invertX ? (1 - norm) * width : norm * width;
+    };
+    const mapY = (f1: number) => {
+      const norm = (f1 - config.f1Range[0]) / (config.f1Range[1] - config.f1Range[0]);
+      return config.invertY ? norm * height : (1 - norm) * height;
+    };
+
+    for (const t of data) {
+      const last = t.trajectory[t.trajectory.length - 1];
+      if (!last) continue;
+      const f1 = config.useSmoothing ? (last.f1_smooth ?? last.f1) : last.f1;
+      const f2 = config.useSmoothing ? (last.f2_smooth ?? last.f2) : last.f2;
+      if (isNaN(f1) || isNaN(f2)) continue;
+      const px = mapX(f2);
+      const py = mapY(f1);
+      const col = Math.floor(px / CELL_SIZE);
+      const row = Math.floor(py / CELL_SIZE);
+      if (col >= 0 && col < cols && row >= 0 && row < rows) {
+        const idx = row * cols + col;
+        if (!grid[idx]) grid[idx] = [];
+        grid[idx].push({ token: t, x: px, y: py });
+      }
+    }
+    return { grid, cols, rows, cellSize: CELL_SIZE };
+  }, [data, config.f1Range, config.f2Range, config.invertX, config.invertY, config.useSmoothing]);
+
+  // Cleanup RAF on unmount
+  useEffect(() => {
+    return () => { if (hoverRafRef.current !== null) cancelAnimationFrame(hoverRafRef.current); };
+  }, []);
+
   const handleMouseDown = (e: React.MouseEvent) => { isDragging.current = true; lastMousePos.current = { x: e.clientX, y: e.clientY }; };
   const handleMouseMove = (e: React.MouseEvent) => {
     const canvas = canvasRef.current;
@@ -640,36 +705,51 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
       setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
       lastMousePos.current = { x: e.clientX, y: e.clientY };
     } else {
-       const rect = canvas.getBoundingClientRect();
-       const mouseX = (e.clientX - rect.left - transform.x) / transform.scale;
-       const mouseY = (e.clientY - rect.top - transform.y) / transform.scale;
-       const dprWidth = canvas.width / window.devicePixelRatio;
-       const dprHeight = canvas.height / window.devicePixelRatio;
-       const mapX = (f2: number) => {
-         const norm = (f2 - config.f2Range[0]) / (config.f2Range[1] - config.f2Range[0]);
-         return config.invertX ? (1 - norm) * dprWidth : norm * dprWidth;
-       };
-       const mapY = (f1: number) => {
-         const norm = (f1 - config.f1Range[0]) / (config.f1Range[1] - config.f1Range[0]);
-         return config.invertY ? norm * dprHeight : (1 - norm) * dprHeight;
-       };
-       let closest = null;
-       let minDist = 15 / transform.scale;
-       for (const t of data) {
-           const last = t.trajectory[t.trajectory.length - 1];
-           if (!last) continue;
-           const f1 = config.useSmoothing ? (last.f1_smooth ?? last.f1) : last.f1;
-           const f2 = config.useSmoothing ? (last.f2_smooth ?? last.f2) : last.f2;
-           if (isNaN(f1) || isNaN(f2)) continue;
-           const px = mapX(f2);
-           const py = mapY(f1);
-           const d = Math.sqrt((px - mouseX)**2 + (py - mouseY)**2);
-           if (d < minDist) { minDist = d; closest = t; }
-       }
-       setHoveredToken(closest);
+      const clientX = e.clientX;
+      const clientY = e.clientY;
+      if (hoverRafRef.current !== null) return;
+      hoverRafRef.current = requestAnimationFrame(() => {
+        hoverRafRef.current = null;
+        if (!spatialGrid) return;
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = (clientX - rect.left - transform.x) / transform.scale;
+        const mouseY = (clientY - rect.top - transform.y) / transform.scale;
+        const { grid, cols, rows, cellSize } = spatialGrid;
+        const col = Math.floor(mouseX / cellSize);
+        const row = Math.floor(mouseY / cellSize);
+        let closest: SpeechToken | null = null;
+        let minDist = 15 / transform.scale;
+
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            const r = row + dr;
+            const c = col + dc;
+            if (r < 0 || r >= rows || c < 0 || c >= cols) continue;
+            const cell = grid[r * cols + c];
+            if (!cell) continue;
+            for (let i = 0; i < cell.length; i++) {
+              const entry = cell[i];
+              const dx = entry.x - mouseX;
+              const dy = entry.y - mouseY;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              if (dist < minDist) { minDist = dist; closest = entry.token; }
+            }
+          }
+        }
+
+        if (hoveredTokenRef.current !== closest) {
+          hoveredTokenRef.current = closest;
+          setHoverTick(t => t + 1);
+        }
+      });
     }
   };
   const handleMouseUp = () => isDragging.current = false;
+  const handleMouseLeave = () => {
+    isDragging.current = false;
+    if (hoverRafRef.current !== null) { cancelAnimationFrame(hoverRafRef.current); hoverRafRef.current = null; }
+    if (hoveredTokenRef.current !== null) { hoveredTokenRef.current = null; setHoverTick(t => t + 1); }
+  };
   const handleWheel = (e: React.WheelEvent) => {
     const scaleFactor = e.deltaY > 0 ? 0.95 : 1.05;
     setTransform(t => ({ ...t, scale: Math.max(0.1, Math.min(50, t.scale * scaleFactor)) }));
@@ -696,7 +776,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         if (fields.length === 0) {
           return (
             <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-4 bottom-16 border border-slate-700 backdrop-blur-md min-w-[200px]">
-              <p className="text-slate-400 italic text-center">Select fields from the <span className="text-indigo-400 font-bold">Tooltip</span> dropdown to see token data here.</p>
+              <p className="text-slate-400 italic text-center">Select fields from the <span className="text-sky-400 font-bold">Tooltip</span> dropdown to see token data here.</p>
             </div>
           );
         }
@@ -722,7 +802,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         return (
           <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-4 bottom-16 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]">
             {firstField && (
-              <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-indigo-400">
+              <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-sky-400">
                 {getFieldLabel(firstField)}: {getTooltipValue(hoveredToken, firstField)}
               </div>
             )}
@@ -741,10 +821,13 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
              <h4 className="text-[10px] font-black uppercase text-slate-400 flex justify-between items-center border-b border-slate-100 pb-1 mb-1"><span>{config.colorBy}</span></h4>
              {sortedKeys.map(key => (
                <div key={key} className="flex justify-between items-center text-[10px] cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(key, 'color', e)}>
-                 <div className="flex items-center space-x-2"><div className="w-3 h-3 rounded-full shadow-sm shrink-0" style={{ backgroundColor: colorMap[key] }}></div><span className="text-slate-700 font-medium truncate w-24">{key}</span></div><span className="text-slate-400 font-mono">({groups[key]?.length || 0})</span></div>))}
+                 <div className="flex items-center space-x-2">
+                   <svg width="24" height="6" className="shrink-0"><line x1="0" y1="3" x2="24" y2="3" stroke={colorMap[key]} strokeWidth="2" strokeDasharray={config.lineTypeBy === config.colorBy ? (lineStyles[key]?.join(',') || '') : ''} /></svg>
+                   <span className="text-slate-700 font-medium truncate w-24">{key}</span>
+                 </div><span className="text-slate-400 font-mono">({groups[key]?.length || 0})</span></div>))}
            </div>
          )}
-         {config.lineTypeBy !== 'none' && (
+         {config.lineTypeBy !== 'none' && config.lineTypeBy !== config.colorBy && (
            <div className="space-y-1.5 pt-2 border-t border-slate-100">
              <h4 className="text-[10px] font-black uppercase text-slate-400 flex justify-between items-center"><span>{config.lineTypeBy}</span></h4>
              {lineTypeKeys.map(key => (
@@ -753,7 +836,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
            </div>
          )}
       </div>
-      <canvas ref={canvasRef} onMouseMove={handleMouseMove} onMouseLeave={() => { handleMouseUp(); setHoveredToken(null); }} className="cursor-move w-full h-full" />
+      <canvas ref={canvasRef} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave} className="cursor-move w-full h-full" />
     </div>
   );
 });

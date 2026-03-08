@@ -39,7 +39,7 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 
 ### Formant Column Detection
 - Regex pattern: `f[1-3]_<timepoint>[_<variant>]` (e.g., `f1_50`, `f2_30_smooth`)
-- Supports multiple formant variants (e.g., raw + smoothed); toggle between them via the Data button in the config toolbar
+- Supports multiple formant variants (e.g., raw + smoothed); select between them via the Data dropdown in the config toolbar
 - Time points are derived from the data (not hardcoded); all plots use `findNearestTimePoint()` for flexible lookup
 
 ### Custom Columns
@@ -51,7 +51,12 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 - Modal UI listing all detected columns with role dropdowns
 - Shows sample data preview for each column
 - User can reassign roles, set custom field names, or ignore columns
-- Formant columns show formant/time-point/variant details
+- Formant columns show formant/time-point details and auto-detected variant tags (e.g., "smooth")
+- **Sidebar column**: Every non-ignore, non-formant role has a checkbox to control sidebar visibility
+  - Filter-type fields (type, canonical, produced, word, alignment, stresses, etc.) default to **checked**
+  - Data-type fields (file_id, xmin, duration, syllable) default to **unchecked**
+  - Users can toggle any field on/off; settings persist after import
+- Role labels: "Phoneme" (canonical), "Allophone" (produced) — parenthetical suffixes removed for clarity
 
 ---
 
@@ -63,6 +68,7 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 - Multi-layer rendering (see Section 3)
 - Interactive: pan (drag), zoom (scroll wheel), hover tooltips
 - On-canvas legend with click-to-edit style overrides
+- **Performance**: Spatial grid index for O(1) hover hit-testing; `requestAnimationFrame` throttling; hover state uses refs to avoid triggering canvas redraws
 
 ### 3D F1/F2/F3 Scatter
 - Three.js-based 3D scatter with orbit controls
@@ -120,15 +126,22 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 ### Channels
 | Channel | Applicable Plots | Options |
 |---------|------------------|---------|
-| **Color By** | All | None, Phoneme, Word, Allophone, Alignment, Expected Stress, Transcr. Stress, Syllable Mark, Voice Pitch, + custom columns |
+| **Color By** | All | None, + sidebar-active fields (Phoneme, Word, Allophone, etc.) |
 | **Shape By** | F1/F2 (point mode), 3D | Same as Color By |
 | **Line Type By** | F1/F2 (trajectory mode), Traj F1/F2, Time Series | Same as Color By |
 | **Texture By** | Duration, Distribution | Same as Color By |
 | **Group By** | Duration | Same as Color By |
 
+### Encoding Dropdown Filtering
+- Visual encoding dropdowns (Color By, Shape By, Line Type By, Texture By) only list variables whose corresponding field is **active in the sidebar** (`showInSidebar === true` on the column mapping)
+- The mapping from variable names to column roles uses `getLabel` conventions (e.g. `phoneme` → `canonical` role)
+- Custom columns are included only if they are sidebar-active
+- `None` is always available regardless of sidebar state
+
 ### Color Palette
-- Default: 15 colors (`#ef4444`, `#3b82f6`, `#10b981`, ...)
-- B&W mode: 4 grayscale values (`#000000`, `#525252`, `#969696`, `#d4d4d4`)
+- Default: 19 colors (`#ef4444`, `#3b82f6`, `#10b981`, ...)
+- B&W mode: 12 greyscale steps from `#000000` to `#ffffff`
+- Style editor palette automatically switches to greyscale swatches when B&W mode is active
 
 ### Shapes
 12 shapes: `circle`, `square`, `triangle`, `diamond`, `hexagon`, `circle-open`, `square-open`, `triangle-open`, `diamond-open`, `plus`, `cross`, `asterisk`
@@ -140,6 +153,17 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 - Click any legend item to open a floating style editor
 - Edit color (palette grid), shape (icon grid), line type (dropdown), or texture (pattern selector)
 - Per-layer overrides stored in `layer.styleOverrides`
+
+### Legend Deduplication & Mode Awareness
+- When the same variable is assigned to multiple channels (e.g. Color By = Shape By = Phoneme), the legend combines them into a single section with merged icons
+- Color + Shape: legend shows colored shape icons instead of separate color dots and grey shapes
+- Color + Line Type: legend shows colored line segments with dash patterns
+- **Trajectory mode**: legend always renders colored line segments (shapes are ignored since trajectories don't use shapes)
+- Applies to both on-screen legends and canvas export legends (CanvasPlot and TrajectoryF1F2)
+
+### Centroids
+- Centroids always render as filled shapes, even when the assigned shape is "open" (e.g. circle-open, square-open)
+- A white halo background is drawn behind each centroid for visibility against the data cloud
 
 ---
 
@@ -172,7 +196,7 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 - Each filter section has **All** / **Clear** buttons
 - Word filter has a search box
 - **Gear icon** (Settings2) opens a popover listing ALL available fields (built-in + custom) with checkboxes to toggle visibility in the sidebar
-- `ColumnMapping.showInSidebar` controls field visibility
+- `ColumnMapping.showInSidebar` controls field visibility; set during import via Sidebar column in the Data Mapping Dialog
 - On import, `computeSelectAllFilters()` populates all filter arrays with all unique values
 
 ### Per-Layer Filtering
@@ -296,30 +320,49 @@ Plus any custom columns from the dataset.
 ## 10. Export System
 
 ### Export Dialog
-- Full-screen modal with live preview
-- **Resolution**: configurable scale multiplier (default 3x)
-- **Graph geometry**: independent X/Y scale, X/Y offset
-- **Canvas size**: auto-sizing or manual width/height
+- Full-screen modal with live preview (scale-1 preview, full-resolution download)
+- **Smart defaults**: `computeExportDefaults()` derives config from current layers (legend titles, section visibility)
+- **Resolution**: configurable scale multiplier (1x–4x, default 3x)
+- **Canvas**: always auto-sized to fit plot + margins + legend; no manual canvas dimensions
+- **Dynamic margins**: margins in `generateImage()` scale with font sizes so nothing overflows
 
-### Typography Controls
-- X-axis label size + offset
-- Y-axis label size + offset
-- Tick label size + offset
-- Data label size
-- Font scale slider (proportionally scales all font sizes)
-- Linked/unlinked axis label sizes
+### Quick Settings (always visible)
+- Resolution buttons (1x–4x)
+- Global Font Scale slider (0.5x–3.0x) — proportionally scales all text
 
-### Title
-- Toggle visibility
-- Custom title text, size, and position offset
+### Collapsible Sections
+Each section is collapsible with a dot indicator when non-default values are set:
 
-### Legend
-- Position: Right, Bottom, Inside Top-Right, Inside Top-Left, Custom (x/y coordinates)
-- Per-layer legend control: show/hide, custom titles for color/shape/lineType/texture sections
-- Title and item font sizes
+- **Chart Title**: toggle on/off, text, size, NudgePad for position offset
+- **Graph Geometry**: graph scale (linked/unlinked X/Y), NudgePad for graph offset
+- **Axis Labels**: X/Y axis label sizes (linked/unlinked), tick number size, data label size; NudgePads for axis label offsets and tick offsets
+- **Legend**: show/hide toggle, position (Right/Bottom/Inside/Custom), per-layer controls with editable titles, heading/item font sizes
+
+### NudgePad Component
+Replaces raw X/Y offset inputs with directional arrows (↑↓←→) + reset button:
+- Default step: 10px (configurable per instance)
+- Hold Shift for fine control (×0.2), Ctrl for coarse (×5)
+- Center reset button returns to 0,0
+- Current offset values shown when non-zero
+
+### Typography Defaults (base sizes at 1.0x font scale)
+- Axis labels: 96px (was 32px — 3× increase for document readability)
+- Tick numbers: 64px (was 24px)
+- Data labels: 64px (was 24px)
+- Legend headings: 96px (was 36px)
+- Legend items: 64px (was 24px)
+- Plot title: 128px (was 48px)
+
+### Persistence (localStorage)
+- Font scale, resolution, and legend position persist across export sessions
+- Offset values always start fresh from computed defaults
+
+### Reset to Defaults
+- Header "Reset" button recomputes all settings from current layers
+- Resets font scale to 1.0x, re-derives legend titles, restores all offsets to 0
 
 ### Output
-- PNG download with timestamped filename
+- PNG download with timestamped filename (`fred_export_{timestamp}.png`)
 
 ---
 

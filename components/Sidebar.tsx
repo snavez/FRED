@@ -237,8 +237,8 @@ const Sidebar: React.FC<SidebarProps> = ({
         <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex justify-between items-center">
           <span>{label}</span>
           <span className="flex gap-2">
-            <button onClick={() => updateFilters({ [filterKey]: options })} className={`hover:underline ${allSelected ? 'text-indigo-600 font-extrabold' : 'text-slate-400'}`}>All</button>
-            <button onClick={() => updateFilters({ [filterKey]: [] })} className={`hover:underline ${selected.length === 0 ? 'text-indigo-600 font-extrabold' : 'text-slate-400'}`}>Clear</button>
+            <button onClick={() => updateFilters({ [filterKey]: options })} className={`hover:underline ${allSelected ? 'text-sky-700 font-extrabold' : 'text-slate-400'}`}>All</button>
+            <button onClick={() => updateFilters({ [filterKey]: [] })} className={`hover:underline ${selected.length === 0 ? 'text-sky-700 font-extrabold' : 'text-slate-400'}`}>Clear</button>
           </span>
         </label>
         <div className={`overflow-y-auto border border-slate-200 rounded p-1.5 flex flex-wrap gap-1 ${maxHeight || 'max-h-24'}`}>
@@ -246,7 +246,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             <button
               key={v}
               onClick={() => toggleListFilter(filterKey, v)}
-              className={`px-2 py-0.5 rounded text-[11px] border ${selected.includes(v) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
+              className={`px-2 py-0.5 rounded text-[11px] border ${selected.includes(v) ? 'bg-slate-600 text-white border-slate-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
             >
               {displayFn ? displayFn(v) : v}
             </button>
@@ -259,8 +259,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   return (
     <aside className="w-80 bg-white border-r border-slate-200 flex flex-col shrink-0 overflow-y-auto">
       {activeLayerName && (
-        <div className="bg-indigo-50 border-b border-indigo-100 p-2 text-center sticky top-0 z-10">
-            <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Editing: {activeLayerName}</span>
+        <div className="bg-sky-50 border-b border-sky-100 p-2 text-center sticky top-0 z-10">
+            <span className="text-[10px] font-bold text-sky-800 uppercase tracking-wider">Editing: {activeLayerName}</span>
         </div>
       )}
       <div className="p-5 space-y-6">
@@ -280,7 +280,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           {hasData && (
             <div className="text-[10px] text-slate-500 font-bold uppercase flex justify-between items-center">
               <span>Tokens: {tokenCount.toLocaleString()} / {totalCount.toLocaleString()}</span>
-              <span className="text-indigo-600">{Math.round((tokenCount / totalCount) * 100 || 0)}%</span>
+              <span className="text-sky-700">{Math.round((tokenCount / totalCount) * 100 || 0)}%</span>
             </div>
           )}
         </section>
@@ -297,7 +297,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <div className="relative" ref={fieldSettingsRef}>
                   <button
                     onClick={() => setShowFieldSettings(!showFieldSettings)}
-                    className={`p-1 rounded transition-colors ${showFieldSettings ? 'bg-indigo-100 text-indigo-600' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'}`}
+                    className={`p-1 rounded transition-colors ${showFieldSettings ? 'bg-sky-100 text-sky-700' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'}`}
                     title="Configure visible filters"
                   >
                     <Settings2 size={14} />
@@ -311,7 +311,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                             type="checkbox"
                             checked={entry.visible}
                             onChange={() => toggleFieldInPopover(entry)}
-                            className="rounded text-indigo-600"
+                            className="rounded text-sky-700"
                           />
                           <span className="text-xs text-slate-700">{entry.label}</span>
                         </label>
@@ -341,8 +341,8 @@ const Sidebar: React.FC<SidebarProps> = ({
                   <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex justify-between items-center">
                     <span>Words ({filteredWordOptions.length})</span>
                     <span className="flex gap-2">
-                      <button onClick={() => updateFilters({ words: wordOptions })} className={`hover:underline ${wordOptions.length > 0 && wordOptions.every(o => filters.words.includes(o)) ? 'text-indigo-600 font-extrabold' : 'text-slate-400'}`}>All</button>
-                      <button onClick={() => updateFilters({ words: [] })} className={`hover:underline ${filters.words.length === 0 ? 'text-indigo-600 font-extrabold' : 'text-slate-400'}`}>Clear</button>
+                      <button onClick={() => updateFilters({ words: wordOptions })} className={`hover:underline ${wordOptions.length > 0 && wordOptions.every(o => filters.words.includes(o)) ? 'text-sky-700 font-extrabold' : 'text-slate-400'}`}>All</button>
+                      <button onClick={() => updateFilters({ words: [] })} className={`hover:underline ${filters.words.length === 0 ? 'text-sky-700 font-extrabold' : 'text-slate-400'}`}>Clear</button>
                     </span>
                   </label>
 
@@ -350,7 +350,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                     <input
                       type="text"
                       placeholder="Search words..."
-                      className="w-full pl-7 pr-2 py-1 text-[11px] border border-slate-200 rounded focus:outline-none focus:border-indigo-500"
+                      className="w-full pl-7 pr-2 py-1 text-[11px] border border-slate-200 rounded focus:outline-none focus:border-sky-500"
                       value={wordSearch}
                       onChange={e => setWordSearch(e.target.value)}
                     />
@@ -363,7 +363,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                         <button
                           key={word}
                           onClick={() => toggleListFilter('words', word)}
-                          className={`px-2 py-0.5 rounded text-[11px] border ${filters.words.includes(word) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
+                          className={`px-2 py-0.5 rounded text-[11px] border ${filters.words.includes(word) ? 'bg-slate-600 text-white border-slate-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
                         >
                           {word}
                         </button>
@@ -423,8 +423,8 @@ const Sidebar: React.FC<SidebarProps> = ({
                     <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex justify-between items-center">
                       <span>{label}</span>
                       <span className="flex gap-2">
-                        <button onClick={() => setFilters(prev => ({ ...prev, customFilters: { ...(prev.customFilters || {}), [col]: uniqueVals } }))} className={`hover:underline ${allSelected ? 'text-indigo-600 font-extrabold' : 'text-slate-400'}`}>All</button>
-                        <button onClick={() => setFilters(prev => ({ ...prev, customFilters: { ...(prev.customFilters || {}), [col]: [] } }))} className={`hover:underline ${selected.length === 0 ? 'text-indigo-600 font-extrabold' : 'text-slate-400'}`}>Clear</button>
+                        <button onClick={() => setFilters(prev => ({ ...prev, customFilters: { ...(prev.customFilters || {}), [col]: uniqueVals } }))} className={`hover:underline ${allSelected ? 'text-sky-700 font-extrabold' : 'text-slate-400'}`}>All</button>
+                        <button onClick={() => setFilters(prev => ({ ...prev, customFilters: { ...(prev.customFilters || {}), [col]: [] } }))} className={`hover:underline ${selected.length === 0 ? 'text-sky-700 font-extrabold' : 'text-slate-400'}`}>Clear</button>
                       </span>
                     </label>
                     <div className="max-h-24 overflow-y-auto border border-slate-200 rounded p-1.5 flex flex-wrap gap-1">
@@ -432,7 +432,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                         <button
                           key={v}
                           onClick={() => toggleCustom(v)}
-                          className={`px-2 py-0.5 rounded text-[11px] border ${selected.includes(v) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
+                          className={`px-2 py-0.5 rounded text-[11px] border ${selected.includes(v) ? 'bg-slate-600 text-white border-slate-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
                         >
                           {v}
                         </button>

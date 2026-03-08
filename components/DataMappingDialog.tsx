@@ -22,8 +22,8 @@ const ROLE_OPTIONS: { value: ColumnRole, label: string }[] = [
   { value: 'syllable_mark', label: 'Syllable Mark' },
   { value: 'canonical_stress', label: 'Expected Stress' },
   { value: 'lexical_stress', label: 'Transcr. Stress' },
-  { value: 'canonical', label: 'Phoneme (Canonical)' },
-  { value: 'produced', label: 'Allophone (Produced)' },
+  { value: 'canonical', label: 'Phoneme' },
+  { value: 'produced', label: 'Allophone' },
   { value: 'alignment', label: 'Alignment' },
   { value: 'type', label: 'Segment Type' },
   { value: 'canonical_type', label: 'Canonical Type' },
@@ -39,6 +39,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
 }) => {
   const [mappings, setMappings] = useState<ColumnMapping[]>(detectedMappings);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [sidebarHelpRect, setSidebarHelpRect] = useState<DOMRect | null>(null);
 
   // Reset mappings when dialog opens with new data
   React.useEffect(() => {
@@ -74,7 +75,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
         <div className="flex items-center justify-between p-5 border-b border-slate-200 shrink-0">
           <div>
             <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <FileText size={20} className="text-indigo-600" />
+              <FileText size={20} className="text-sky-700" />
               Data Mapping
             </h2>
             <p className="text-xs text-slate-500 mt-1">
@@ -95,6 +96,13 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                 <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2 w-48">Sample Values</th>
                 <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2 w-40">Map To</th>
                 <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2">Details</th>
+                <th className="text-center text-[10px] font-bold text-slate-400 uppercase py-2 w-16">
+                  <span
+                    className="cursor-help border-b border-dashed border-slate-300"
+                    onMouseEnter={e => setSidebarHelpRect(e.currentTarget.getBoundingClientRect())}
+                    onMouseLeave={() => setSidebarHelpRect(null)}
+                  >Sidebar</span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -124,15 +132,15 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                           const updates: Partial<ColumnMapping> = { role };
                           if (role === 'custom') {
                             updates.customFieldName = m.customFieldName || m.csvHeader;
-                            updates.showInSidebar = m.showInSidebar ?? true;
                           }
                           if (role === 'formant') {
                             updates.formant = m.formant || 'f1';
                             updates.timePoint = m.timePoint ?? 50;
                             updates.isSmooth = m.isSmooth || false;
                           }
-                          if (SIDEBAR_ELIGIBLE_ROLES.has(role)) {
-                            updates.showInSidebar = true;
+                          // Set sidebar default: filter-type roles on, data-type roles off
+                          if (role !== 'ignore' && role !== 'formant') {
+                            updates.showInSidebar = SIDEBAR_ELIGIBLE_ROLES.has(role) || role === 'custom';
                           }
                           updateMapping(idx, updates);
                         }}
@@ -164,15 +172,6 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                             max={100}
                           />
                           <span className="text-[10px] text-slate-400">%</span>
-                          <label className="flex items-center gap-1 text-[10px] text-slate-500">
-                            <input
-                              type="checkbox"
-                              checked={m.isSmooth || false}
-                              onChange={e => updateMapping(idx, { isSmooth: e.target.checked })}
-                              className="rounded text-indigo-600"
-                            />
-                            Smooth
-                          </label>
                           {m.formantLabel && (
                             <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">{m.formantLabel}</span>
                           )}
@@ -187,19 +186,21 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                             onChange={e => updateMapping(idx, { customFieldName: e.target.value })}
                             placeholder="Field name"
                           />
-                          <label className="flex items-center gap-1 text-[10px] text-slate-500 whitespace-nowrap">
-                            <input
-                              type="checkbox"
-                              checked={m.showInSidebar !== false}
-                              onChange={e => updateMapping(idx, { showInSidebar: e.target.checked })}
-                              className="rounded text-indigo-600"
-                            />
-                            Sidebar
-                          </label>
                         </div>
                       )}
                       {m.role !== 'formant' && m.role !== 'custom' && m.role !== 'ignore' && (
                         <span className="text-[10px] text-slate-400 italic">auto-detected</span>
+                      )}
+                    </td>
+                    <td className="py-2 text-center">
+                      {m.role !== 'ignore' && m.role !== 'formant' && (
+                        <input
+                          type="checkbox"
+                          checked={m.showInSidebar === true}
+                          onChange={e => updateMapping(idx, { showInSidebar: e.target.checked })}
+                          className="rounded text-sky-700"
+                          title="Show as filter in sidebar"
+                        />
                       )}
                     </td>
                   </tr>
@@ -231,12 +232,22 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
               }
               onConfirm(mappings);
             }}
-            className="px-6 py-2 text-xs font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2 shadow-sm"
+            className="px-6 py-2 text-xs font-bold text-white bg-slate-600 rounded-lg hover:bg-slate-700 transition-colors flex items-center gap-2 shadow-sm"
           >
             <Upload size={14} />
             Import Data
           </button>
         </div>
+
+        {/* Fixed-position tooltip for Sidebar help (rendered outside scroll container) */}
+        {sidebarHelpRect && (
+          <div
+            className="fixed w-48 bg-slate-800 text-white text-[10px] font-normal normal-case tracking-normal p-2 rounded-lg shadow-lg z-[200] leading-relaxed pointer-events-none"
+            style={{ top: sidebarHelpRect.bottom + 4, left: sidebarHelpRect.left + sidebarHelpRect.width / 2 - 96 }}
+          >
+            Tick to show this field as a filter in the sidebar. Can be changed after import.
+          </div>
+        )}
       </div>
     </div>
   );

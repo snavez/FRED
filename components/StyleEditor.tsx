@@ -19,13 +19,20 @@ interface StyleEditorProps {
   onUpdate: (type: 'color' | 'shape' | 'texture' | 'lineType', value: any) => void;
   onClose: () => void;
   position: { x: number, y: number };
+  bwMode?: boolean;
 }
 
 const COLORS = [
-  '#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', 
-  '#ec4899', '#06b6d4', '#84cc16', '#64748b', '#dc2626', 
+  '#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6',
+  '#ec4899', '#06b6d4', '#84cc16', '#64748b', '#dc2626',
   '#2563eb', '#059669', '#d97706', '#7c3aed', '#db2777',
   '#000000', '#525252', '#969696', '#ffffff'
+];
+
+const GREYSCALE_COLORS = [
+  '#000000', '#1a1a1a', '#333333', '#4d4d4d',
+  '#666666', '#808080', '#999999', '#b3b3b3',
+  '#cccccc', '#d9d9d9', '#e6e6e6', '#ffffff',
 ];
 
 const SHAPES = [
@@ -67,7 +74,8 @@ const ShapeIcon = ({ shape, color = '#333' }: { shape: string, color?: string })
   </svg>
 );
 
-const StyleEditor: React.FC<StyleEditorProps> = ({ category, activeChannels, currentStyles, onUpdate, onClose, position }) => {
+const StyleEditor: React.FC<StyleEditorProps> = ({ category, activeChannels, currentStyles, onUpdate, onClose, position, bwMode }) => {
+  const colorPalette = bwMode ? GREYSCALE_COLORS : COLORS;
   // Prevent going off screen
   const safeX = Math.min(window.innerWidth - 260, Math.max(10, position.x));
   const safeY = Math.min(window.innerHeight - 400, Math.max(10, position.y));
@@ -78,7 +86,7 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ category, activeChannels, cur
       style={{ top: safeY, left: safeX }}
     >
       <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
-        <h3 className="font-bold text-slate-800 text-sm">Edit Style: <span className="text-indigo-600 font-mono">{category}</span></h3>
+        <h3 className="font-bold text-slate-800 text-sm">Edit Style: <span className="text-sky-700 font-mono">{category}</span></h3>
         <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg font-bold">×</button>
       </div>
 
@@ -87,12 +95,12 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ category, activeChannels, cur
         {activeChannels.color && (
           <div>
             <label className="text-[10px] font-bold text-slate-500 uppercase mb-2 block">Color</label>
-            <div className="grid grid-cols-6 gap-2">
-              {COLORS.map(c => (
-                <button 
+            <div className={`grid gap-2 ${bwMode ? 'grid-cols-4' : 'grid-cols-6'}`}>
+              {colorPalette.map(c => (
+                <button
                   key={c}
                   onClick={() => onUpdate('color', c)}
-                  className={`w-6 h-6 rounded-md border shadow-sm transition-transform hover:scale-110 ${currentStyles.color === c ? 'ring-2 ring-offset-1 ring-indigo-500' : 'border-slate-200'}`}
+                  className={`w-6 h-6 rounded-md border shadow-sm transition-transform hover:scale-110 ${currentStyles.color === c ? 'ring-2 ring-offset-1 ring-sky-500' : 'border-slate-200'}`}
                   style={{ backgroundColor: c }}
                 />
               ))}
@@ -109,7 +117,7 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ category, activeChannels, cur
                 <button 
                   key={s}
                   onClick={() => onUpdate('shape', s)}
-                  className={`w-7 h-7 flex items-center justify-center rounded-md border hover:bg-slate-50 ${currentStyles.shape === s ? 'ring-2 ring-offset-1 ring-indigo-500 bg-indigo-50 border-indigo-200' : 'border-slate-200'}`}
+                  className={`w-7 h-7 flex items-center justify-center rounded-md border hover:bg-slate-50 ${currentStyles.shape === s ? 'ring-2 ring-offset-1 ring-sky-500 bg-sky-50 border-sky-200' : 'border-slate-200'}`}
                 >
                   <ShapeIcon shape={s} color={activeChannels.color ? currentStyles.color : '#333'} />
                 </button>
@@ -145,7 +153,7 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ category, activeChannels, cur
                 <button
                   key={lt.value}
                   onClick={() => onUpdate('lineType', lt.value)}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded border text-xs ${currentStyles.lineType === lt.value ? 'bg-indigo-50 border-indigo-200 text-indigo-700 font-bold' : 'bg-white border-slate-100 text-slate-600 hover:bg-slate-50'}`}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded border text-xs ${currentStyles.lineType === lt.value ? 'bg-sky-50 border-sky-200 text-sky-800 font-bold' : 'bg-white border-slate-100 text-slate-600 hover:bg-slate-50'}`}
                 >
                   <span>{lt.label}</span>
                   {/* Visual rep */}
@@ -181,7 +189,7 @@ const CanvasPatternPreview = ({ index, color, isSelected, onClick }: any) => {
         }
     }, [index, color]);
     return (
-        <button onClick={onClick} className={`rounded overflow-hidden border ${isSelected ? 'ring-2 ring-indigo-500 ring-offset-1' : 'border-transparent'}`}>
+        <button onClick={onClick} className={`rounded overflow-hidden border ${isSelected ? 'ring-2 ring-sky-500 ring-offset-1' : 'border-transparent'}`}>
             <canvas ref={canvasRef} width={32} height={32} />
         </button>
     );
