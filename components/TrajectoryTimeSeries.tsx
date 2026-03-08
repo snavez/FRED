@@ -369,6 +369,61 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
         drawMean(lines.f2, true);
         ctx.setLineDash([]);
       });
+
+      // Draw mean trajectory labels with anti-overlap
+      if (config.showTrajectoryLabels) {
+        const labelSize = exportConfig ? exportConfig.dataLabelSize * drawScale : (config.meanTrajectoryLabelSize || 12) * drawScale / scale;
+        ctx.font = `bold ${labelSize}px Inter`;
+        const labelPadX = (8 * drawScale) / scale; // horizontal gap from line end
+
+        // Collect label positions at the rightmost point of each group's F1 mean line
+        const labelEntries: { x: number; y: number; label: string; color: string }[] = [];
+        Object.entries(meanTrajectories).forEach(([compKey, linesData]) => {
+          const [cVal, lVal] = compKey.split('|');
+          const lines = linesData as { f1: {x:number,y:number}[], f2: {x:number,y:number}[] };
+          const color = colorMap[cVal] || colorMap['All'] || '#000';
+          if (lines.f1.length === 0) return;
+
+          // Label text based on meanLabelType
+          let labelText = cVal;
+          if (config.meanLabelType === 'color') labelText = cVal;
+          else if (config.meanLabelType === 'shape') labelText = lVal !== 'Default' ? lVal : cVal;
+          else if (config.meanLabelType === 'both') labelText = lVal !== 'Default' ? `${cVal} ${lVal}` : cVal;
+          // 'auto': just use cVal
+
+          const lastPt = lines.f1[lines.f1.length - 1];
+          labelEntries.push({ x: mapX(lastPt.x), y: mapY(lastPt.y), label: labelText, color });
+        });
+
+        // Anti-overlap: sort by Y, push apart if too close
+        const minSpacing = labelSize * 1.3;
+        labelEntries.sort((a, b) => a.y - b.y);
+        for (let iter = 0; iter < 10; iter++) {
+          let moved = false;
+          for (let i = 1; i < labelEntries.length; i++) {
+            const gap = labelEntries[i].y - labelEntries[i - 1].y;
+            if (gap < minSpacing) {
+              const push = (minSpacing - gap) / 2;
+              labelEntries[i - 1].y -= push;
+              labelEntries[i].y += push;
+              moved = true;
+            }
+          }
+          if (!moved) break;
+        }
+
+        // Render labels
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        labelEntries.forEach(entry => {
+          ctx.strokeStyle = 'white';
+          ctx.lineWidth = (3 * drawScale) / scale;
+          ctx.lineJoin = 'round';
+          ctx.strokeText(entry.label, entry.x + labelPadX, entry.y);
+          ctx.fillStyle = entry.color;
+          ctx.fillText(entry.label, entry.x + labelPadX, entry.y);
+        });
+      }
     }
   }, [data, config, colorMap, meanTrajectories, lineStyles]);
 

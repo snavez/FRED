@@ -87,6 +87,7 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 - Individual lines + mean trajectories per group
 - Configurable frequency range
 - Derives bin count from actual data time-points
+- **Mean trajectory labels** at line endpoints with anti-overlap displacement. Label source selectable (Color Key, Line Key, Both, Auto). Adjustable label size (8–72px)
 
 ### Duration Plot
 - Box-and-whisker plots per phoneme group
