@@ -406,20 +406,19 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
           ctx.font = `${fontSizeItem}px Inter`;
           sortedKeys.forEach(k => {
               const count = groups[k]?.length || 0;
+              // Trajectory legend always uses line icons (not dots)
+              ctx.strokeStyle = colorMap[k];
+              ctx.lineWidth = (isExport ? 4 : 2) * drawScale;
               if (config.lineTypeBy === config.colorBy && lineStyles[k]) {
-                // Combined: draw colored line with dash pattern
-                ctx.strokeStyle = colorMap[k];
-                ctx.lineWidth = (isExport ? 4 : 2) * drawScale;
                 ctx.setLineDash((lineStyles[k] || []).map(v => v * drawScale));
-                ctx.beginPath();
-                ctx.moveTo(x, curY + circleSize/2);
-                ctx.lineTo(x + (isExport ? 50 : 25) * drawScale, curY + circleSize/2);
-                ctx.stroke();
-                ctx.setLineDash([]);
               } else {
-                ctx.fillStyle = colorMap[k];
-                ctx.beginPath(); ctx.arc(x + circleSize, curY + circleSize/2, circleSize, 0, Math.PI*2); ctx.fill();
+                ctx.setLineDash([]);
               }
+              ctx.beginPath();
+              ctx.moveTo(x, curY + circleSize/2);
+              ctx.lineTo(x + (isExport ? 50 : 25) * drawScale, curY + circleSize/2);
+              ctx.stroke();
+              ctx.setLineDash([]);
               ctx.fillStyle = '#334155';
               ctx.fillText(`${k} (n=${count})`, x + xOffset, curY + circleSize/2);
               curY += spacing;
@@ -817,11 +816,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
              {sortedKeys.map(key => (
                <div key={key} className="flex justify-between items-center text-[10px] cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(key, 'color', e)}>
                  <div className="flex items-center space-x-2">
-                   {config.lineTypeBy === config.colorBy ? (
-                     <svg width="24" height="6" className="shrink-0"><line x1="0" y1="3" x2="24" y2="3" stroke={colorMap[key]} strokeWidth="2" strokeDasharray={lineStyles[key]?.join(',') || ''} /></svg>
-                   ) : (
-                     <div className="w-3 h-3 rounded-full shadow-sm shrink-0" style={{ backgroundColor: colorMap[key] }}></div>
-                   )}
+                   <svg width="24" height="6" className="shrink-0"><line x1="0" y1="3" x2="24" y2="3" stroke={colorMap[key]} strokeWidth="2" strokeDasharray={config.lineTypeBy === config.colorBy ? (lineStyles[key]?.join(',') || '') : ''} /></svg>
                    <span className="text-slate-700 font-medium truncate w-24">{key}</span>
                  </div><span className="text-slate-400 font-mono">({groups[key]?.length || 0})</span></div>))}
            </div>
