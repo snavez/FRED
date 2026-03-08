@@ -550,6 +550,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
                     if (config.meanLabelType === 'color') label = c;
                     else if (config.meanLabelType === 'shape') label = l;
                     else if (config.meanLabelType === 'both') label = `${c} ${l}`;
+                    else label = `${c} ${l}`; // auto: show both when composite key
                 }
 
                 const labelSize = exportConfig ? exportConfig.dataLabelSize : (drawScale > 1.5 ? 36 : config.meanTrajectoryLabelSize || config.labelSize);
@@ -655,6 +656,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
             if (config.meanLabelType === 'color') label = c;
             else if (config.meanLabelType === 'shape') label = s;
             else if (config.meanLabelType === 'both') label = `${c} ${s}`;
+            else label = `${c} ${s}`; // auto: show both when composite key
         } else {
             if (mappings.colorKey) { groupColor = mappings.colorMap[key] || '#000'; if (mappings.shapeKey === mappings.colorKey) shape = mappings.shapeMap[key] || 'circle'; }
             if (mappings.shapeKey && !mappings.colorKey) shape = mappings.shapeMap[key] || 'circle';
@@ -688,7 +690,12 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
           ctx.strokeText(label, mx, my);
           ctx.fillText(label, mx, my);
         } else {
-          const centroidSize = (config.centroidSize * drawScale) / scale;
+          // In export mode, scale centroid shapes with dataLabelSize so the Data Labels
+          // slider controls both text and shape centroids proportionally
+          const centroidSizeBase = exportConfig
+            ? Math.max(config.centroidSize, exportConfig.dataLabelSize * 0.5)
+            : config.centroidSize;
+          const centroidSize = (centroidSizeBase * drawScale) / scale;
           // White halo: always draw as the filled (closed) variant
           const closedShape = shape.replace('-open', '');
           ctx.save();
@@ -796,8 +803,8 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       let curY = y;
       const isExport = !!exportConfig;
 
-      const fontSizeTitle = exportConfig ? exportConfig.legendTitleSize : (isExport ? 36 : 14) * drawScale;
-      const fontSizeItem = exportConfig ? exportConfig.legendItemSize : (isExport ? 24 : 12) * drawScale;
+      const fontSizeTitle = exportConfig ? exportConfig.legendTitleSize * drawScale : (isExport ? 36 : 14) * drawScale;
+      const fontSizeItem = exportConfig ? exportConfig.legendItemSize * drawScale : (isExport ? 24 : 12) * drawScale;
       const spacing = fontSizeItem * 1.6;
       const circleSize = fontSizeItem * 0.5;
       const xOffset = fontSizeItem * 1.5;
@@ -843,8 +850,8 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
                     ctx.stroke();
                     ctx.setLineDash([]);
                   } else if (shapeKey === colorKey && shapeMap[k]) {
-                    // Combined: draw colored shape
-                    drawShape(ctx, shapeMap[k] as string, x + (circleSize), curY + (circleSize/2), (circleSize * 0.8), 1, drawScale);
+                    // Combined: draw colored shape — proportional stroke for open shapes
+                    drawShape(ctx, shapeMap[k] as string, x + (circleSize), curY + (circleSize/2), (circleSize * 0.8), 1, drawScale, circleSize * 0.15);
                   } else {
                     ctx.beginPath(); ctx.arc(x + (circleSize), curY + (circleSize/2), circleSize, 0, Math.PI*2); ctx.fill();
                   }
@@ -867,7 +874,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
                   const count = shapeCounts ? (shapeCounts[k] || 0) : 0;
                   ctx.fillStyle = '#64748b';
                   ctx.strokeStyle = '#64748b';
-                  drawShape(ctx, s as string, x + (circleSize), curY + (circleSize/2), (circleSize * 0.8), 1, drawScale);
+                  drawShape(ctx, s as string, x + (circleSize), curY + (circleSize/2), (circleSize * 0.8), 1, drawScale, circleSize * 0.15);
                   ctx.fillStyle = '#334155';
                   ctx.fillText(`${k} ${count ? `(n=${count})` : ''}`, x + xOffset, curY + (circleSize/2));
                   curY += spacing;
@@ -960,9 +967,9 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       if (exportConfig.showLegend) {
           // Scale legend space with font sizes so text fits
           const legendSpace = Math.max(800, exportConfig.legendItemSize * 15, exportConfig.legendTitleSize * 10);
-          if (exportConfig.legendPosition === 'right') {
-              legendSpaceRight = legendSpace * drawScale;
-          } else if (exportConfig.legendPosition === 'bottom') {
+          // Always allocate right space so canvas width stays consistent across position changes
+          legendSpaceRight = legendSpace * drawScale;
+          if (exportConfig.legendPosition === 'bottom') {
               legendSpaceBottom = legendSpace * drawScale;
           }
       }

@@ -862,7 +862,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                 </>
                            ) : (
                                 <>
-                                   {activeTab === 'vowel' && (
+                                   {(activeTab === 'vowel' || activeTab === '3d') && (
                                        <div className="flex flex-col gap-0.5">
                                             <div className="flex items-center gap-1 text-[9px] text-slate-500">
                                               <span>Size</span>
@@ -924,6 +924,30 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                      <span className="text-slate-500 font-bold">Mean Opacity</span>
                      <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.meanTrajectoryOpacity)} onChange={e => handleConfig('meanTrajectoryOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
                    </div>
+
+                   <div className="flex items-center gap-1 ml-2">
+                     <label className="flex items-center gap-1 cursor-pointer text-slate-500 font-bold">
+                       <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showTrajectoryLabels} onChange={e => handleConfig('showTrajectoryLabels', e.target.checked)} />
+                       <span>Lbl</span>
+                     </label>
+                     {currentConfig.showTrajectoryLabels && (
+                       <input type="range" min="8" max="72" step="1" title="Label Size" value={currentConfig.meanTrajectoryLabelSize || 12} onChange={e => handleConfig('meanTrajectoryLabelSize', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
+                     )}
+                   </div>
+
+                   {currentConfig.showTrajectoryLabels && (currentConfig.colorBy !== 'none' || currentConfig.lineTypeBy !== 'none') && (
+                     <select
+                       className="text-[9px] p-0.5 border rounded ml-2"
+                       title="Label Source"
+                       value={currentConfig.meanLabelType}
+                       onChange={e => handleConfig('meanLabelType', e.target.value)}
+                     >
+                       <option value="auto">Auto</option>
+                       <option value="color">Color Key</option>
+                       <option value="shape">Line Key</option>
+                       <option value="both">Both</option>
+                     </select>
+                   )}
 
                    {activeTab === 'traj_f1f2' && (
                        <div className="relative ml-2">

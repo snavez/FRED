@@ -91,6 +91,43 @@ const computeExportDefaults = (layers: Layer[], defaultTitle?: string): ExportCo
 };
 
 // ---------------------------------------------------------------------------
+// Compute legend absolute canvas coordinates for a given position mode (at drawScale=1)
+// MUST mirror the exact margin + position logic from CanvasPlot.tsx generateImage()
+// ---------------------------------------------------------------------------
+function computeLegendPosition(cfg: ExportConfig): { x: number; y: number } {
+  const graphScaleX = cfg.graphScaleX || cfg.graphScale || 1.0;
+  const graphScaleY = cfg.graphScaleY || cfg.graphScale || 1.0;
+  const graphX = cfg.graphX || 0;
+  const graphY = cfg.graphY || 0;
+  const basePlotWidth = 2400 * graphScaleX;
+  const basePlotHeight = 2000 * graphScaleY;
+
+  // Dynamic margins — same formulas as CanvasPlot.tsx generateImage()
+  const leftMarginBase = Math.max(220, cfg.yAxisLabelSize * 1.5 + 100);
+  const topMarginBase = cfg.showPlotTitle
+    ? Math.max(200, (cfg.plotTitleSize || 128) + 100)
+    : Math.max(100, cfg.tickLabelSize + 40);
+
+  const marginLeft = leftMarginBase + graphX;
+  const marginTop = topMarginBase + graphY;
+
+  switch (cfg.legendPosition) {
+    case 'right':
+      return { x: marginLeft + basePlotWidth + 40, y: marginTop };
+    case 'bottom':
+      return { x: marginLeft, y: marginTop + basePlotHeight + 150 };
+    case 'inside-top-right':
+      return { x: marginLeft + basePlotWidth - 300, y: marginTop + 40 };
+    case 'inside-top-left':
+      return { x: marginLeft + 40, y: marginTop + 40 };
+    case 'custom':
+      return { x: Number(cfg.legendX) || 0, y: Number(cfg.legendY) || 0 };
+    default:
+      return { x: marginLeft + basePlotWidth + 40, y: marginTop };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // NudgePad — directional arrows + reset for X/Y offset positioning
 // ---------------------------------------------------------------------------
 const NudgePad: React.FC<{
@@ -201,11 +238,13 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
     }
   }, [isOpen, layers, defaultTitle]);
 
-  // Persist lightweight prefs
+  // Persist lightweight prefs (don't persist 'custom' — coordinates are meaningless across sessions)
   useEffect(() => {
     if (isOpen) {
       localStorage.setItem('fred_export_scale', String(config.scale));
-      localStorage.setItem('fred_export_legendPosition', config.legendPosition || 'right');
+      if (config.legendPosition && config.legendPosition !== 'custom') {
+        localStorage.setItem('fred_export_legendPosition', config.legendPosition);
+      }
     }
   }, [config.scale, config.legendPosition, isOpen]);
 
@@ -233,10 +272,12 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
     localStorage.setItem('fred_export_fontScale', '1.0');
   }, [layers, defaultTitle]);
 
-  // Live preview
+  // Live preview — debounced to avoid flashing on rapid nudges
+  const hasPreview = previewUrl !== null;
   useEffect(() => {
     if (isOpen && plotRef.current) {
-      setIsGenerating(true);
+      // Only show spinner on first render; incremental updates stay quiet
+      if (!hasPreview) setIsGenerating(true);
       const timer = setTimeout(() => {
         if (plotRef.current) {
           const previewConfig = { ...config, scale: 1 };
@@ -244,7 +285,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
           setPreviewUrl(url);
           setIsGenerating(false);
         }
-      }, 50);
+      }, 300);
       return () => clearTimeout(timer);
     }
   }, [config, isOpen, plotRef]);
@@ -557,7 +598,21 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                     <label className="text-xs font-semibold text-slate-600 mb-1 block">Position</label>
                     <select
                       value={config.legendPosition}
-                      onChange={e => updateConfig('legendPosition', e.target.value)}
+                      onChange={e => {
+                        const newPos = e.target.value;
+                        if (newPos === 'custom') {
+                          // Compute current legend position so it visually stays in place
+                          const currentPos = computeLegendPosition(config);
+                          setConfig(prev => ({
+                            ...prev,
+                            legendPosition: 'custom',
+                            legendX: Math.round(currentPos.x),
+                            legendY: Math.round(currentPos.y),
+                          }));
+                        } else {
+                          updateConfig('legendPosition', newPos);
+                        }
+                      }}
                       className="w-full text-xs p-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-sky-500 outline-none bg-white"
                     >
                       <option value="right">Right (Outside)</option>

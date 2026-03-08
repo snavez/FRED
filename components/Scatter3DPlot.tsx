@@ -1,7 +1,7 @@
 
 import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig } from '../types';
-import { Layers, Rotate3D, Box, LayoutTemplate } from 'lucide-react';
+import { Layers, Rotate3D, Box, LayoutTemplate, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, RotateCcw, RotateCw } from 'lucide-react';
 
 interface Scatter3DPlotProps {
   data: SpeechToken[];
@@ -49,7 +49,7 @@ interface Point3D {
 }
 
 // Draw Shape in 2D (Projected)
-const drawShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: number, size: number, drawScale: number = 1) => {
+const drawShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: number, size: number, drawScale: number = 1, strokeWidth?: number) => {
   ctx.beginPath();
   switch (shape) {
     case 'circle': case 'circle-open': ctx.arc(x, y, size, 0, Math.PI * 2); break;
@@ -62,8 +62,9 @@ const drawShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: n
     case 'asterisk': ctx.moveTo(x - size, y); ctx.lineTo(x + size, y); ctx.moveTo(x, y - size); ctx.lineTo(x, y + size); const s2 = size * 0.7; ctx.moveTo(x - s2, y - s2); ctx.lineTo(x + s2, y + s2); ctx.moveTo(x + s2, y - s2); ctx.lineTo(x - s2, y + s2); break;
     default: ctx.arc(x, y, size, 0, Math.PI * 2);
   }
+  const lineWidth = strokeWidth ?? (2 * drawScale);
   if (shape.endsWith('-open') || ['plus', 'cross', 'asterisk'].includes(shape)) {
-    ctx.lineWidth = 2 * drawScale;
+    ctx.lineWidth = lineWidth;
     ctx.stroke();
   } else {
     ctx.fill();
@@ -94,7 +95,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
   // Camera State
-  const [rotation, setRotation] = useState({ alpha: 45, beta: 60 }); // alpha: rotation around Y, beta: elevation
+  const [rotation, setRotation] = useState({ alpha: -15, beta: -105, gamma: 0 }); // alpha: Y-axis turntable, beta: X-axis tilt, gamma: Z-axis roll
   const [translation, setTranslation] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   
@@ -103,19 +104,70 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
   const lastMousePos = useRef({ x: 0, y: 0 });
   const dragMode = useRef<'pan' | 'rotate'>('pan');
 
+  // Animated rotation
+  const animationRef = useRef<number | null>(null);
+  const rotationRef = useRef(rotation);
+  rotationRef.current = rotation; // Always keep ref in sync with state
+  const [rotationStep, setRotationStep] = useState(15);
+
+  const animateRotation = useCallback((deltaAlpha: number, deltaBeta: number, deltaGamma: number = 0) => {
+    // Cancel any existing animation
+    if (animationRef.current !== null) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+    }
+
+    const duration = 300; // ms
+    const startTime = performance.now();
+    // Read current rotation from ref (captures mid-animation position on rapid clicks)
+    const startAlpha = rotationRef.current.alpha;
+    const startBeta = rotationRef.current.beta;
+    const startGamma = rotationRef.current.gamma || 0;
+
+    const animate = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // Ease-out cubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+
+      setRotation({
+        alpha: (startAlpha + deltaAlpha * eased) % 360,
+        beta: (startBeta + deltaBeta * eased) % 360,
+        gamma: (startGamma + deltaGamma * eased) % 360,
+      });
+
+      if (progress < 1) {
+        animationRef.current = requestAnimationFrame(animate);
+      } else {
+        animationRef.current = null;
+      }
+    };
+
+    animationRef.current = requestAnimationFrame(animate);
+  }, []);
+
+  // Cleanup animation on unmount
+  useEffect(() => {
+    return () => {
+      if (animationRef.current !== null) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, []);
+
   // Axis Align Handlers
   const alignView = (axisPair: 'f1f2' | 'f2f3' | 'f1f3') => {
       setTranslation({x: 0, y: 0});
       setZoom(1);
       switch(axisPair) {
-          case 'f1f2': // Look from Top: Z(F1) vs X(F2)
-              setRotation({ alpha: 0, beta: 90 });
+          case 'f1f2': // Look from below: Z(F1) vs X(F2), F1 inverted to match standard vowel chart
+              setRotation({ alpha: 0, beta: -90, gamma: 0 });
               break;
           case 'f2f3': // Look from Front: Y(F3) vs X(F2)
-              setRotation({ alpha: 0, beta: 0 });
+              setRotation({ alpha: 0, beta: 0, gamma: 0 });
               break;
           case 'f1f3': // Look from Side: Y(F3) vs Z(F1)
-              setRotation({ alpha: 90, beta: 0 });
+              setRotation({ alpha: 90, beta: 0, gamma: 0 });
               break;
       }
   };
@@ -162,22 +214,33 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
     const f3Min = config.f3Range[0], f3Max = config.f3Range[1];
 
     // Helper: Project 3D (normalized -1 to 1) to 2D
+    // Rotation order: Ry(alpha) * Rx(beta) * Rz(gamma)
+    //   - Beta (X-axis tilt): applied first — tilts the view up/down
+    //   - Alpha (Y-axis turntable): applied second — spins horizontally (no vertical effect)
+    //   - Gamma (Z-axis roll): applied last — spins in the plane of the screen (CW/CCW)
     const project = (x: number, y: number, z: number) => {
       const radAlpha = (rotation.alpha * Math.PI) / 180;
       const radBeta = (rotation.beta * Math.PI) / 180;
+      const radGamma = ((rotation.gamma || 0) * Math.PI) / 180;
 
-      // Rotate around Y axis (Alpha)
-      const x1 = x * Math.cos(radAlpha) - z * Math.sin(radAlpha);
-      const z1 = x * Math.sin(radAlpha) + z * Math.cos(radAlpha);
-      
-      // Rotate around X axis (Beta)
-      const y2 = y * Math.cos(radBeta) - z1 * Math.sin(radBeta);
-      const z2 = y * Math.sin(radBeta) + z1 * Math.cos(radBeta);
+      // Step 1: Rotate around X axis (Beta — tilt)
+      const x1 = x;
+      const y1 = y * Math.cos(radBeta) - z * Math.sin(radBeta);
+      const z1 = y * Math.sin(radBeta) + z * Math.cos(radBeta);
+
+      // Step 2: Rotate around Y axis (Alpha — turntable)
+      const x2 = x1 * Math.cos(radAlpha) - z1 * Math.sin(radAlpha);
+      const y2 = y1; // Alpha has no vertical effect
+      const z2 = x1 * Math.sin(radAlpha) + z1 * Math.cos(radAlpha);
+
+      // Step 3: Rotate around Z axis (Gamma — roll/spin)
+      const x3 = x2 * Math.cos(radGamma) - y2 * Math.sin(radGamma);
+      const y3 = x2 * Math.sin(radGamma) + y2 * Math.cos(radGamma);
 
       // Orthographic Projection
       return {
-        x: centerX + x1 * cubeSize,
-        y: centerY - y2 * cubeSize, // Y is up in 3D, down in Canvas
+        x: centerX + x3 * cubeSize,
+        y: centerY - y3 * cubeSize, // Y is up in 3D, down in Canvas
         depth: z2
       };
     };
@@ -401,7 +464,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
 
            const color = groupPts[0].color;
            ctx.strokeStyle = color;
-           ctx.lineWidth = 1 * drawScale;
+           ctx.lineWidth = (config.ellipseLineWidth || 1.5) * drawScale;
            ctx.globalAlpha = config.ellipseLineOpacity;
 
            // Helper to draw projected ellipse
@@ -441,6 +504,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
 
     // Draw Centroids & Labels
     if (config.showCentroids) {
+       ctx.globalAlpha = config.centroidOpacity ?? 1;
        Object.entries(groups).forEach(([key, groupPts]) => {
            if (groupPts.length === 0) return;
            let mx=0, my=0, mz=0;
@@ -457,6 +521,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                if (config.meanLabelType === 'color') labelText = cLabel;
                else if (config.meanLabelType === 'shape') labelText = sLabel;
                else if (config.meanLabelType === 'both') labelText = `${cLabel} ${sLabel}`;
+               else labelText = `${cLabel} ${sLabel}`; // auto: show both when composite key
            }
 
            if (config.labelAsCentroid) {
@@ -474,13 +539,22 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                ctx.fillStyle = color;
                ctx.fillText(labelText, projM.x, projM.y);
            } else {
-               // Draw point
-               ctx.fillStyle = color;
+               // Draw point — white halo first, then colored shape
+               const cSize = config.centroidSize * drawScale;
+               const closedShape = shape.replace('-open', '');
+               ctx.save();
+               ctx.fillStyle = 'white';
                ctx.strokeStyle = 'white';
-               ctx.lineWidth = 2 * drawScale;
-               drawShape(ctx, shape, projM.x, projM.y, config.centroidSize * drawScale, drawScale);
+               drawShape(ctx, closedShape, projM.x, projM.y, cSize + (2 * drawScale), drawScale);
+               ctx.fill();
+               ctx.restore();
+               ctx.fillStyle = color;
+               ctx.strokeStyle = color;
+               const centroidStroke = cSize * 0.25;
+               drawShape(ctx, shape, projM.x, projM.y, cSize, drawScale, centroidStroke);
            }
        });
+       ctx.globalAlpha = 1;
     }
 
     // Draw Points
@@ -507,8 +581,8 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
         // Handled by translation in generateImage
     }
     
-    const fontSizeTitle = exportConfig ? exportConfig.legendTitleSize : (isExport ? 36 : 14) * drawScale;
-    const fontSizeItem = exportConfig ? exportConfig.legendItemSize : (isExport ? 24 : 12) * drawScale;
+    const fontSizeTitle = exportConfig ? exportConfig.legendTitleSize * drawScale : (isExport ? 36 : 14) * drawScale;
+    const fontSizeItem = exportConfig ? exportConfig.legendItemSize * drawScale : (isExport ? 24 : 12) * drawScale;
     const spacing = fontSizeItem * 1.6;
     const circleSize = fontSizeItem * 0.5;
     const xOffset = fontSizeItem * 1.5;
@@ -536,7 +610,13 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
         Object.entries(colorMap).sort().forEach(([k, c]) => {
             const count = colorCounts[k] || 0;
             ctx.fillStyle = c as string;
-            ctx.beginPath(); ctx.arc(x + (circleSize), curY + (circleSize), circleSize, 0, Math.PI*2); ctx.fill();
+            ctx.strokeStyle = c as string;
+            if (shapeKey === colorKey && shapeMap[k]) {
+                // Combined: draw colored shape — proportional stroke for open shapes
+                drawShape(ctx, shapeMap[k] as string, x + (circleSize), curY + (circleSize), (circleSize * 0.8), drawScale, circleSize * 0.15);
+            } else {
+                ctx.beginPath(); ctx.arc(x + (circleSize), curY + (circleSize), circleSize, 0, Math.PI*2); ctx.fill();
+            }
             ctx.fillStyle = '#334155';
             ctx.fillText(`${k} (n=${count})`, x + xOffset, curY + (circleSize));
             curY += spacing;
@@ -555,7 +635,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
             const count = shapeCounts[k] || 0;
             ctx.fillStyle = '#64748b';
             ctx.strokeStyle = '#64748b';
-            drawShape(ctx, s as string, x + (circleSize), curY + (circleSize), (5 * drawScale), drawScale);
+            drawShape(ctx, s as string, x + (circleSize), curY + (circleSize), (circleSize * 0.8), drawScale, circleSize * 0.15);
             ctx.fillStyle = '#334155';
             ctx.fillText(`${k} (n=${count})`, x + xOffset, curY + (circleSize));
             curY += spacing;
@@ -635,8 +715,9 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
 
         if (exportConfig.showLegend) {
             const legendSpace = Math.max(800, exportConfig.legendItemSize * 15, exportConfig.legendTitleSize * 10);
+            // Always allocate right space so canvas width stays consistent
+            legendW = legendSpace * drawScale;
             if (exportConfig.legendPosition === 'right') {
-                legendW = legendSpace * drawScale;
                 lx = margin.left + plotW + (100 * drawScale);
                 ly = margin.top;
             } else if (exportConfig.legendPosition === 'bottom') {
@@ -724,7 +805,8 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
       if (dragMode.current === 'rotate') {
         setRotation(r => ({
           alpha: (r.alpha + dx * 0.5) % 360,
-          beta: Math.max(-90, Math.min(90, r.beta - dy * 0.5))
+          beta: (r.beta - dy * 0.5) % 360,
+          gamma: r.gamma || 0
         }));
       } else {
         setTranslation(t => ({
@@ -769,7 +851,10 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                     {Object.entries(colorMap).sort().map(([k, c]) => (
                         <div key={k} className="flex items-center gap-2 justify-between cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(k, 'color', e)}>
                             <div className="flex items-center gap-2">
-                                <div className="w-3 h-3 rounded-full" style={{background: c as string}}></div>
+                                {shapeKey === colorKey && shapeMap[k]
+                                    ? <ShapeIcon shape={shapeMap[k] as string} color={c as string} />
+                                    : <div className="w-3 h-3 rounded-full" style={{background: c as string}}></div>
+                                }
                                 <span>{k}</span>
                             </div>
                             <span className="text-slate-400 text-[10px]">({colorCounts[k]})</span>
@@ -815,13 +900,94 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
         onWheel={handleWheel}
         className="cursor-move w-full h-full"
       />
+      {/* Rotation Control Widget */}
+      <div className="absolute bottom-4 right-4 z-20 pointer-events-auto">
+          <div className="bg-white/95 backdrop-blur border border-slate-200 rounded-xl shadow-lg p-2 flex flex-col items-center gap-1">
+              {/* Vertical label */}
+              <div className="text-[8px] text-slate-400 font-semibold tracking-wider uppercase">Rotate</div>
+
+              {/* D-pad layout */}
+              <div className="relative w-[88px] h-[88px]">
+                  {/* Up */}
+                  <button
+                      onClick={() => animateRotation(0, rotationStep)}
+                      title={`Tilt up ${rotationStep}°`}
+                      className="absolute top-0 left-1/2 -translate-x-1/2 w-7 h-7 flex items-center justify-center rounded-md bg-slate-100 hover:bg-sky-100 hover:text-sky-700 text-slate-600 transition-colors active:bg-sky-200"
+                  >
+                      <ChevronUp size={16} strokeWidth={2.5} />
+                  </button>
+                  {/* Down */}
+                  <button
+                      onClick={() => animateRotation(0, -rotationStep)}
+                      title={`Tilt down ${rotationStep}°`}
+                      className="absolute bottom-0 left-1/2 -translate-x-1/2 w-7 h-7 flex items-center justify-center rounded-md bg-slate-100 hover:bg-sky-100 hover:text-sky-700 text-slate-600 transition-colors active:bg-sky-200"
+                  >
+                      <ChevronDown size={16} strokeWidth={2.5} />
+                  </button>
+                  {/* Left */}
+                  <button
+                      onClick={() => animateRotation(-rotationStep, 0)}
+                      title={`Rotate left ${rotationStep}°`}
+                      className="absolute left-0 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-md bg-slate-100 hover:bg-sky-100 hover:text-sky-700 text-slate-600 transition-colors active:bg-sky-200"
+                  >
+                      <ChevronLeft size={16} strokeWidth={2.5} />
+                  </button>
+                  {/* Right */}
+                  <button
+                      onClick={() => animateRotation(rotationStep, 0)}
+                      title={`Rotate right ${rotationStep}°`}
+                      className="absolute right-0 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-md bg-slate-100 hover:bg-sky-100 hover:text-sky-700 text-slate-600 transition-colors active:bg-sky-200"
+                  >
+                      <ChevronRight size={16} strokeWidth={2.5} />
+                  </button>
+                  {/* Spin CCW (Z-axis roll) */}
+                  <button
+                      onClick={() => animateRotation(0, 0, rotationStep)}
+                      title={`Spin CCW ${rotationStep}°`}
+                      className="absolute top-0 left-0 w-6 h-6 flex items-center justify-center rounded-md bg-slate-50 hover:bg-amber-50 hover:text-amber-700 text-slate-400 transition-colors active:bg-amber-100"
+                  >
+                      <RotateCcw size={12} strokeWidth={2} />
+                  </button>
+                  {/* Spin CW (Z-axis roll) */}
+                  <button
+                      onClick={() => animateRotation(0, 0, -rotationStep)}
+                      title={`Spin CW ${rotationStep}°`}
+                      className="absolute top-0 right-0 w-6 h-6 flex items-center justify-center rounded-md bg-slate-50 hover:bg-amber-50 hover:text-amber-700 text-slate-400 transition-colors active:bg-amber-100"
+                  >
+                      <RotateCw size={12} strokeWidth={2} />
+                  </button>
+                  {/* Center: degree display */}
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-500 select-none">
+                      {rotationStep}°
+                  </div>
+              </div>
+
+              {/* Step size slider */}
+              <div className="flex items-center gap-1 w-full px-1">
+                  <span className="text-[8px] text-slate-400">5°</span>
+                  <input
+                      type="range"
+                      min="5"
+                      max="90"
+                      step="5"
+                      value={rotationStep}
+                      onChange={e => setRotationStep(parseInt(e.target.value))}
+                      className="flex-1 h-1 accent-sky-600"
+                      title={`Step: ${rotationStep}°`}
+                  />
+                  <span className="text-[8px] text-slate-400">90°</span>
+              </div>
+          </div>
+      </div>
+
+      {/* Help + Reset */}
       <div className="absolute bottom-4 left-4 flex flex-col space-y-2 pointer-events-none">
           <div className="bg-slate-900/80 text-white p-2 rounded text-[10px] backdrop-blur">
               <p>Drag to Pan</p>
               <p>Shift + Drag to Rotate</p>
               <p>Scroll to Zoom</p>
           </div>
-          <button onClick={() => { setTranslation({x:0, y:0}); setRotation({alpha:45, beta:60}); setZoom(1); }} className="pointer-events-auto flex items-center justify-center gap-2 px-3 py-1 bg-white border border-slate-200 rounded shadow-sm text-[10px] font-bold hover:bg-slate-50">
+          <button onClick={() => { setTranslation({x:0, y:0}); setRotation({alpha:-15, beta:-105, gamma:0}); setZoom(1); }} className="pointer-events-auto flex items-center justify-center gap-2 px-3 py-1 bg-white border border-slate-200 rounded shadow-sm text-[10px] font-bold hover:bg-slate-50">
               <Rotate3D size={12} />
               RESET VIEW
           </button>
