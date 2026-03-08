@@ -357,7 +357,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
             // Actual line
             ctx.strokeStyle = color;
             ctx.lineWidth = (config.meanTrajectoryWidth * drawScale) / scale;
-            ctx.globalAlpha = (isF2 ? 0.5 : 1) * config.meanTrajectoryOpacity;
+            ctx.globalAlpha = (isF2 && config.lineTypeBy !== 'none' ? 0.5 : 1) * config.meanTrajectoryOpacity;
             
             ctx.beginPath();
             pts.forEach((p,i) => { const x=mapX(p.x); const y=mapY(p.y); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
