@@ -1,7 +1,7 @@
 # FRED (Formant Research for EDucation) — Technical Specification
 
-**Version:** 1.0.0-draft
-**Last Updated:** 2026-03-05
+**Version:** 1.1.0-draft
+**Last Updated:** 2026-03-09
 **Status:** In Development (functional prototype)
 
 ---
@@ -50,21 +50,24 @@ FRED (Formant Research for EDucation) is a browser-based application for visuali
 ### 1.4 Scope
 
 **Implemented (v1.0):**
-- CSV/TSV file upload and parsing
-- 10-filter cascading filter system
+- CSV/TSV file upload and parsing with flexible column mapping dialog
+- Auto-detection of column roles via alias table, with user-adjustable mappings
+- Support for custom categorical columns (auto-detected, usable as filters and encodings)
+- Flat, independent filter system (10 built-in filters + dynamic custom filters per layer)
 - Multi-layer visualisation system (up to 10 layers)
 - 6 plot types: F1/F2 scatter/trajectory, 3D F1/F2/F3, trajectory time series, trajectory F1/F2, duration, phoneme distribution
 - Data table view
 - Per-layer style overrides (colours, shapes, line types, textures)
 - Reference vowel overlay with covariance ellipses
-- High-resolution PNG export with comprehensive layout controls
+- Configurable hover tooltip (user selects which fields to display)
+- Non-linear opacity sliders for fine-grained control at low opacity values
+- High-resolution PNG export with smart defaults, NudgePad controls, and comprehensive layout options
 - AI-assisted acoustic analysis (Gemini integration)
 - Greyscale/B&W mode
 - Synthetic data generation for demo/testing
 
 **Not Yet Implemented (targeted for v1.1+):**
-- Flexible data column mapping interface (see [Section 4.3](#43-flexible-data-mapping-interface-not-yet-implemented))
-- Configuration profile saving/loading
+- Configuration profile saving/loading for column mappings
 - SVG export format
 - Audio playback integration
 - Statistical analysis panel
@@ -81,7 +84,7 @@ FRED (Formant Research for EDucation) is a browser-based application for visuali
 | ID | As a... | I want to... | So that... | Priority | Status |
 |----|---------|--------------|------------|----------|--------|
 | US-01 | Researcher | Upload my formant data CSV | I can visualise my vowel space | Must | Done |
-| US-02 | Researcher | Map my column names to expected data types | I don't have to rename all my columns | Must | **Not done** |
+| US-02 | Researcher | Map my column names to expected data types | I don't have to rename all my columns | Must | Done (alias-based auto-detection + mapping dialog) |
 | US-03 | Researcher | Save my column mapping configuration | I can reuse it for future uploads with the same format | Should | **Not done** |
 | US-04 | Researcher | Filter data by phoneme, speaker, stress, etc. | I can focus on specific subsets | Must | Done |
 | US-05 | Researcher | Colour points by one variable and shape by another | I can visualise interactions between factors | Must | Done |
@@ -182,9 +185,43 @@ App.tsx
 
 ## 4. File Upload & Data Mapping
 
-### 4.1 Current Implementation (Fixed Format)
+### 4.1 Current Implementation (Alias-Based Auto-Detection)
 
-The current CSV parser (`csvParser.ts`) expects a specific column structure:
+The CSV parser (`csvParser.ts`) uses an alias table to auto-detect column roles from header names, then presents a mapping dialog for user confirmation.
+
+#### 4.1.0 Two-Step Import Flow
+
+1. **Read & Detect**: File is read, headers extracted, delimiter auto-detected (tab vs comma), and column roles inferred via alias matching
+2. **Mapping Dialog**: User reviews/adjusts column assignments in a modal before parsing — each column shows a role dropdown, sample data preview, and sidebar visibility checkbox
+
+#### 4.1.0b Column Role Aliases
+
+Each role maps to multiple common header names (case-insensitive):
+
+| Role | Aliases |
+|------|---------|
+| `file_id` | `fileid`, `speaker`, `speaker_id`, `participant`, `subject` |
+| `word` | `words` |
+| `syllable` | `syl` |
+| `syllable_mark` | `syl_mark` |
+| `canonical_stress` | `can_stress`, `expected_stress` |
+| `lexical_stress` | `lex_stress`, `transcribed_stress` |
+| `canonical` | `phoneme`, `target`, `target_phoneme`, `vowel`, `segment` |
+| `produced` | `allophone`, `actual`, `realised`, `realized`, `transcribed` |
+| `alignment` | `align`, `align_type` |
+| `type` | `segment_type` |
+| `canonical_type` | `can_type`, `vowel_type` |
+| `voice_pitch` | `pitch` |
+| `xmin` | `onset`, `start`, `start_time` |
+| `duration` | `dur`, `seg_dur` |
+
+Formant columns are detected via regex: `f[1-3]_<timepoint>[_<variant>]` (e.g., `f1_50`, `f2_30_smooth`).
+
+#### 4.1.0c Custom Columns
+
+Any unrecognized categorical column (≤50 unique values in sample) is assigned the `custom` role. Custom columns are stored in `SpeechToken.customFields` as `Record<string, string>` and can be used as visual encodings (Color By, Shape By, etc.) and as filter fields in the sidebar.
+
+The original CSV parser also supports the following fixed column structure for backward compatibility:
 
 #### 4.1.1 Expected Column Headers
 
@@ -228,9 +265,9 @@ When no file is uploaded, FRED generates 5,000 synthetic tokens on load for imme
 - Random metadata (words, stress levels, alignments, pitch)
 - Duration range: 0.1–0.4 seconds
 
-### 4.3 Flexible Data Mapping Interface (NOT YET IMPLEMENTED)
+### 4.3 Advanced Data Mapping Features (PARTIALLY IMPLEMENTED)
 
-This is a high-priority feature for v1.1. The goal is to accept any CSV/TSV with arbitrary column names and allow users to map them to FRED's internal data model.
+The core data mapping dialog is implemented (see Section 4.1). The features below describe additional planned enhancements for more sophisticated auto-detection and profile management.
 
 #### 4.3.1 Auto-Detection Heuristics
 
@@ -284,7 +321,9 @@ Upon file upload, FRED should analyse column headers and sample data (first 1,00
 
 <!-- NOTE: System must handle IPA phonetic notation via UTF-8 encoding for non-standard characters -->
 
-#### 4.3.2 Data Mapping UI (Planned)
+#### 4.3.2 Data Mapping UI (Enhanced Version — Planned)
+
+The current implementation uses a simpler role-dropdown dialog (see Section 4.1). The design below represents a more advanced version for future consideration:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -416,55 +455,51 @@ Filters apply with AND logic — a token must pass ALL active filters to be incl
 
 ```typescript
 interface FilterState {
-  mainType: 'vowel' | 'consonant' | 'all';
-  vowelCategory: 'monophthong' | 'diphthong' | 'all';
-  phonemes: string[];
+  types: string[];                    // segment type values (e.g., 'vowel', 'consonant')
+  vowelCategories: string[];          // e.g., 'monophthong', 'diphthong'
+  phonemes: string[];                 // canonical phoneme values
   alignments: string[];
-  produced: string[];
+  produced: string[];                 // allophone values
   words: string[];
   canonicalStress: string[];
   lexicalStress: string[];
   syllableMark: string[];
   voicePitch: string[];
+  customFilters?: Record<string, string[]>;  // dynamic filters for custom columns
 }
 ```
 
+> **Note:** Filters use flat, independent arrays — no hierarchical dependency between type, category, and phonemes. Empty array = nothing selected = nothing passes (for required filters). Optional filters: empty array = no restriction.
+
 ### 5.2 Filter UI (Sidebar)
 
-The sidebar provides a hierarchical filter cascade:
+The sidebar provides flat, independent filter sections. Each section has **All** / **Clear** buttons. A **gear icon** (Settings2) opens a popover to toggle which fields are visible in the sidebar.
 
-#### 5.2.1 Step 1: Segment Type
-- Dropdown: "All Types", "Vowels", "Consonants"
-- Default: "All Types"
+#### 5.2.1 Built-in Filter Sections
 
-#### 5.2.2 Step 2: Vowel Category (shown only when Type = Vowels)
-- Toggle buttons: "all", "monophthong", "diphthong"
-- Classification uses `isMonophthong()` helper from CSV parser
+| Section | Control Type | Notes |
+|---------|-------------|-------|
+| Type | Multi-select toggle buttons | Segment types (vowel, consonant, etc.) |
+| Vowel Category | Multi-select toggle buttons | monophthong, diphthong |
+| Phonemes | Multi-select toggle buttons | Canonical phoneme values |
+| Words | Searchable multi-select (max 100 shown) | Text search with count of hidden words |
+| Alignments | Multi-select toggle buttons | exact, substitution, etc. |
+| Allophones | Multi-select toggle buttons | Produced phoneme values |
+| Expected Stress | Multi-select toggle buttons | Stress levels |
+| Transcribed Stress | Multi-select toggle buttons | Stress levels |
+| Syllable Mark | Multi-select toggle buttons | Dynamic values |
+| Voice Pitch | Multi-select toggle buttons | Dynamic values |
 
-#### 5.2.3 Step 3: Phonemes
-- Multi-select toggle buttons, dynamically populated from filtered data
-- "Clear" button to deselect all
-- When empty (none selected), all phonemes pass the filter
+#### 5.2.2 Custom Filter Sections
 
-#### 5.2.4 Step 4: Words (with Search)
-- Searchable text input with live filtering
-- Shows max 100 words with count of hidden words
-- Multi-select toggle buttons
-- "Clear" button
+Dynamic filter sections are generated for each custom column in the dataset. Stored in `FilterState.customFilters`.
 
-#### 5.2.5 Step 5: Alignments
-- Toggle buttons: "exact", "substitution", "insertion", "deletion"
-- Not selected by default (all pass)
+#### 5.2.3 Sidebar Visibility
 
-#### 5.2.6 Step 6: Allophones (Produced)
-- Multi-select toggle buttons
-- "Clear" button
-
-#### 5.2.7 Contrast Variables
-- **Expected Stress**: "Stressed" (1), "Unstressed" (0)
-- **Transcribed Stress**: "Un" (0), "Prim" (1), "Sec" (2)
-- **Syllable Mark**: Dynamic multi-select buttons
-- **Voice Pitch**: Dynamic multi-select buttons
+- `ColumnMapping.showInSidebar` controls which fields appear in the sidebar
+- Set during import via the Sidebar column checkbox in the Data Mapping Dialog
+- Filter-type fields default to visible; data-type fields default to hidden
+- Visual encoding dropdowns (Color By, Shape By, etc.) only list variables that are sidebar-active
 
 ### 5.3 Token Count Display
 
@@ -669,19 +704,46 @@ In the F1/F2 CanvasPlot, the legend shows sections per visible layer with layer 
 | StyleEditor: click line type | Changes that category's line style |
 | StyleEditor: click texture | Changes that category's fill pattern |
 
-### 7.7 Hover Tooltip
+### 7.7 Configurable Hover Tooltip
 
-Shown when hovering over a data point on any plot:
+Shown when hovering over a data point on canvas-based plots (F1/F2, Traj F1/F2, 3D).
 
-| Field | Always Shown |
-|-------|-------------|
-| File/Speaker ID | Yes |
-| Word | Yes |
-| Phoneme (canonical) | Yes |
-| Allophone (produced) | Yes (if different from canonical) |
-| Duration | Yes |
-| F1 value | Yes (scatter/trajectory plots) |
-| F2 value | Yes (scatter/trajectory plots) |
+#### 7.7.1 Configuration
+
+- **Tooltip button** in the toolbar opens a popover with checkboxes
+- User selects up to **10 fields** from all available built-in + custom columns
+- Stored in `PlotConfig.tooltipFields: string[]`
+- Tooltip starts **empty** (no fields selected) — a friendly message prompts configuration
+- Dropdown only shows fields that exist in the loaded dataset (matched against `datasetMeta.columnMappings`)
+
+#### 7.7.2 Available Fields (shown only when mapped)
+
+| Key | Label |
+|-----|-------|
+| `file_id` | File ID |
+| `word` | Word |
+| `syllable` | Syllable |
+| `syllable_mark` | Syllable Mark |
+| `canonical_stress` | Expected Stress |
+| `lexical_stress` | Transcribed Stress |
+| `canonical` | Phoneme |
+| `produced` | Allophone |
+| `alignment` | Alignment |
+| `type` | Type |
+| `canonical_type` | Vowel Category |
+| `voice_pitch` | Voice Pitch |
+| `xmin` | Time (xmin) |
+| `duration` | Duration |
+
+Plus any custom columns from the dataset.
+
+#### 7.7.3 Rendering
+
+- First field rendered as header with accent styling
+- Remaining fields in a 2-column grid
+- `xmin` and `duration` formatted as `.toFixed(3)s`
+- Custom fields accessed via `token.customFields`
+- Tooltip uses the hovered token's layer config for field selection
 
 Position: Near cursor, constrained to canvas bounds.
 
@@ -1038,79 +1100,67 @@ Export is PNG only, accessed via the Export button in the MainDisplay toolbar. O
 
 ### 9.2 Export Dialog Layout
 
-Left panel: configuration controls. Right panel: live preview.
+Full-screen modal with live preview (scale-1 preview, full-resolution download). **Smart defaults**: `computeExportDefaults()` derives config from current layers (legend titles, section visibility).
 
-#### 9.2.1 Graph Geometry
+#### 9.2.0 Quick Settings (always visible)
 
-| Control | Range | Default |
-|---------|-------|---------|
-| Graph Scale (linked) | 0.1–3.0× | 1.0× |
-| Graph Scale X (unlinked) | 0.1–3.0× | 1.0× |
-| Graph Scale Y (unlinked) | 0.1–3.0× | 1.0× |
-| Graph X offset | Number | 0 |
-| Graph Y offset | Number | 0 |
-| Scale link toggle | Link/Unlink | Linked |
+- Resolution buttons (1×–4×)
+- Global Font Scale slider (0.5×–3.0×) — proportionally scales all text
 
-#### 9.2.2 Canvas Dimensions
+#### 9.2.1 Collapsible Sections
 
-| Control | Options | Default |
-|---------|---------|---------|
-| Auto/Fixed toggle | Auto / Fixed | Auto |
-| Width (fixed mode) | Number input | 2400 px |
-| Height (fixed mode) | Number input | 1600 px |
+Each section is collapsible with a dot indicator when non-default values are set:
 
-#### 9.2.3 Global Font Scale
+**Chart Title**: toggle on/off, text, size, NudgePad for position offset
 
-Slider: 0.5–3.0× (step 0.1). Proportionally scales all text in the export.
+**Graph Geometry**: graph scale (linked/unlinked X/Y), NudgePad for graph offset. Canvas is always auto-sized to fit plot + margins + legend; dynamic margins scale with font sizes.
 
-#### 9.2.4 Chart Title
+**Axis Labels**: X/Y axis label sizes (linked/unlinked), tick number size, data label size; NudgePads for axis label offsets and tick offsets
 
-| Control | Options | Default |
-|---------|---------|---------|
-| Show title | On/Off | Off |
-| Title text | Text input | "" |
-| Title size | 24–500px slider + input | 36 |
-| Title X/Y offset | Number inputs | 0, 0 |
+**Legend**: show/hide toggle, position (Right/Bottom/Inside/Custom), per-layer controls with editable titles, heading/item font sizes
 
-#### 9.2.5 Axis Labels
+#### 9.2.2 NudgePad Component
 
-| Control | Range | Default |
-|---------|-------|---------|
-| Axes link toggle | Link/Unlink | Linked |
-| X axis label size | 12–500px | 36 |
-| Y axis label size | 12–500px | 36 |
-| X/Y axis label offsets | Number inputs | 0 |
-| Tick number size | 10–500px | 24 |
-| X/Y tick offsets | Number inputs | 0 |
-| Data label size | 8–500px | 14 |
+Replaces raw X/Y offset inputs with directional arrows (↑↓←→) + reset button:
+- Default step: 10px (configurable per instance)
+- Hold Shift for fine control (×0.2), Ctrl for coarse (×5)
+- Center reset button returns to 0,0
+- Current offset values shown when non-zero
 
-#### 9.2.6 Legend Configuration
+#### 9.2.3 Typography Defaults (base sizes at 1.0× font scale)
 
-| Control | Options | Default |
-|---------|---------|---------|
-| Legend visibility | Visible / Hidden | Visible |
-| Position | Right, Bottom, Inside Top-Right, Inside Top-Left, Custom | Right |
-| Custom X/Y coordinates | Number inputs | — |
-| Heading size | 16–500px | 24 |
-| Item size | 12–500px | 18 |
+| Element | Size |
+|---------|------|
+| Axis labels | 96px |
+| Tick numbers | 64px |
+| Data labels | 64px |
+| Legend headings | 96px |
+| Legend items | 64px |
+| Plot title | 128px |
 
-**Per-layer legend controls:**
-- Checkbox to include each layer in the legend
-- Editable heading titles per encoding channel (colour, shape, line type) per layer
-
-#### 9.2.7 Resolution
+#### 9.2.4 Resolution
 
 | Preset | Scale Factor |
 |--------|-------------|
 | 1× | Standard |
 | 2× | High-DPI |
-| 3× | Print quality |
+| 3× | Print quality (default) |
 | 4× | Ultra-high |
+
+#### 9.2.5 Persistence (localStorage)
+
+- Font scale, resolution, and legend position persist across export sessions
+- Offset values always start fresh from computed defaults
+
+#### 9.2.6 Reset to Defaults
+
+- Header "Reset" button recomputes all settings from current layers
+- Resets font scale to 1.0×, re-derives legend titles, restores all offsets to 0
 
 ### 9.3 Export Output
 
-- Format: PNG with alpha channel
-- Filename: `fred-export.png` (auto-downloaded)
+- Format: PNG
+- Filename: `fred_export_{timestamp}.png` (auto-downloaded)
 - Includes: plot area, axes with labels/ticks, optional title, optional legend
 
 ### 9.4 Future: SVG Export
@@ -1276,17 +1326,14 @@ Currently runs as a Vite dev server. Target: standalone local app runnable on an
 
 ### 14.1 High Priority (v1.1)
 
-#### 14.1.1 Flexible File Parsing & Data Mapping
+#### 14.1.1 Data Mapping Enhancements
 
-The most significant gap in the current implementation. Users should be able to upload any CSV/TSV and map columns to FRED's data model without renaming columns. See Section 4.3 for the full planned design.
+The core data mapping dialog is implemented (alias-based auto-detection, role dropdowns, custom columns, sidebar visibility). Remaining sub-features for the advanced version:
 
-Key sub-features:
-- Auto-detection of column types based on headers and sample data
-- Visual mapping interface (drag-and-drop or dropdown assignment)
-- Column ignore/include toggling
-- User-friendly display labels for columns (e.g., `seg_dur` → "Phoneme Duration")
 - Save/load mapping profiles in localStorage
 - Profile auto-matching on subsequent uploads
+- Enhanced heuristic detection (numeric range analysis, SAMPA/IPA detection)
+- User-friendly display labels for columns (e.g., `seg_dur` → "Phoneme Duration")
 
 #### 14.1.2 Standalone Desktop Application
 
@@ -1389,6 +1436,7 @@ interface SpeechToken {
   xmin: number;
   duration: number;
   trajectory: TrajectoryPoint[];
+  customFields?: Record<string, string>;  // user-defined categorical fields
 }
 ```
 
@@ -1413,6 +1461,7 @@ Controls all visualisation settings per layer. Key property groups:
 - **Visual encoding**: `colorBy`, `shapeBy`, `lineTypeBy`, `textureBy`
 - **Plot mode**: `plotType`, `timePoint`, `bwMode`, `useSmoothing`
 - **Trajectory**: `showIndividualLines`, `showMeanTrajectories`, `showArrows`, `trajectoryOnset/Offset`, `meanTrajectoryWidth/Opacity`
+- **Tooltip**: `tooltipFields` (user-selected fields to display on hover)
 - **Points**: `showPoints`, `pointSize`, `pointOpacity`
 - **Ellipses**: `showEllipses`, `ellipseSD`, `ellipseLineWidth/Opacity`, `ellipseFillOpacity`
 - **Centroids**: `showCentroids`, `centroidSize`, `labelAsCentroid`, `labelSize`, `meanLabelType`
@@ -1429,6 +1478,7 @@ Controls all visualisation settings per layer. Key property groups:
 | 0.1.0 | 2025-01-28 | Zoe | Initial draft (as "Speech Visualisation Suite") |
 | 0.2.0 | 2025-01-29 | Zoe + Claude | Restructured; added data mapping, error handling, testing |
 | 1.0.0 | 2026-03-05 | Zoe + Claude | Major rewrite: renamed to FRED; documented all implemented features (multi-layer system, 6 plot types, per-layer style overrides, trajectory arrows, reference vowels, export dialog, AI integration); updated data format to reflect actual CSV parser; removed completed nice-to-haves; reorganised future considerations by priority |
+| 1.1.0 | 2026-03-09 | Claude | Updated stale sections: data mapping dialog now implemented (alias-based auto-detection, custom columns, sidebar visibility); FilterState updated to flat array model with customFilters; tooltip now configurable; export section updated with NudgePad, smart defaults, typography defaults, persistence; SpeechToken updated with customFields; future roadmap adjusted |
 
 ---
 

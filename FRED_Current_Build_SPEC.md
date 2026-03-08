@@ -139,8 +139,8 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 - `None` is always available regardless of sidebar state
 
 ### Color Palette
-- Default: 19 colors (`#ef4444`, `#3b82f6`, `#10b981`, ...)
-- B&W mode: 12 greyscale steps from `#000000` to `#ffffff`
+- Default: 15 colors (`#ef4444`, `#3b82f6`, `#10b981`, `#f59e0b`, `#8b5cf6`, `#ec4899`, `#06b6d4`, `#84cc16`, `#64748b`, `#dc2626`, `#2563eb`, `#059669`, `#d97706`, `#7c3aed`, `#db2777`)
+- B&W mode: 4 greyscale values (`#000000`, `#525252`, `#969696`, `#d4d4d4`)
 - Style editor palette automatically switches to greyscale swatches when B&W mode is active
 
 ### Shapes
@@ -392,10 +392,10 @@ Replaces raw X/Y offset inputs with directional arrows (↑↓←→) + reset bu
 
 | Component | Technology |
 |-----------|-----------|
-| Framework | React 18 + TypeScript |
+| Framework | React 19 + TypeScript |
 | Build | Vite |
 | Styling | Tailwind CSS |
-| 3D | Three.js (via @react-three/fiber + @react-three/drei) |
+| 3D | Custom orthographic projection (Canvas 2D) |
 | Icons | lucide-react |
 | Canvas | HTML5 Canvas API (2D context) |
 | Testing | Vitest |
