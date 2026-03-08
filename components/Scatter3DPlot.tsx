@@ -49,7 +49,7 @@ interface Point3D {
 }
 
 // Draw Shape in 2D (Projected)
-const drawShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: number, size: number, drawScale: number = 1) => {
+const drawShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: number, size: number, drawScale: number = 1, strokeWidth?: number) => {
   ctx.beginPath();
   switch (shape) {
     case 'circle': case 'circle-open': ctx.arc(x, y, size, 0, Math.PI * 2); break;
@@ -62,8 +62,9 @@ const drawShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: n
     case 'asterisk': ctx.moveTo(x - size, y); ctx.lineTo(x + size, y); ctx.moveTo(x, y - size); ctx.lineTo(x, y + size); const s2 = size * 0.7; ctx.moveTo(x - s2, y - s2); ctx.lineTo(x + s2, y + s2); ctx.moveTo(x + s2, y - s2); ctx.lineTo(x - s2, y + s2); break;
     default: ctx.arc(x, y, size, 0, Math.PI * 2);
   }
+  const lineWidth = strokeWidth ?? (2 * drawScale);
   if (shape.endsWith('-open') || ['plus', 'cross', 'asterisk'].includes(shape)) {
-    ctx.lineWidth = 2 * drawScale;
+    ctx.lineWidth = lineWidth;
     ctx.stroke();
   } else {
     ctx.fill();
@@ -108,8 +109,8 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
       setTranslation({x: 0, y: 0});
       setZoom(1);
       switch(axisPair) {
-          case 'f1f2': // Look from Top: Z(F1) vs X(F2)
-              setRotation({ alpha: 0, beta: 90 });
+          case 'f1f2': // Look from below: Z(F1) vs X(F2), F1 inverted to match standard vowel chart
+              setRotation({ alpha: 0, beta: -90 });
               break;
           case 'f2f3': // Look from Front: Y(F3) vs X(F2)
               setRotation({ alpha: 0, beta: 0 });
@@ -401,7 +402,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
 
            const color = groupPts[0].color;
            ctx.strokeStyle = color;
-           ctx.lineWidth = 1 * drawScale;
+           ctx.lineWidth = (config.ellipseLineWidth || 1.5) * drawScale;
            ctx.globalAlpha = config.ellipseLineOpacity;
 
            // Helper to draw projected ellipse
@@ -474,11 +475,19 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                ctx.fillStyle = color;
                ctx.fillText(labelText, projM.x, projM.y);
            } else {
-               // Draw point
-               ctx.fillStyle = color;
+               // Draw point — white halo first, then colored shape
+               const cSize = config.centroidSize * drawScale;
+               const closedShape = shape.replace('-open', '');
+               ctx.save();
+               ctx.fillStyle = 'white';
                ctx.strokeStyle = 'white';
-               ctx.lineWidth = 2 * drawScale;
-               drawShape(ctx, shape, projM.x, projM.y, config.centroidSize * drawScale, drawScale);
+               drawShape(ctx, closedShape, projM.x, projM.y, cSize + (2 * drawScale), drawScale);
+               ctx.fill();
+               ctx.restore();
+               ctx.fillStyle = color;
+               ctx.strokeStyle = color;
+               const centroidStroke = cSize * 0.25;
+               drawShape(ctx, shape, projM.x, projM.y, cSize, drawScale, centroidStroke);
            }
        });
     }
@@ -507,8 +516,8 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
         // Handled by translation in generateImage
     }
     
-    const fontSizeTitle = exportConfig ? exportConfig.legendTitleSize : (isExport ? 36 : 14) * drawScale;
-    const fontSizeItem = exportConfig ? exportConfig.legendItemSize : (isExport ? 24 : 12) * drawScale;
+    const fontSizeTitle = exportConfig ? exportConfig.legendTitleSize * drawScale : (isExport ? 36 : 14) * drawScale;
+    const fontSizeItem = exportConfig ? exportConfig.legendItemSize * drawScale : (isExport ? 24 : 12) * drawScale;
     const spacing = fontSizeItem * 1.6;
     const circleSize = fontSizeItem * 0.5;
     const xOffset = fontSizeItem * 1.5;
@@ -536,7 +545,13 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
         Object.entries(colorMap).sort().forEach(([k, c]) => {
             const count = colorCounts[k] || 0;
             ctx.fillStyle = c as string;
-            ctx.beginPath(); ctx.arc(x + (circleSize), curY + (circleSize), circleSize, 0, Math.PI*2); ctx.fill();
+            ctx.strokeStyle = c as string;
+            if (shapeKey === colorKey && shapeMap[k]) {
+                // Combined: draw colored shape — proportional stroke for open shapes
+                drawShape(ctx, shapeMap[k] as string, x + (circleSize), curY + (circleSize), (circleSize * 0.8), drawScale, circleSize * 0.15);
+            } else {
+                ctx.beginPath(); ctx.arc(x + (circleSize), curY + (circleSize), circleSize, 0, Math.PI*2); ctx.fill();
+            }
             ctx.fillStyle = '#334155';
             ctx.fillText(`${k} (n=${count})`, x + xOffset, curY + (circleSize));
             curY += spacing;
@@ -555,7 +570,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
             const count = shapeCounts[k] || 0;
             ctx.fillStyle = '#64748b';
             ctx.strokeStyle = '#64748b';
-            drawShape(ctx, s as string, x + (circleSize), curY + (circleSize), (5 * drawScale), drawScale);
+            drawShape(ctx, s as string, x + (circleSize), curY + (circleSize), (circleSize * 0.8), drawScale, circleSize * 0.15);
             ctx.fillStyle = '#334155';
             ctx.fillText(`${k} (n=${count})`, x + xOffset, curY + (circleSize));
             curY += spacing;
@@ -635,8 +650,9 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
 
         if (exportConfig.showLegend) {
             const legendSpace = Math.max(800, exportConfig.legendItemSize * 15, exportConfig.legendTitleSize * 10);
+            // Always allocate right space so canvas width stays consistent
+            legendW = legendSpace * drawScale;
             if (exportConfig.legendPosition === 'right') {
-                legendW = legendSpace * drawScale;
                 lx = margin.left + plotW + (100 * drawScale);
                 ly = margin.top;
             } else if (exportConfig.legendPosition === 'bottom') {
@@ -724,7 +740,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
       if (dragMode.current === 'rotate') {
         setRotation(r => ({
           alpha: (r.alpha + dx * 0.5) % 360,
-          beta: Math.max(-90, Math.min(90, r.beta - dy * 0.5))
+          beta: (r.beta - dy * 0.5) % 360
         }));
       } else {
         setTranslation(t => ({
@@ -769,7 +785,10 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                     {Object.entries(colorMap).sort().map(([k, c]) => (
                         <div key={k} className="flex items-center gap-2 justify-between cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(k, 'color', e)}>
                             <div className="flex items-center gap-2">
-                                <div className="w-3 h-3 rounded-full" style={{background: c as string}}></div>
+                                {shapeKey === colorKey && shapeMap[k]
+                                    ? <ShapeIcon shape={shapeMap[k] as string} color={c as string} />
+                                    : <div className="w-3 h-3 rounded-full" style={{background: c as string}}></div>
+                                }
                                 <span>{k}</span>
                             </div>
                             <span className="text-slate-400 text-[10px]">({colorCounts[k]})</span>
