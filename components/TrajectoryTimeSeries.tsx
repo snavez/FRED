@@ -457,7 +457,12 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
       const legendLayerIds = exportConfig?.legendLayers;
       const isInLegend = !legendLayerIds || legendLayerIds.includes('bg');
 
-      if (isInLegend && showColor && config.colorBy !== 'none') {
+      const isCombined = config.colorBy !== 'none' && config.lineTypeBy !== 'none' && config.colorBy === config.lineTypeBy;
+      const lineLen = (isExport ? 50 : 25) * drawScale;
+      const lineLabelX = x + (isExport ? 70 : 35) * drawScale;
+
+      if (isCombined && isInLegend && showColor) {
+          // Combined color + line type legend
           ctx.font = `bold ${fontSizeTitle}px Inter`;
           ctx.fillText(colorTitle, x, curY);
           curY += fontSizeTitle * 1.4;
@@ -465,41 +470,68 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
           ctx.font = `${fontSizeItem}px Inter`;
           sortedKeys.forEach(k => {
               const count = groups[k]?.length || 0;
-              ctx.fillStyle = colorMap[k];
-              ctx.beginPath(); ctx.arc(x + circleSize, curY + circleSize/2, circleSize, 0, Math.PI*2); ctx.fill();
-              ctx.fillStyle = '#334155';
-              ctx.fillText(`${k} (n=${count})`, x + xOffset, curY + circleSize/2);
-              curY += spacing;
-          });
-          curY += fontSizeTitle;
-      }
 
-      // Export Legend for Line Type
-      if (isInLegend && showLineType && config.lineTypeBy !== 'none') {
-          ctx.font = `bold ${fontSizeTitle}px Inter`;
-          ctx.fillStyle = '#0f172a';
-          ctx.fillText(lineTypeTitle, x, curY);
-          curY += fontSizeTitle * 1.4;
-
-          ctx.font = `${fontSizeItem}px Inter`;
-          lineTypeKeys.forEach(k => {
-              const count = lineTypeCounts[k] || 0;
-
-              // Draw line sample
+              // Draw colored line with dash pattern
               ctx.beginPath();
-              ctx.strokeStyle = '#0f172a';
-              ctx.lineWidth = (isExport ? 4 : 2) * drawScale;
+              ctx.strokeStyle = colorMap[k] || '#0f172a';
+              ctx.lineWidth = (isExport ? 5 : 2.5) * drawScale;
               const style = lineStyles[k] || [];
               ctx.setLineDash(style.map(v => v * drawScale));
               ctx.moveTo(x, curY + circleSize/2);
-              ctx.lineTo(x + (isExport ? 50 : 25) * drawScale, curY + circleSize/2);
+              ctx.lineTo(x + lineLen, curY + circleSize/2);
               ctx.stroke();
               ctx.setLineDash([]);
 
               ctx.fillStyle = '#334155';
-              ctx.fillText(`${k} (n=${count})`, x + (isExport ? 70 : 35) * drawScale, curY + circleSize/2);
+              ctx.fillText(`${k} (n=${count})`, lineLabelX, curY + circleSize/2);
               curY += spacing;
           });
+          curY += fontSizeTitle;
+      } else {
+          if (isInLegend && showColor && config.colorBy !== 'none') {
+              ctx.font = `bold ${fontSizeTitle}px Inter`;
+              ctx.fillText(colorTitle, x, curY);
+              curY += fontSizeTitle * 1.4;
+
+              ctx.font = `${fontSizeItem}px Inter`;
+              sortedKeys.forEach(k => {
+                  const count = groups[k]?.length || 0;
+                  ctx.fillStyle = colorMap[k];
+                  ctx.beginPath(); ctx.arc(x + circleSize, curY + circleSize/2, circleSize, 0, Math.PI*2); ctx.fill();
+                  ctx.fillStyle = '#334155';
+                  ctx.fillText(`${k} (n=${count})`, x + xOffset, curY + circleSize/2);
+                  curY += spacing;
+              });
+              curY += fontSizeTitle;
+          }
+
+          // Export Legend for Line Type
+          if (isInLegend && showLineType && config.lineTypeBy !== 'none') {
+              ctx.font = `bold ${fontSizeTitle}px Inter`;
+              ctx.fillStyle = '#0f172a';
+              ctx.fillText(lineTypeTitle, x, curY);
+              curY += fontSizeTitle * 1.4;
+
+              ctx.font = `${fontSizeItem}px Inter`;
+              lineTypeKeys.forEach(k => {
+                  const count = lineTypeCounts[k] || 0;
+
+                  // Draw line sample
+                  ctx.beginPath();
+                  ctx.strokeStyle = '#0f172a';
+                  ctx.lineWidth = (isExport ? 4 : 2) * drawScale;
+                  const style = lineStyles[k] || [];
+                  ctx.setLineDash(style.map(v => v * drawScale));
+                  ctx.moveTo(x, curY + circleSize/2);
+                  ctx.lineTo(x + lineLen, curY + circleSize/2);
+                  ctx.stroke();
+                  ctx.setLineDash([]);
+
+                  ctx.fillStyle = '#334155';
+                  ctx.fillText(`${k} (n=${count})`, lineLabelX, curY + circleSize/2);
+                  curY += spacing;
+              });
+          }
       }
   };
 
@@ -776,26 +808,40 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
            )}
          </div>
 
-         {config.colorBy !== 'none' && (
+         {config.colorBy !== 'none' && config.lineTypeBy !== 'none' && config.colorBy === config.lineTypeBy ? (
+           /* Combined color + line type legend */
            <div className="space-y-1.5">
              <h4 className="text-[10px] font-black uppercase text-slate-400 flex justify-between items-center">
                 <span>{config.colorBy}</span>
              </h4>
              {sortedKeys.map(key => (
                     <div key={key} className="flex justify-between items-center text-[10px] cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(key, 'color', e)}>
-                        <div className="flex items-center space-x-2"><div className="w-3 h-3 rounded-full shadow-sm shrink-0" style={{ backgroundColor: colorMap[key] }}></div><span className="text-slate-700 font-medium truncate w-24">{key}</span></div><span className="text-slate-700 font-mono">({groups[key]?.length || 0})</span></div>))}
+                        <div className="flex items-center space-x-2"><svg width="24" height="6" className="shrink-0"><line x1="0" y1="3" x2="24" y2="3" stroke={colorMap[key] || '#334155'} strokeWidth="2.5" strokeDasharray={lineStyles[key]?.join(',') || ''} /></svg><span className="text-slate-700 font-medium truncate w-24">{key}</span></div><span className="text-slate-700 font-mono">({groups[key]?.length || 0})</span></div>))}
            </div>
-         )}
+         ) : (
+           <>
+             {config.colorBy !== 'none' && (
+               <div className="space-y-1.5">
+                 <h4 className="text-[10px] font-black uppercase text-slate-400 flex justify-between items-center">
+                    <span>{config.colorBy}</span>
+                 </h4>
+                 {sortedKeys.map(key => (
+                        <div key={key} className="flex justify-between items-center text-[10px] cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(key, 'color', e)}>
+                            <div className="flex items-center space-x-2"><div className="w-3 h-3 rounded-full shadow-sm shrink-0" style={{ backgroundColor: colorMap[key] }}></div><span className="text-slate-700 font-medium truncate w-24">{key}</span></div><span className="text-slate-700 font-mono">({groups[key]?.length || 0})</span></div>))}
+               </div>
+             )}
 
-         {config.lineTypeBy !== 'none' && (
-           <div className="space-y-1.5 pt-2 border-t border-slate-100">
-             <h4 className="text-[10px] font-black uppercase text-slate-400 flex justify-between items-center">
-                <span>{config.lineTypeBy}</span>
-             </h4>
-             {lineTypeKeys.map(key => (
-                    <div key={key} className="flex justify-between items-center text-[10px] cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(key, 'lineType', e)}>
-                        <div className="flex items-center space-x-2"><svg width="24" height="6" className="shrink-0"><line x1="0" y1="3" x2="24" y2="3" stroke="#334155" strokeWidth="2" strokeDasharray={lineStyles[key]?.join(',') || ''} /></svg><span className="text-slate-700 font-medium truncate w-24">{key}</span></div><span className="text-slate-700 font-mono">({lineTypeCounts[key] || 0})</span></div>))}
-           </div>
+             {config.lineTypeBy !== 'none' && (
+               <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                 <h4 className="text-[10px] font-black uppercase text-slate-400 flex justify-between items-center">
+                    <span>{config.lineTypeBy}</span>
+                 </h4>
+                 {lineTypeKeys.map(key => (
+                        <div key={key} className="flex justify-between items-center text-[10px] cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(key, 'lineType', e)}>
+                            <div className="flex items-center space-x-2"><svg width="24" height="6" className="shrink-0"><line x1="0" y1="3" x2="24" y2="3" stroke="#334155" strokeWidth="2" strokeDasharray={lineStyles[key]?.join(',') || ''} /></svg><span className="text-slate-700 font-medium truncate w-24">{key}</span></div><span className="text-slate-700 font-mono">({lineTypeCounts[key] || 0})</span></div>))}
+               </div>
+             )}
+           </>
          )}
       </div>
 
