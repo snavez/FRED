@@ -205,7 +205,9 @@ const Legend = ({ layers, allMappings, onLegendClick }: {
                    <div key={key} className="flex justify-between items-center text-[10px] cursor-pointer hover:bg-slate-100 p-1 rounded"
                         onClick={(e) => handleClick(key, 'color', e)}>
                      <div className="flex items-center space-x-2">
-                        {lineTypeKey === colorKey ? (
+                        {shapeKey === colorKey ? (
+                          <ShapeIcon shape={shapeMap[key]} color={colorMap[key]} />
+                        ) : lineTypeKey === colorKey ? (
                           <svg width="24" height="4" className="shrink-0">
                             <line x1="0" y1="2" x2="24" y2="2" stroke={colorMap[key]} strokeWidth="2"
                               strokeDasharray={lineTypeMap[key]?.length ? lineTypeMap[key].join(',') : 'none'} />
@@ -818,7 +820,13 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
               Object.entries(colorMap).sort().forEach(([k, c]) => {
                   const count = colorCounts ? (colorCounts[k] || 0) : 0;
                   ctx.fillStyle = c as string;
-                  ctx.beginPath(); ctx.arc(x + (circleSize), curY + (circleSize/2), circleSize, 0, Math.PI*2); ctx.fill();
+                  ctx.strokeStyle = c as string;
+                  if (shapeKey === colorKey && shapeMap[k]) {
+                    // Combined: draw colored shape
+                    drawShape(ctx, shapeMap[k] as string, x + (circleSize), curY + (circleSize/2), (circleSize * 0.8), 1, drawScale);
+                  } else {
+                    ctx.beginPath(); ctx.arc(x + (circleSize), curY + (circleSize/2), circleSize, 0, Math.PI*2); ctx.fill();
+                  }
                   ctx.fillStyle = '#334155';
                   ctx.fillText(`${k} ${count ? `(n=${count})` : ''}`, x + xOffset, curY + (circleSize/2));
                   curY += spacing;

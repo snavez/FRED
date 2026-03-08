@@ -154,6 +154,12 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 - Edit color (palette grid), shape (icon grid), line type (dropdown), or texture (pattern selector)
 - Per-layer overrides stored in `layer.styleOverrides`
 
+### Legend Deduplication
+- When the same variable is assigned to multiple channels (e.g. Color By = Shape By = Phoneme), the legend combines them into a single section with merged icons
+- Color + Shape: legend shows colored shape icons instead of separate color dots and grey shapes
+- Color + Line Type: legend shows colored line segments with dash patterns
+- Applies to both on-screen legends and canvas export legends (CanvasPlot and TrajectoryF1F2)
+
 ---
 
 ## 5. Filter System

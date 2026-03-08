@@ -39,6 +39,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
 }) => {
   const [mappings, setMappings] = useState<ColumnMapping[]>(detectedMappings);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [sidebarHelpRect, setSidebarHelpRect] = useState<DOMRect | null>(null);
 
   // Reset mappings when dialog opens with new data
   React.useEffect(() => {
@@ -95,11 +96,12 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                 <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2 w-48">Sample Values</th>
                 <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2 w-40">Map To</th>
                 <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2">Details</th>
-                <th className="text-center text-[10px] font-bold text-slate-400 uppercase py-2 w-16 relative group">
-                  <span className="cursor-help border-b border-dashed border-slate-300">Sidebar</span>
-                  <div className="absolute hidden group-hover:block top-full left-1/2 -translate-x-1/2 mt-1 w-48 bg-slate-800 text-white text-[10px] font-normal normal-case tracking-normal p-2 rounded-lg shadow-lg z-20 leading-relaxed">
-                    Tick to show this field as a filter in the sidebar. Can be changed after import.
-                  </div>
+                <th className="text-center text-[10px] font-bold text-slate-400 uppercase py-2 w-16">
+                  <span
+                    className="cursor-help border-b border-dashed border-slate-300"
+                    onMouseEnter={e => setSidebarHelpRect(e.currentTarget.getBoundingClientRect())}
+                    onMouseLeave={() => setSidebarHelpRect(null)}
+                  >Sidebar</span>
                 </th>
               </tr>
             </thead>
@@ -236,6 +238,16 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
             Import Data
           </button>
         </div>
+
+        {/* Fixed-position tooltip for Sidebar help (rendered outside scroll container) */}
+        {sidebarHelpRect && (
+          <div
+            className="fixed w-48 bg-slate-800 text-white text-[10px] font-normal normal-case tracking-normal p-2 rounded-lg shadow-lg z-[200] leading-relaxed pointer-events-none"
+            style={{ top: sidebarHelpRect.bottom + 4, left: sidebarHelpRect.left + sidebarHelpRect.width / 2 - 96 }}
+          >
+            Tick to show this field as a filter in the sidebar. Can be changed after import.
+          </div>
+        )}
       </div>
     </div>
   );
