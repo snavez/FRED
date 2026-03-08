@@ -1,7 +1,7 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ExportConfig, PlotHandle, PlotConfig, Layer, LayerLegendConfig } from '../types';
-import { Download, X, RefreshCw, Type, Link, Link2Off } from 'lucide-react';
+import { Download, X, RefreshCw, Type, Link, Link2Off, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, RotateCcw } from 'lucide-react';
 
 interface ExportDialogProps {
   isOpen: boolean;
@@ -42,6 +42,70 @@ const DEFAULT_CONFIG: ExportConfig = {
   legendPosition: 'right',
   legendX: 200,
   legendY: 200
+};
+
+/** Compute the legend's absolute canvas coordinates for a given position mode and config (at drawScale=1). */
+function computeLegendPosition(cfg: ExportConfig): { x: number; y: number } {
+    const graphScaleX = cfg.graphScaleX || cfg.graphScale || 1.0;
+    const graphScaleY = cfg.graphScaleY || cfg.graphScale || 1.0;
+    const graphX = cfg.graphX || 0;
+    const graphY = cfg.graphY || 0;
+    const basePlotWidth = 2400 * graphScaleX;
+    const basePlotHeight = 2000 * graphScaleY;
+    const marginLeft = 200 + graphX;
+    const marginTop = (cfg.showPlotTitle ? 200 : 100) + graphY;
+
+    switch (cfg.legendPosition) {
+        case 'right':
+            return { x: marginLeft + basePlotWidth + 40, y: marginTop };
+        case 'bottom':
+            return { x: marginLeft, y: marginTop + basePlotHeight + 150 };
+        case 'inside-top-right':
+            return { x: marginLeft + basePlotWidth - 300, y: marginTop + 40 };
+        case 'inside-top-left':
+            return { x: marginLeft + 40, y: marginTop + 40 };
+        case 'custom':
+            return { x: Number(cfg.legendX) || 0, y: Number(cfg.legendY) || 0 };
+        default:
+            return { x: marginLeft + basePlotWidth + 40, y: marginTop };
+    }
+}
+
+/** Small directional pad for fine-tuning X/Y positions. */
+const NudgePad: React.FC<{
+    xValue: number;
+    yValue: number;
+    onChangeX: (v: number) => void;
+    onChangeY: (v: number) => void;
+    step?: number;
+    label?: string;
+}> = ({ xValue, yValue, onChangeX, onChangeY, step = 20, label }) => {
+    const nudge = (dx: number, dy: number, e: React.MouseEvent) => {
+        const mult = e.shiftKey ? 0.2 : e.ctrlKey ? 5 : 1;
+        if (dx !== 0) onChangeX(Math.round(xValue + dx * step * mult));
+        if (dy !== 0) onChangeY(Math.round(yValue + dy * step * mult));
+    };
+    const btnClass = "w-6 h-6 flex items-center justify-center bg-white hover:bg-indigo-50 border border-slate-200 rounded text-slate-500 hover:text-indigo-600 transition-colors";
+    return (
+        <div className="flex items-center gap-2">
+            {label && <span className="text-[9px] text-slate-400 w-8">{label}</span>}
+            <div className="grid grid-cols-3 gap-0.5 w-fit">
+                <div />
+                <button className={btnClass} onMouseDown={e => nudge(0, -1, e)} title="Up (Shift=fine, Ctrl=coarse)"><ArrowUp size={10} /></button>
+                <div />
+                <button className={btnClass} onMouseDown={e => nudge(-1, 0, e)} title="Left"><ArrowLeft size={10} /></button>
+                <button className={`${btnClass} !bg-slate-50`} onMouseDown={() => { onChangeX(0); onChangeY(0); }} title="Reset"><RotateCcw size={8} /></button>
+                <button className={btnClass} onMouseDown={e => nudge(1, 0, e)} title="Right"><ArrowRight size={10} /></button>
+                <div />
+                <button className={btnClass} onMouseDown={e => nudge(0, 1, e)} title="Down"><ArrowDown size={10} /></button>
+                <div />
+            </div>
+            <div className="flex flex-col gap-0.5 text-[9px] text-slate-400">
+                <span>X: {xValue}</span>
+                <span>Y: {yValue}</span>
+            </div>
+        </div>
+    );
 };
 
 const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, layers, defaultTitle }) => {
@@ -111,9 +175,15 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
       }));
   };
 
+  // Track whether we already have a preview to avoid showing spinner on incremental updates
+  const hasPreview = previewUrl !== null;
+
   useEffect(() => {
     if (isOpen && plotRef.current) {
-        setIsGenerating(true);
+        // Only show spinner if this is the initial render (no preview yet)
+        if (!hasPreview) {
+            setIsGenerating(true);
+        }
         const timer = setTimeout(() => {
             if (plotRef.current) {
                 const previewConfig = { ...config, scale: 1 };
@@ -121,7 +191,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                 setPreviewUrl(url);
                 setIsGenerating(false);
             }
-        }, 50);
+        }, 300);
         return () => clearTimeout(timer);
     }
   }, [config, isOpen, plotRef]);
@@ -241,15 +311,15 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                         </div>
                     )}
 
-                    <div className="grid grid-cols-2 gap-2 mt-2 bg-slate-100 p-2 rounded">
-                        <div>
-                            <label className="text-[10px] font-bold text-slate-500 block mb-1">Graph X Offset</label>
-                            <input type="number" value={config.graphX || 0} onChange={e => { const v = parseInt(e.target.value); updateConfig('graphX', isNaN(v) ? 0 : v); }} className="w-full text-xs p-1 border border-slate-300 rounded"/>
-                        </div>
-                        <div>
-                            <label className="text-[10px] font-bold text-slate-500 block mb-1">Graph Y Offset</label>
-                            <input type="number" value={config.graphY || 0} onChange={e => { const v = parseInt(e.target.value); updateConfig('graphY', isNaN(v) ? 0 : v); }} className="w-full text-xs p-1 border border-slate-300 rounded"/>
-                        </div>
+                    <div className="mt-2 bg-slate-100 p-2 rounded">
+                        <label className="text-[10px] font-bold text-slate-500 block mb-1">Graph Offset</label>
+                        <NudgePad
+                            xValue={config.graphX || 0}
+                            yValue={config.graphY || 0}
+                            onChangeX={v => updateConfig('graphX', v)}
+                            onChangeY={v => updateConfig('graphY', v)}
+                            step={10}
+                        />
                     </div>
                 </div>
 
@@ -307,15 +377,15 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                                     <input type="number" min="1" max="999" value={config.plotTitleSize} onChange={e => updateConfig('plotTitleSize', parseInt(e.target.value))} className="w-16 text-xs p-1 border border-slate-300 rounded text-center"/>
                                 </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-2 mt-2 bg-slate-100 p-2 rounded">
-                                <div>
-                                    <label className="text-[10px] font-bold text-slate-500 block mb-1">X Offset</label>
-                                    <input type="number" value={config.plotTitleX || 0} onChange={e => updateConfig('plotTitleX', parseInt(e.target.value))} className="w-full text-xs p-1 border border-slate-300 rounded"/>
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-bold text-slate-500 block mb-1">Y Offset</label>
-                                    <input type="number" value={config.plotTitleY || 0} onChange={e => updateConfig('plotTitleY', parseInt(e.target.value))} className="w-full text-xs p-1 border border-slate-300 rounded"/>
-                                </div>
+                            <div className="mt-2 bg-slate-100 p-2 rounded">
+                                <label className="text-[10px] font-bold text-slate-500 block mb-1">Position</label>
+                                <NudgePad
+                                    xValue={config.plotTitleX || 0}
+                                    yValue={config.plotTitleY || 0}
+                                    onChangeX={v => updateConfig('plotTitleX', v)}
+                                    onChangeY={v => updateConfig('plotTitleY', v)}
+                                    step={10}
+                                />
                             </div>
                         </div>
                     )}
@@ -340,10 +410,14 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                             <input type="range" min="12" max="500" value={config.xAxisLabelSize} onChange={e => updateConfig('xAxisLabelSize', parseInt(e.target.value))} className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
                             <input type="number" min="1" max="999" value={config.xAxisLabelSize} onChange={e => updateConfig('xAxisLabelSize', parseInt(e.target.value))} className="w-16 text-xs p-1 border border-slate-300 rounded text-center"/>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 mt-1">
-                            <input type="number" placeholder="X Offset" value={config.xAxisLabelX || 0} onChange={e => { const v = parseInt(e.target.value); updateConfig('xAxisLabelX', isNaN(v) ? 0 : v); }} className="w-full text-[10px] p-1 border border-slate-300 rounded"/>
-                            <input type="number" placeholder="Y Offset" value={config.xAxisLabelY || 0} onChange={e => { const v = parseInt(e.target.value); updateConfig('xAxisLabelY', isNaN(v) ? 0 : v); }} className="w-full text-[10px] p-1 border border-slate-300 rounded"/>
-                        </div>
+                        <NudgePad
+                            xValue={config.xAxisLabelX || 0}
+                            yValue={config.xAxisLabelY || 0}
+                            onChangeX={v => updateConfig('xAxisLabelX', v)}
+                            onChangeY={v => updateConfig('xAxisLabelY', v)}
+                            step={5}
+                            label="Offset"
+                        />
                     </div>
 
                     <div>
@@ -354,10 +428,14 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                             <input type="range" min="12" max="500" value={config.yAxisLabelSize} onChange={e => updateConfig('yAxisLabelSize', parseInt(e.target.value))} className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
                             <input type="number" min="1" max="999" value={config.yAxisLabelSize} onChange={e => { const v = parseInt(e.target.value); updateConfig('yAxisLabelSize', isNaN(v) ? 12 : v); }} className="w-16 text-xs p-1 border border-slate-300 rounded text-center"/>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 mt-1">
-                            <input type="number" placeholder="X Offset" value={config.yAxisLabelX || 0} onChange={e => { const v = parseInt(e.target.value); updateConfig('yAxisLabelX', isNaN(v) ? 0 : v); }} className="w-full text-[10px] p-1 border border-slate-300 rounded"/>
-                            <input type="number" placeholder="Y Offset" value={config.yAxisLabelY || 0} onChange={e => { const v = parseInt(e.target.value); updateConfig('yAxisLabelY', isNaN(v) ? 0 : v); }} className="w-full text-[10px] p-1 border border-slate-300 rounded"/>
-                        </div>
+                        <NudgePad
+                            xValue={config.yAxisLabelX || 0}
+                            yValue={config.yAxisLabelY || 0}
+                            onChangeX={v => updateConfig('yAxisLabelX', v)}
+                            onChangeY={v => updateConfig('yAxisLabelY', v)}
+                            step={5}
+                            label="Offset"
+                        />
                     </div>
 
                     <div className="pt-2 border-t border-slate-100 mt-2">
@@ -370,18 +448,24 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                         </div>
                         <div className="grid grid-cols-2 gap-2 mt-1">
                             <div>
-                                <label className="text-[9px] text-slate-400 block">X-Axis Ticks</label>
-                                <div className="flex gap-1">
-                                    <input type="number" placeholder="X" value={config.xAxisTickX || 0} onChange={e => { const v = parseInt(e.target.value); updateConfig('xAxisTickX', isNaN(v) ? 0 : v); }} className="w-full text-[10px] p-1 border border-slate-300 rounded"/>
-                                    <input type="number" placeholder="Y" value={config.xAxisTickY || 0} onChange={e => { const v = parseInt(e.target.value); updateConfig('xAxisTickY', isNaN(v) ? 0 : v); }} className="w-full text-[10px] p-1 border border-slate-300 rounded"/>
-                                </div>
+                                <label className="text-[9px] text-slate-400 block mb-1">X-Axis Ticks</label>
+                                <NudgePad
+                                    xValue={config.xAxisTickX || 0}
+                                    yValue={config.xAxisTickY || 0}
+                                    onChangeX={v => updateConfig('xAxisTickX', v)}
+                                    onChangeY={v => updateConfig('xAxisTickY', v)}
+                                    step={5}
+                                />
                             </div>
                             <div>
-                                <label className="text-[9px] text-slate-400 block">Y-Axis Ticks</label>
-                                <div className="flex gap-1">
-                                    <input type="number" placeholder="X" value={config.yAxisTickX || 0} onChange={e => { const v = parseInt(e.target.value); updateConfig('yAxisTickX', isNaN(v) ? 0 : v); }} className="w-full text-[10px] p-1 border border-slate-300 rounded"/>
-                                    <input type="number" placeholder="Y" value={config.yAxisTickY || 0} onChange={e => { const v = parseInt(e.target.value); updateConfig('yAxisTickY', isNaN(v) ? 0 : v); }} className="w-full text-[10px] p-1 border border-slate-300 rounded"/>
-                                </div>
+                                <label className="text-[9px] text-slate-400 block mb-1">Y-Axis Ticks</label>
+                                <NudgePad
+                                    xValue={config.yAxisTickX || 0}
+                                    yValue={config.yAxisTickY || 0}
+                                    onChangeX={v => updateConfig('yAxisTickX', v)}
+                                    onChangeY={v => updateConfig('yAxisTickY', v)}
+                                    step={5}
+                                />
                             </div>
                         </div>
                     </div>
@@ -414,27 +498,41 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                                 <label className="text-xs font-semibold text-slate-600 mb-1 block">Position</label>
                                 <select
                                     value={config.legendPosition}
-                                    onChange={e => updateConfig('legendPosition', e.target.value)}
+                                    onChange={e => {
+                                        const newPos = e.target.value;
+                                        if (newPos === 'custom') {
+                                            // Compute current legend position so it visually stays in place
+                                            const currentPos = computeLegendPosition(config);
+                                            setConfig(prev => ({
+                                                ...prev,
+                                                legendPosition: 'custom',
+                                                legendX: Math.round(currentPos.x),
+                                                legendY: Math.round(currentPos.y),
+                                            }));
+                                        } else {
+                                            updateConfig('legendPosition', newPos);
+                                        }
+                                    }}
                                     className="w-full text-xs p-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 outline-none bg-white"
                                 >
                                     <option value="right">Right (Outside)</option>
                                     <option value="bottom">Bottom (Outside)</option>
                                     <option value="inside-top-right">Inside (Top Right)</option>
                                     <option value="inside-top-left">Inside (Top Left)</option>
-                                    <option value="custom">Custom Coordinates</option>
+                                    <option value="custom">Custom Position</option>
                                 </select>
                             </div>
 
                             {config.legendPosition === 'custom' && (
-                                <div className="grid grid-cols-2 gap-2 mb-3 bg-slate-100 p-2 rounded">
-                                    <div>
-                                        <label className="text-[10px] font-bold text-slate-500 block mb-1">X Coordinate</label>
-                                        <input type="number" value={config.legendX} onChange={e => { const val = parseInt(e.target.value); updateConfig('legendX', isNaN(val) ? 0 : val); }} className="w-full text-xs p-1 border border-slate-300 rounded"/>
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] font-bold text-slate-500 block mb-1">Y Coordinate</label>
-                                        <input type="number" value={config.legendY} onChange={e => { const val = parseInt(e.target.value); updateConfig('legendY', isNaN(val) ? 0 : val); }} className="w-full text-xs p-1 border border-slate-300 rounded"/>
-                                    </div>
+                                <div className="mb-3 bg-slate-100 p-2 rounded space-y-2">
+                                    <NudgePad
+                                        xValue={config.legendX ?? 0}
+                                        yValue={config.legendY ?? 0}
+                                        onChangeX={v => updateConfig('legendX', v)}
+                                        onChangeY={v => updateConfig('legendY', v)}
+                                        step={20}
+                                    />
+                                    <p className="text-[9px] text-slate-400 italic">Shift = fine · Ctrl = coarse</p>
                                 </div>
                             )}
 
