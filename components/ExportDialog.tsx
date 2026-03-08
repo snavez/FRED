@@ -92,7 +92,7 @@ const computeExportDefaults = (layers: Layer[], defaultTitle?: string): ExportCo
 
 // ---------------------------------------------------------------------------
 // Compute legend absolute canvas coordinates for a given position mode (at drawScale=1)
-// Mirrors the logic in CanvasPlot.tsx generateImage()
+// MUST mirror the exact margin + position logic from CanvasPlot.tsx generateImage()
 // ---------------------------------------------------------------------------
 function computeLegendPosition(cfg: ExportConfig): { x: number; y: number } {
   const graphScaleX = cfg.graphScaleX || cfg.graphScale || 1.0;
@@ -101,8 +101,15 @@ function computeLegendPosition(cfg: ExportConfig): { x: number; y: number } {
   const graphY = cfg.graphY || 0;
   const basePlotWidth = 2400 * graphScaleX;
   const basePlotHeight = 2000 * graphScaleY;
-  const marginLeft = 200 + graphX;
-  const marginTop = (cfg.showPlotTitle ? 200 : 100) + graphY;
+
+  // Dynamic margins — same formulas as CanvasPlot.tsx generateImage()
+  const leftMarginBase = Math.max(220, cfg.yAxisLabelSize * 1.5 + 100);
+  const topMarginBase = cfg.showPlotTitle
+    ? Math.max(200, (cfg.plotTitleSize || 128) + 100)
+    : Math.max(100, cfg.tickLabelSize + 40);
+
+  const marginLeft = leftMarginBase + graphX;
+  const marginTop = topMarginBase + graphY;
 
   switch (cfg.legendPosition) {
     case 'right':
@@ -231,11 +238,13 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
     }
   }, [isOpen, layers, defaultTitle]);
 
-  // Persist lightweight prefs
+  // Persist lightweight prefs (don't persist 'custom' — coordinates are meaningless across sessions)
   useEffect(() => {
     if (isOpen) {
       localStorage.setItem('fred_export_scale', String(config.scale));
-      localStorage.setItem('fred_export_legendPosition', config.legendPosition || 'right');
+      if (config.legendPosition && config.legendPosition !== 'custom') {
+        localStorage.setItem('fred_export_legendPosition', config.legendPosition);
+      }
     }
   }, [config.scale, config.legendPosition, isOpen]);
 

@@ -960,9 +960,9 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       if (exportConfig.showLegend) {
           // Scale legend space with font sizes so text fits
           const legendSpace = Math.max(800, exportConfig.legendItemSize * 15, exportConfig.legendTitleSize * 10);
-          if (exportConfig.legendPosition === 'right') {
-              legendSpaceRight = legendSpace * drawScale;
-          } else if (exportConfig.legendPosition === 'bottom') {
+          // Always allocate right space so canvas width stays consistent across position changes
+          legendSpaceRight = legendSpace * drawScale;
+          if (exportConfig.legendPosition === 'bottom') {
               legendSpaceBottom = legendSpace * drawScale;
           }
       }
