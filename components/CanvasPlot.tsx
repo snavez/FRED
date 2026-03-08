@@ -53,7 +53,7 @@ const drawShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: n
     case 'asterisk': ctx.moveTo(x - size, y); ctx.lineTo(x + size, y); ctx.moveTo(x, y - size); ctx.lineTo(x, y + size); const s2 = size * 0.7; ctx.moveTo(x - s2, y - s2); ctx.lineTo(x + s2, y + s2); ctx.moveTo(x + s2, y - s2); ctx.lineTo(x - s2, y + s2); break;
     default: ctx.arc(x, y, size, 0, Math.PI * 2);
   }
-  const lineWidth = strokeWidth ?? (2 * drawScale) / scale;
+  const lineWidth = strokeWidth ?? (4 * drawScale) / scale;
   if (shape.endsWith('-open') || ['plus', 'cross', 'asterisk'].includes(shape)) {
     ctx.lineWidth = lineWidth; ctx.stroke();
   } else {
@@ -325,8 +325,13 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     if (width === 0 || height === 0) return null;
 
     const CELL_SIZE = 20; // pixels per grid cell
-    const cols = Math.ceil(width / CELL_SIZE);
-    const rows = Math.ceil(height / CELL_SIZE);
+    // Extend grid beyond canvas bounds so outlier points outside the f1/f2 range are hoverable
+    const originX = -width;
+    const originY = -height;
+    const gridW = width * 3;
+    const gridH = height * 3;
+    const cols = Math.ceil(gridW / CELL_SIZE);
+    const rows = Math.ceil(gridH / CELL_SIZE);
     const grid: { token: SpeechToken; layerId: string; x: number; y: number }[][] = new Array(cols * rows);
 
     const mapX = (f2: number) => {
@@ -336,6 +341,16 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     const mapY = (f1: number) => {
       const norm = (f1 - bgConfig.f1Range[0]) / (bgConfig.f1Range[1] - bgConfig.f1Range[0]);
       return bgConfig.invertY ? norm * height : (1 - norm) * height;
+    };
+
+    const addToGrid = (px: number, py: number, token: SpeechToken, layerId: string) => {
+      const col = Math.floor((px - originX) / CELL_SIZE);
+      const row = Math.floor((py - originY) / CELL_SIZE);
+      if (col >= 0 && col < cols && row >= 0 && row < rows) {
+        const idx = row * cols + col;
+        if (!grid[idx]) grid[idx] = [];
+        grid[idx].push({ token, layerId, x: px, y: py });
+      }
     };
 
     layers.forEach(layer => {
@@ -350,15 +365,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
             const f1 = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
             const f2 = config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
             if (isNaN(f1) || isNaN(f2)) return;
-            const px = mapX(f2);
-            const py = mapY(f1);
-            const col = Math.floor(px / CELL_SIZE);
-            const row = Math.floor(py / CELL_SIZE);
-            if (col >= 0 && col < cols && row >= 0 && row < rows) {
-              const idx = row * cols + col;
-              if (!grid[idx]) grid[idx] = [];
-              grid[idx].push({ token: t, layerId: layer.id, x: px, y: py });
-            }
+            addToGrid(mapX(f2), mapY(f1), t, layer.id);
           });
         } else {
           const nearestTime = findNearestTimePoint(t.trajectory, config.timePoint);
@@ -367,20 +374,12 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
           const f1 = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
           const f2 = config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
           if (isNaN(f1) || isNaN(f2)) return;
-          const px = mapX(f2);
-          const py = mapY(f1);
-          const col = Math.floor(px / CELL_SIZE);
-          const row = Math.floor(py / CELL_SIZE);
-          if (col >= 0 && col < cols && row >= 0 && row < rows) {
-            const idx = row * cols + col;
-            if (!grid[idx]) grid[idx] = [];
-            grid[idx].push({ token: t, layerId: layer.id, x: px, y: py });
-          }
+          addToGrid(mapX(f2), mapY(f1), t, layer.id);
         }
       });
     });
 
-    return { grid, cols, rows, cellSize: CELL_SIZE, width, height };
+    return { grid, cols, rows, cellSize: CELL_SIZE, originX, originY };
   }, [layers, layerData, bgConfig.f1Range, bgConfig.f2Range, bgConfig.invertX, bgConfig.invertY]);
 
   // Helper functions for drawing individual layers
@@ -1115,9 +1114,9 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         const mouseY = (clientY - rect.top - transform.y) / transform.scale;
 
         // Spatial grid lookup: check mouse cell + 8 neighbors
-        const { grid, cols, rows, cellSize } = spatialGrid;
-        const col = Math.floor(mouseX / cellSize);
-        const row = Math.floor(mouseY / cellSize);
+        const { grid, cols, rows, cellSize, originX, originY } = spatialGrid;
+        const col = Math.floor((mouseX - originX) / cellSize);
+        const row = Math.floor((mouseY - originY) / cellSize);
         let closest: SpeechToken | null = null;
         let closestLayerId: string | null = null;
         let minDist = 15 / transform.scale;
