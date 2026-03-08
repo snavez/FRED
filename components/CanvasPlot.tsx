@@ -177,9 +177,11 @@ const Legend = ({ layers, allMappings, onLegendClick }: {
     allMappings: Record<string, any>,
     onLegendClick?: any
 }) => {
-  const renderSection = (m: any, titleSuffix: string = '', layerId?: string) => {
+  const renderSection = (m: any, titleSuffix: string = '', layerId?: string, plotType?: string) => {
       if (!m) return null;
-      const { colorMap, shapeMap, lineTypeMap, lineTypeNameMap, colorKey, shapeKey, lineTypeKey, colorCounts, shapeCounts, lineTypeCounts } = m;
+      const { colorMap, shapeMap, lineTypeMap, lineTypeNameMap, colorKey, lineTypeKey, colorCounts, shapeCounts, lineTypeCounts } = m;
+      // In trajectory mode shapes don't apply — ignore shapeKey for legend
+      const shapeKey = plotType === 'trajectory' ? null : m.shapeKey;
 
       const handleClick = (key: string, type: 'color' | 'shape' | 'lineType', e: React.MouseEvent) => {
         if (onLegendClick) {
@@ -205,7 +207,12 @@ const Legend = ({ layers, allMappings, onLegendClick }: {
                    <div key={key} className="flex justify-between items-center text-[10px] cursor-pointer hover:bg-slate-100 p-1 rounded"
                         onClick={(e) => handleClick(key, 'color', e)}>
                      <div className="flex items-center space-x-2">
-                        {shapeKey === colorKey ? (
+                        {plotType === 'trajectory' ? (
+                          <svg width="24" height="4" className="shrink-0">
+                            <line x1="0" y1="2" x2="24" y2="2" stroke={colorMap[key]} strokeWidth="2"
+                              strokeDasharray={lineTypeKey === colorKey && lineTypeMap[key]?.length ? lineTypeMap[key].join(',') : 'none'} />
+                          </svg>
+                        ) : shapeKey === colorKey ? (
                           <ShapeIcon shape={shapeMap[key]} color={colorMap[key]} />
                         ) : lineTypeKey === colorKey ? (
                           <svg width="24" height="4" className="shrink-0">
@@ -271,7 +278,7 @@ const Legend = ({ layers, allMappings, onLegendClick }: {
            const m = allMappings[layer.id];
            if (!m) return null;
            const showTitle = layers.filter(l => l.visible).length > 1;
-           return <React.Fragment key={layer.id}>{renderSection(m, showTitle ? layer.name : '', layer.id)}</React.Fragment>;
+           return <React.Fragment key={layer.id}>{renderSection(m, showTitle ? layer.name : '', layer.id, layer.config.plotType)}</React.Fragment>;
          })}
     </div>
   );
@@ -683,16 +690,20 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
           ctx.fillText(label, mx, my);
         } else {
           const centroidSize = (config.centroidSize * drawScale) / scale;
+          // White halo background
           ctx.save();
           ctx.fillStyle = 'white';
           ctx.strokeStyle = 'white';
-          drawShape(ctx, shape, mx, my, centroidSize + ((2*drawScale)/scale), scale, drawScale);
+          // For open shapes, draw as filled for the white background
+          const bgShape = shape.replace('-open', '');
+          drawShape(ctx, bgShape, mx, my, centroidSize + ((2*drawScale)/scale), scale, drawScale);
           ctx.fill();
-          ctx.stroke();
           ctx.restore();
+          // Colored centroid — always draw filled so centroids are prominent
           ctx.fillStyle = groupColor;
           ctx.strokeStyle = groupColor;
-          drawShape(ctx, shape, mx, my, centroidSize, scale, drawScale);
+          drawShape(ctx, bgShape, mx, my, centroidSize, scale, drawScale);
+          ctx.fill();
           if (!['plus', 'cross', 'asterisk'].includes(shape)) {
             ctx.strokeStyle = 'white';
             ctx.lineWidth = (2 * drawScale) / scale;
@@ -805,9 +816,11 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
           lineTypeTitle: string;
       }
 
-      const drawSection = (m: any, opts: SectionOpts, titleSuffix: string = '') => {
+      const drawSection = (m: any, opts: SectionOpts, titleSuffix: string = '', layerPlotType?: string) => {
           if (!m) return;
-          const { colorMap, shapeMap, lineTypeMap, colorKey, shapeKey, lineTypeKey, colorCounts, shapeCounts, lineTypeCounts } = m;
+          const { colorMap, shapeMap, lineTypeMap, colorKey, lineTypeKey, colorCounts, shapeCounts, lineTypeCounts } = m;
+          // In trajectory mode shapes don't apply
+          const shapeKey = layerPlotType === 'trajectory' ? null : m.shapeKey;
 
           if (opts.showColor && colorKey) {
               ctx.font = `bold ${fontSizeTitle}px Inter`;
@@ -821,7 +834,16 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
                   const count = colorCounts ? (colorCounts[k] || 0) : 0;
                   ctx.fillStyle = c as string;
                   ctx.strokeStyle = c as string;
-                  if (shapeKey === colorKey && shapeMap[k]) {
+                  if (layerPlotType === 'trajectory') {
+                    // Trajectory: always draw colored line segment
+                    ctx.lineWidth = (2 * drawScale);
+                    ctx.setLineDash(lineTypeKey === colorKey && lineTypeMap[k]?.length ? (lineTypeMap[k] as number[]).map((d: number) => d * drawScale) : []);
+                    ctx.beginPath();
+                    ctx.moveTo(x, curY + (circleSize/2));
+                    ctx.lineTo(x + (circleSize * 2), curY + (circleSize/2));
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                  } else if (shapeKey === colorKey && shapeMap[k]) {
                     // Combined: draw colored shape
                     drawShape(ctx, shapeMap[k] as string, x + (circleSize), curY + (circleSize/2), (circleSize * 0.8), 1, drawScale);
                   } else {
@@ -902,7 +924,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
               lineTypeTitle: layerLegendCfg?.lineTypeTitle || '',
           };
 
-          drawSection(m, opts, showMultiple ? ` (${layer.name})` : '');
+          drawSection(m, opts, showMultiple ? ` (${layer.name})` : '', layer.config.plotType);
       });
   };
 
