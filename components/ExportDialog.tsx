@@ -192,7 +192,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
         <div className="w-80 flex-shrink-0 bg-slate-50 border-r border-slate-200 flex flex-col">
             <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-white">
                 <h2 className="font-bold text-slate-800 text-lg flex items-center gap-2">
-                    <Type size={18} className="text-indigo-600"/>
+                    <Type size={18} className="text-sky-700"/>
                     Export Settings
                 </h2>
             </div>
@@ -203,7 +203,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                 <div className="space-y-3 pb-4 border-b border-slate-200">
                     <div className="flex justify-between items-center mb-1">
                         <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider">Graph Geometry</h3>
-                        <button onClick={() => setLinkGraphScale(!linkGraphScale)} className="text-slate-400 hover:text-indigo-600" title={linkGraphScale ? "Unlink Scale" : "Link Scale"}>
+                        <button onClick={() => setLinkGraphScale(!linkGraphScale)} className="text-slate-400 hover:text-sky-700" title={linkGraphScale ? "Unlink Scale" : "Link Scale"}>
                             {linkGraphScale ? <Link size={14} /> : <Link2Off size={14} />}
                         </button>
                     </div>
@@ -214,7 +214,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                                 Graph Scale <span>{config.graphScale?.toFixed(2) || '1.00'}x</span>
                             </label>
                             <div className="flex gap-2 items-center">
-                                <input type="range" min="0.1" max="3.0" step="0.05" value={config.graphScale || 1.0} onChange={e => updateConfig('graphScale', parseFloat(e.target.value))} className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
+                                <input type="range" min="0.1" max="3.0" step="0.05" value={config.graphScale || 1.0} onChange={e => updateConfig('graphScale', parseFloat(e.target.value))} className="flex-1 accent-slate-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
                                 <input type="number" min="0.1" max="3.0" step="0.1" value={config.graphScale || 1.0} onChange={e => updateConfig('graphScale', parseFloat(e.target.value))} className="w-16 text-xs p-1 border border-slate-300 rounded text-center"/>
                             </div>
                         </div>
@@ -225,7 +225,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                                     X Scale <span>{config.graphScaleX?.toFixed(2) || '1.00'}x</span>
                                 </label>
                                 <div className="flex gap-2 items-center">
-                                    <input type="range" min="0.1" max="3.0" step="0.05" value={config.graphScaleX || 1.0} onChange={e => updateConfig('graphScaleX', parseFloat(e.target.value))} className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
+                                    <input type="range" min="0.1" max="3.0" step="0.05" value={config.graphScaleX || 1.0} onChange={e => updateConfig('graphScaleX', parseFloat(e.target.value))} className="flex-1 accent-slate-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
                                     <input type="number" min="0.1" max="3.0" step="0.1" value={config.graphScaleX || 1.0} onChange={e => updateConfig('graphScaleX', parseFloat(e.target.value))} className="w-16 text-xs p-1 border border-slate-300 rounded text-center"/>
                                 </div>
                             </div>
@@ -234,7 +234,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                                     Y Scale <span>{config.graphScaleY?.toFixed(2) || '1.00'}x</span>
                                 </label>
                                 <div className="flex gap-2 items-center">
-                                    <input type="range" min="0.1" max="3.0" step="0.05" value={config.graphScaleY || 1.0} onChange={e => updateConfig('graphScaleY', parseFloat(e.target.value))} className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
+                                    <input type="range" min="0.1" max="3.0" step="0.05" value={config.graphScaleY || 1.0} onChange={e => updateConfig('graphScaleY', parseFloat(e.target.value))} className="flex-1 accent-slate-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
                                     <input type="number" min="0.1" max="3.0" step="0.1" value={config.graphScaleY || 1.0} onChange={e => updateConfig('graphScaleY', parseFloat(e.target.value))} className="w-16 text-xs p-1 border border-slate-300 rounded text-center"/>
                                 </div>
                             </div>
@@ -257,7 +257,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                 <div className="space-y-3 pb-4 border-b border-slate-200">
                     <div className="flex justify-between items-center mb-1">
                         <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider">Canvas Dimensions</h3>
-                        <button onClick={() => setIsAutoCanvas(!isAutoCanvas)} className={`text-xs px-2 py-0.5 rounded font-bold transition-colors ${isAutoCanvas ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-500'}`}>
+                        <button onClick={() => setIsAutoCanvas(!isAutoCanvas)} className={`text-xs px-2 py-0.5 rounded font-bold transition-colors ${isAutoCanvas ? 'bg-sky-100 text-sky-800' : 'bg-slate-200 text-slate-500'}`}>
                             {isAutoCanvas ? 'AUTO' : 'FIXED'}
                         </button>
                     </div>
@@ -283,27 +283,27 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                 <div className="space-y-3 pb-4 border-b border-slate-200">
                     <div className="flex justify-between items-center mb-1">
                         <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider">Global Font Scale</h3>
-                        <span className="text-xs font-bold text-indigo-600">{fontScale.toFixed(1)}x</span>
+                        <span className="text-xs font-bold text-sky-700">{fontScale.toFixed(1)}x</span>
                     </div>
-                    <input type="range" min="0.5" max="3.0" step="0.1" value={fontScale} onChange={e => handleFontScaleChange(parseFloat(e.target.value))} className="w-full accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
+                    <input type="range" min="0.5" max="3.0" step="0.1" value={fontScale} onChange={e => handleFontScaleChange(parseFloat(e.target.value))} className="w-full accent-slate-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
                 </div>
 
                 {/* Section: Chart Title */}
                 <div className="space-y-3">
                     <div className="flex justify-between items-center mb-2">
                         <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider">Chart Title</h3>
-                        <input type="checkbox" checked={config.showPlotTitle} onChange={e => updateConfig('showPlotTitle', e.target.checked)} className="rounded text-indigo-600 scale-75"/>
+                        <input type="checkbox" checked={config.showPlotTitle} onChange={e => updateConfig('showPlotTitle', e.target.checked)} className="rounded text-sky-700 scale-75"/>
                     </div>
 
                     {config.showPlotTitle && (
                         <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                            <input type="text" value={config.plotTitle} onChange={e => updateConfig('plotTitle', e.target.value)} className="w-full text-xs p-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 outline-none" placeholder="Enter chart title..."/>
+                            <input type="text" value={config.plotTitle} onChange={e => updateConfig('plotTitle', e.target.value)} className="w-full text-xs p-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-sky-500 outline-none" placeholder="Enter chart title..."/>
                             <div>
                                 <label className="text-xs font-semibold text-slate-600 mb-1 flex justify-between">
                                     Size <span>{config.plotTitleSize}px</span>
                                 </label>
                                 <div className="flex gap-2 items-center">
-                                    <input type="range" min="24" max="500" value={config.plotTitleSize} onChange={e => updateConfig('plotTitleSize', parseInt(e.target.value))} className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
+                                    <input type="range" min="24" max="500" value={config.plotTitleSize} onChange={e => updateConfig('plotTitleSize', parseInt(e.target.value))} className="flex-1 accent-slate-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
                                     <input type="number" min="1" max="999" value={config.plotTitleSize} onChange={e => updateConfig('plotTitleSize', parseInt(e.target.value))} className="w-16 text-xs p-1 border border-slate-300 rounded text-center"/>
                                 </div>
                             </div>
@@ -327,7 +327,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                 <div className="space-y-3">
                     <div className="flex justify-between items-center mb-1">
                         <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider">Axis Labels</h3>
-                        <button onClick={() => setLinkAxes(!linkAxes)} className="text-slate-400 hover:text-indigo-600" title={linkAxes ? "Unlink Axes" : "Link Axes"}>
+                        <button onClick={() => setLinkAxes(!linkAxes)} className="text-slate-400 hover:text-sky-700" title={linkAxes ? "Unlink Axes" : "Link Axes"}>
                             {linkAxes ? <Link size={14} /> : <Link2Off size={14} />}
                         </button>
                     </div>
@@ -337,7 +337,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                             X Axis Size <span>{config.xAxisLabelSize}px</span>
                         </label>
                         <div className="flex gap-2 items-center">
-                            <input type="range" min="12" max="500" value={config.xAxisLabelSize} onChange={e => updateConfig('xAxisLabelSize', parseInt(e.target.value))} className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
+                            <input type="range" min="12" max="500" value={config.xAxisLabelSize} onChange={e => updateConfig('xAxisLabelSize', parseInt(e.target.value))} className="flex-1 accent-slate-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
                             <input type="number" min="1" max="999" value={config.xAxisLabelSize} onChange={e => updateConfig('xAxisLabelSize', parseInt(e.target.value))} className="w-16 text-xs p-1 border border-slate-300 rounded text-center"/>
                         </div>
                         <div className="grid grid-cols-2 gap-2 mt-1">
@@ -351,7 +351,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                             Y Axis Size <span>{config.yAxisLabelSize}px</span>
                         </label>
                         <div className="flex gap-2 items-center">
-                            <input type="range" min="12" max="500" value={config.yAxisLabelSize} onChange={e => updateConfig('yAxisLabelSize', parseInt(e.target.value))} className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
+                            <input type="range" min="12" max="500" value={config.yAxisLabelSize} onChange={e => updateConfig('yAxisLabelSize', parseInt(e.target.value))} className="flex-1 accent-slate-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
                             <input type="number" min="1" max="999" value={config.yAxisLabelSize} onChange={e => { const v = parseInt(e.target.value); updateConfig('yAxisLabelSize', isNaN(v) ? 12 : v); }} className="w-16 text-xs p-1 border border-slate-300 rounded text-center"/>
                         </div>
                         <div className="grid grid-cols-2 gap-2 mt-1">
@@ -365,7 +365,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                             Tick Numbers <span>{config.tickLabelSize}px</span>
                         </label>
                         <div className="flex gap-2 items-center">
-                            <input type="range" min="10" max="500" value={config.tickLabelSize} onChange={e => updateConfig('tickLabelSize', parseInt(e.target.value))} className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
+                            <input type="range" min="10" max="500" value={config.tickLabelSize} onChange={e => updateConfig('tickLabelSize', parseInt(e.target.value))} className="flex-1 accent-slate-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
                             <input type="number" min="1" max="999" value={config.tickLabelSize} onChange={e => { const v = parseInt(e.target.value); updateConfig('tickLabelSize', isNaN(v) ? 10 : v); }} className="w-16 text-xs p-1 border border-slate-300 rounded text-center"/>
                         </div>
                         <div className="grid grid-cols-2 gap-2 mt-1">
@@ -391,7 +391,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                             Data Labels <span>{config.dataLabelSize}px</span>
                         </label>
                         <div className="flex gap-2 items-center">
-                            <input type="range" min="8" max="500" value={config.dataLabelSize} onChange={e => updateConfig('dataLabelSize', parseInt(e.target.value))} className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
+                            <input type="range" min="8" max="500" value={config.dataLabelSize} onChange={e => updateConfig('dataLabelSize', parseInt(e.target.value))} className="flex-1 accent-slate-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
                             <input type="number" min="1" max="999" value={config.dataLabelSize} onChange={e => { const v = parseInt(e.target.value); updateConfig('dataLabelSize', isNaN(v) ? 8 : v); }} className="w-16 text-xs p-1 border border-slate-300 rounded text-center"/>
                         </div>
                     </div>
@@ -415,7 +415,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                                 <select
                                     value={config.legendPosition}
                                     onChange={e => updateConfig('legendPosition', e.target.value)}
-                                    className="w-full text-xs p-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 outline-none bg-white"
+                                    className="w-full text-xs p-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-sky-500 outline-none bg-white"
                                 >
                                     <option value="right">Right (Outside)</option>
                                     <option value="bottom">Bottom (Outside)</option>
@@ -453,7 +453,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                                             type="checkbox"
                                             checked={isInLegend}
                                             onChange={() => toggleLegendLayer(layer.id)}
-                                            className="rounded text-indigo-600 scale-75"
+                                            className="rounded text-sky-700 scale-75"
                                           />
                                           <span className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[8px] font-black ${
                                             layer.config.plotType === 'trajectory' ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600'
@@ -513,7 +513,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                                     Heading Size <span>{config.legendTitleSize}px</span>
                                 </label>
                                 <div className="flex gap-2 items-center">
-                                    <input type="range" min="16" max="500" value={config.legendTitleSize} onChange={e => updateConfig('legendTitleSize', parseInt(e.target.value))} className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
+                                    <input type="range" min="16" max="500" value={config.legendTitleSize} onChange={e => updateConfig('legendTitleSize', parseInt(e.target.value))} className="flex-1 accent-slate-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
                                     <input type="number" min="1" max="999" value={config.legendTitleSize} onChange={e => updateConfig('legendTitleSize', parseInt(e.target.value))} className="w-16 text-xs p-1 border border-slate-300 rounded text-center"/>
                                 </div>
                             </div>
@@ -523,7 +523,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                                     Item Size <span>{config.legendItemSize}px</span>
                                 </label>
                                 <div className="flex gap-2 items-center">
-                                    <input type="range" min="12" max="500" value={config.legendItemSize} onChange={e => updateConfig('legendItemSize', parseInt(e.target.value))} className="flex-1 accent-indigo-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
+                                    <input type="range" min="12" max="500" value={config.legendItemSize} onChange={e => updateConfig('legendItemSize', parseInt(e.target.value))} className="flex-1 accent-slate-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"/>
                                     <input type="number" min="1" max="999" value={config.legendItemSize} onChange={e => updateConfig('legendItemSize', parseInt(e.target.value))} className="w-16 text-xs p-1 border border-slate-300 rounded text-center"/>
                                 </div>
                             </div>
@@ -541,7 +541,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                             <button
                                 key={s}
                                 onClick={() => updateConfig('scale', s)}
-                                className={`flex-1 py-1 text-xs font-bold rounded border ${config.scale === s ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200'}`}
+                                className={`flex-1 py-1 text-xs font-bold rounded border ${config.scale === s ? 'bg-slate-600 text-white border-slate-600' : 'bg-white text-slate-600 border-slate-200'}`}
                             >
                                 {s}x
                             </button>
@@ -556,7 +556,7 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                 <button onClick={onClose} className="w-full py-2 mb-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 rounded-lg border border-slate-200">
                     Cancel
                 </button>
-                <button onClick={handleDownload} className="w-full py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-lg shadow-indigo-200 flex items-center justify-center gap-2">
+                <button onClick={handleDownload} className="w-full py-2.5 text-sm font-bold text-white bg-slate-600 hover:bg-slate-700 rounded-lg shadow-lg shadow-slate-200 flex items-center justify-center gap-2">
                     <Download size={16} /> Download Image
                 </button>
             </div>

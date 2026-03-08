@@ -795,7 +795,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
       {/* Alignment Buttons */}
       <div className="absolute top-4 left-4 z-20 flex gap-2">
           {/* ... buttons ... */}
-          <button onClick={() => alignView('f1f2')} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 text-[11px] font-bold text-slate-700 transition-colors" title="Standard F1 vs F2 View (Top Down)"><LayoutTemplate size={14} className="text-indigo-500" />F1 vs F2</button>
+          <button onClick={() => alignView('f1f2')} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 text-[11px] font-bold text-slate-700 transition-colors" title="Standard F1 vs F2 View (Top Down)"><LayoutTemplate size={14} className="text-sky-600" />F1 vs F2</button>
           <button onClick={() => alignView('f2f3')} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 text-[11px] font-bold text-slate-700 transition-colors" title="F2 vs F3 View (Front)"><Layers size={14} className="text-emerald-500" />F2 vs F3</button>
           <button onClick={() => alignView('f1f3')} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 text-[11px] font-bold text-slate-700 transition-colors" title="F1 vs F3 View (Side)"><Box size={14} className="text-amber-500" />F1 vs F3</button>
       </div>

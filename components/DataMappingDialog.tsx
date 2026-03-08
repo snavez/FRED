@@ -74,7 +74,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
         <div className="flex items-center justify-between p-5 border-b border-slate-200 shrink-0">
           <div>
             <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <FileText size={20} className="text-indigo-600" />
+              <FileText size={20} className="text-sky-700" />
               Data Mapping
             </h2>
             <p className="text-xs text-slate-500 mt-1">
@@ -95,8 +95,11 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                 <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2 w-48">Sample Values</th>
                 <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2 w-40">Map To</th>
                 <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2">Details</th>
-                <th className="text-center text-[10px] font-bold text-slate-400 uppercase py-2 w-16" title="Tick to show this field as a filter in the sidebar (can be changed after import)">
+                <th className="text-center text-[10px] font-bold text-slate-400 uppercase py-2 w-16 relative group">
                   <span className="cursor-help border-b border-dashed border-slate-300">Sidebar</span>
+                  <div className="absolute hidden group-hover:block top-full left-1/2 -translate-x-1/2 mt-1 w-48 bg-slate-800 text-white text-[10px] font-normal normal-case tracking-normal p-2 rounded-lg shadow-lg z-20 leading-relaxed">
+                    Tick to show this field as a filter in the sidebar. Can be changed after import.
+                  </div>
                 </th>
               </tr>
             </thead>
@@ -193,7 +196,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                           type="checkbox"
                           checked={m.showInSidebar === true}
                           onChange={e => updateMapping(idx, { showInSidebar: e.target.checked })}
-                          className="rounded text-indigo-600"
+                          className="rounded text-sky-700"
                           title="Show as filter in sidebar"
                         />
                       )}
@@ -227,7 +230,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
               }
               onConfirm(mappings);
             }}
-            className="px-6 py-2 text-xs font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2 shadow-sm"
+            className="px-6 py-2 text-xs font-bold text-white bg-slate-600 rounded-lg hover:bg-slate-700 transition-colors flex items-center gap-2 shadow-sm"
           >
             <Upload size={14} />
             Import Data

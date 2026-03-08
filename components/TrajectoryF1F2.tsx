@@ -759,7 +759,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         if (fields.length === 0) {
           return (
             <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-4 bottom-16 border border-slate-700 backdrop-blur-md min-w-[200px]">
-              <p className="text-slate-400 italic text-center">Select fields from the <span className="text-indigo-400 font-bold">Tooltip</span> dropdown to see token data here.</p>
+              <p className="text-slate-400 italic text-center">Select fields from the <span className="text-sky-400 font-bold">Tooltip</span> dropdown to see token data here.</p>
             </div>
           );
         }
@@ -785,7 +785,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         return (
           <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-4 bottom-16 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]">
             {firstField && (
-              <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-indigo-400">
+              <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-sky-400">
                 {getFieldLabel(firstField)}: {getTooltipValue(hoveredToken, firstField)}
               </div>
             )}
