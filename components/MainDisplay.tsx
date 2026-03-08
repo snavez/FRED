@@ -202,9 +202,12 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
   const getActiveChannels = () => {
     const active = { color: false, shape: false, texture: false, lineType: false };
+    const isTrajectory = currentConfig.plotType === 'trajectory';
     if (currentConfig.colorBy !== 'none') active.color = true;
-    if ((activeTab === 'vowel' || activeTab === '3d') && currentConfig.shapeBy !== 'none') active.shape = true;
-    if ((activeTab === 'vowel' || activeTab === 'traj_f1f2' || activeTab === 'traj_series') && currentConfig.lineTypeBy !== 'none') active.lineType = true;
+    // Shapes: point mode only (F1/F2 + 3D), not trajectory
+    if ((activeTab === 'vowel' || activeTab === '3d') && !isTrajectory && currentConfig.shapeBy !== 'none') active.shape = true;
+    // Line type: trajectory mode on F1/F2, or dedicated trajectory tabs
+    if (((activeTab === 'vowel' && isTrajectory) || activeTab === 'traj_f1f2' || activeTab === 'traj_series') && currentConfig.lineTypeBy !== 'none') active.lineType = true;
     if ((activeTab === 'dist' || activeTab === 'duration') && currentConfig.textureBy !== 'none') active.texture = true;
     return active;
   };

@@ -40,7 +40,7 @@ const findNearestTimePoint = (trajectory: { time: number }[], target: number): n
   return best;
 };
 
-const drawShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: number, size: number, scale: number, drawScale: number = 1) => {
+const drawShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: number, size: number, scale: number, drawScale: number = 1, strokeWidth?: number) => {
   ctx.beginPath();
   switch (shape) {
     case 'circle': case 'circle-open': ctx.arc(x, y, size, 0, Math.PI * 2); break;
@@ -53,7 +53,7 @@ const drawShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: n
     case 'asterisk': ctx.moveTo(x - size, y); ctx.lineTo(x + size, y); ctx.moveTo(x, y - size); ctx.lineTo(x, y + size); const s2 = size * 0.7; ctx.moveTo(x - s2, y - s2); ctx.lineTo(x + s2, y + s2); ctx.moveTo(x + s2, y - s2); ctx.lineTo(x - s2, y + s2); break;
     default: ctx.arc(x, y, size, 0, Math.PI * 2);
   }
-  const lineWidth = (2 * drawScale) / scale;
+  const lineWidth = strokeWidth ?? (2 * drawScale) / scale;
   if (shape.endsWith('-open') || ['plus', 'cross', 'asterisk'].includes(shape)) {
     ctx.lineWidth = lineWidth; ctx.stroke();
   } else {
@@ -699,9 +699,11 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
           ctx.fill();
           ctx.restore();
           // Colored centroid — draw the actual shape (respecting open/closed)
+          // Scale stroke width with centroid size for open shapes
+          const centroidStroke = centroidSize * 0.15;
           ctx.fillStyle = groupColor;
           ctx.strokeStyle = groupColor;
-          drawShape(ctx, shape, mx, my, centroidSize, scale, drawScale);
+          drawShape(ctx, shape, mx, my, centroidSize, scale, drawScale, centroidStroke);
           if (!['plus', 'cross', 'asterisk'].includes(shape) && !shape.endsWith('-open')) {
             ctx.strokeStyle = 'white';
             ctx.lineWidth = (2 * drawScale) / scale;
