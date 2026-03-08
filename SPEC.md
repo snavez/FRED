@@ -126,15 +126,22 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 ### Channels
 | Channel | Applicable Plots | Options |
 |---------|------------------|---------|
-| **Color By** | All | None, Phoneme, Word, Allophone, Alignment, Expected Stress, Transcr. Stress, Syllable Mark, Voice Pitch, + custom columns |
+| **Color By** | All | None, + sidebar-active fields (Phoneme, Word, Allophone, etc.) |
 | **Shape By** | F1/F2 (point mode), 3D | Same as Color By |
 | **Line Type By** | F1/F2 (trajectory mode), Traj F1/F2, Time Series | Same as Color By |
 | **Texture By** | Duration, Distribution | Same as Color By |
 | **Group By** | Duration | Same as Color By |
 
+### Encoding Dropdown Filtering
+- Visual encoding dropdowns (Color By, Shape By, Line Type By, Texture By) only list variables whose corresponding field is **active in the sidebar** (`showInSidebar === true` on the column mapping)
+- The mapping from variable names to column roles uses `getLabel` conventions (e.g. `phoneme` → `canonical` role)
+- Custom columns are included only if they are sidebar-active
+- `None` is always available regardless of sidebar state
+
 ### Color Palette
-- Default: 15 colors (`#ef4444`, `#3b82f6`, `#10b981`, ...)
-- B&W mode: 4 grayscale values (`#000000`, `#525252`, `#969696`, `#d4d4d4`)
+- Default: 19 colors (`#ef4444`, `#3b82f6`, `#10b981`, ...)
+- B&W mode: 12 greyscale steps from `#000000` to `#ffffff`
+- Style editor palette automatically switches to greyscale swatches when B&W mode is active
 
 ### Shapes
 12 shapes: `circle`, `square`, `triangle`, `diamond`, `hexagon`, `circle-open`, `square-open`, `triangle-open`, `diamond-open`, `plus`, `cross`, `asterisk`

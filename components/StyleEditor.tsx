@@ -19,13 +19,20 @@ interface StyleEditorProps {
   onUpdate: (type: 'color' | 'shape' | 'texture' | 'lineType', value: any) => void;
   onClose: () => void;
   position: { x: number, y: number };
+  bwMode?: boolean;
 }
 
 const COLORS = [
-  '#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', 
-  '#ec4899', '#06b6d4', '#84cc16', '#64748b', '#dc2626', 
+  '#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6',
+  '#ec4899', '#06b6d4', '#84cc16', '#64748b', '#dc2626',
   '#2563eb', '#059669', '#d97706', '#7c3aed', '#db2777',
   '#000000', '#525252', '#969696', '#ffffff'
+];
+
+const GREYSCALE_COLORS = [
+  '#000000', '#1a1a1a', '#333333', '#4d4d4d',
+  '#666666', '#808080', '#999999', '#b3b3b3',
+  '#cccccc', '#d9d9d9', '#e6e6e6', '#ffffff',
 ];
 
 const SHAPES = [
@@ -67,7 +74,8 @@ const ShapeIcon = ({ shape, color = '#333' }: { shape: string, color?: string })
   </svg>
 );
 
-const StyleEditor: React.FC<StyleEditorProps> = ({ category, activeChannels, currentStyles, onUpdate, onClose, position }) => {
+const StyleEditor: React.FC<StyleEditorProps> = ({ category, activeChannels, currentStyles, onUpdate, onClose, position, bwMode }) => {
+  const colorPalette = bwMode ? GREYSCALE_COLORS : COLORS;
   // Prevent going off screen
   const safeX = Math.min(window.innerWidth - 260, Math.max(10, position.x));
   const safeY = Math.min(window.innerHeight - 400, Math.max(10, position.y));
@@ -87,9 +95,9 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ category, activeChannels, cur
         {activeChannels.color && (
           <div>
             <label className="text-[10px] font-bold text-slate-500 uppercase mb-2 block">Color</label>
-            <div className="grid grid-cols-6 gap-2">
-              {COLORS.map(c => (
-                <button 
+            <div className={`grid gap-2 ${bwMode ? 'grid-cols-4' : 'grid-cols-6'}`}>
+              {colorPalette.map(c => (
+                <button
                   key={c}
                   onClick={() => onUpdate('color', c)}
                   className={`w-6 h-6 rounded-md border shadow-sm transition-transform hover:scale-110 ${currentStyles.color === c ? 'ring-2 ring-offset-1 ring-sky-500' : 'border-slate-200'}`}

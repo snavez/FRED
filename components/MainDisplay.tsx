@@ -76,14 +76,42 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   const [layerPanelOpen, setLayerPanelOpen] = useState(false);
   const [showTooltipSettings, setShowTooltipSettings] = useState(false);
 
-  // Dynamic variable options (built-in + custom columns from dataset)
+  // Dynamic variable options: built-in + custom columns, filtered to sidebar-active fields
   const variableOptions = useMemo(() => {
-    if (!datasetMeta?.customColumns.length) return BUILT_IN_VARIABLE_OPTIONS;
-    const custom = datasetMeta.customColumns.map(col => ({
-      label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-      value: col,
-    }));
-    return [...BUILT_IN_VARIABLE_OPTIONS, ...custom];
+    // Map variable option values to column roles ('phoneme' → 'canonical', others match directly)
+    const VARIABLE_TO_ROLE: Record<string, string> = { 'phoneme': 'canonical' };
+
+    // Build sets of sidebar-active roles and custom field names
+    const sidebarActiveRoles = new Set<string>();
+    const sidebarActiveCustom = new Set<string>();
+    if (datasetMeta?.columnMappings) {
+      for (const m of datasetMeta.columnMappings) {
+        if (m.showInSidebar) {
+          if (m.role === 'custom' && m.customFieldName) {
+            sidebarActiveCustom.add(m.customFieldName);
+          } else {
+            sidebarActiveRoles.add(m.role);
+          }
+        }
+      }
+    }
+
+    // Filter built-in options: 'none' always shown, others only if sidebar-active
+    const builtIn = BUILT_IN_VARIABLE_OPTIONS.filter(opt => {
+      if (opt.value === 'none') return true;
+      const role = VARIABLE_TO_ROLE[opt.value] || opt.value;
+      return sidebarActiveRoles.has(role);
+    });
+
+    // Filter custom columns to sidebar-active only
+    const custom = (datasetMeta?.customColumns || [])
+      .filter(col => sidebarActiveCustom.has(col))
+      .map(col => ({
+        label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+        value: col,
+      }));
+
+    return [...builtIn, ...custom];
   }, [datasetMeta]);
 
   // Dynamic time-points (from dataset or default 0-100 by 10)
@@ -1079,6 +1107,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
           currentStyles={editingItem.currentStyles}
           onUpdate={handleStyleUpdate}
           onClose={() => setEditingItem(null)}
+          bwMode={currentConfig.bwMode}
         />
       )}
 
