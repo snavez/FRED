@@ -521,6 +521,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                if (config.meanLabelType === 'color') labelText = cLabel;
                else if (config.meanLabelType === 'shape') labelText = sLabel;
                else if (config.meanLabelType === 'both') labelText = `${cLabel} ${sLabel}`;
+               else labelText = `${cLabel} ${sLabel}`; // auto: show both when composite key
            }
 
            if (config.labelAsCentroid) {

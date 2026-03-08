@@ -386,10 +386,15 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
 
           // Label text based on meanLabelType
           let labelText = cVal;
-          if (config.meanLabelType === 'color') labelText = cVal;
+          if (config.meanLabelType === 'color') labelText = cVal !== 'All' ? cVal : lVal;
           else if (config.meanLabelType === 'shape') labelText = lVal !== 'Default' ? lVal : cVal;
           else if (config.meanLabelType === 'both') labelText = lVal !== 'Default' ? `${cVal} ${lVal}` : cVal;
-          // 'auto': just use cVal
+          else {
+            // Auto: show whichever variables are assigned
+            if (cVal !== 'All' && lVal !== 'Default') labelText = `${cVal} ${lVal}`;
+            else if (lVal !== 'Default') labelText = lVal;
+            else labelText = cVal;
+          }
 
           const lastPt = lines.f1[lines.f1.length - 1];
           labelEntries.push({ x: mapX(lastPt.x), y: mapY(lastPt.y), label: labelText, color });

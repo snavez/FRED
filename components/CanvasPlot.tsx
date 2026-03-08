@@ -550,6 +550,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
                     if (config.meanLabelType === 'color') label = c;
                     else if (config.meanLabelType === 'shape') label = l;
                     else if (config.meanLabelType === 'both') label = `${c} ${l}`;
+                    else label = `${c} ${l}`; // auto: show both when composite key
                 }
 
                 const labelSize = exportConfig ? exportConfig.dataLabelSize : (drawScale > 1.5 ? 36 : config.meanTrajectoryLabelSize || config.labelSize);
@@ -655,6 +656,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
             if (config.meanLabelType === 'color') label = c;
             else if (config.meanLabelType === 'shape') label = s;
             else if (config.meanLabelType === 'both') label = `${c} ${s}`;
+            else label = `${c} ${s}`; // auto: show both when composite key
         } else {
             if (mappings.colorKey) { groupColor = mappings.colorMap[key] || '#000'; if (mappings.shapeKey === mappings.colorKey) shape = mappings.shapeMap[key] || 'circle'; }
             if (mappings.shapeKey && !mappings.colorKey) shape = mappings.shapeMap[key] || 'circle';

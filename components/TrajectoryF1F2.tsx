@@ -321,8 +321,15 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
 
         if (config.showTrajectoryLabels) {
           let labelText = cKey;
-          if (cKey === 'All' && lKey) labelText = lKey;
-          else if (lKey) labelText += ` ${lKey}`;
+          if (config.meanLabelType === 'color') labelText = cKey !== 'All' ? cKey : (lKey || cKey);
+          else if (config.meanLabelType === 'shape') labelText = lKey || cKey;
+          else if (config.meanLabelType === 'both') labelText = lKey && lKey !== 'Default' ? `${cKey} ${lKey}` : cKey;
+          else {
+            // Auto: show whichever variables are assigned
+            if (cKey !== 'All' && lKey && lKey !== 'Default') labelText = `${cKey} ${lKey}`;
+            else if (cKey === 'All' && lKey && lKey !== 'Default') labelText = lKey;
+            else labelText = cKey;
+          }
           
           ctx.save();
           // Scale mean labels for export: ~24px
