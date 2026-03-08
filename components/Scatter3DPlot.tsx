@@ -95,7 +95,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
   // Camera State
-  const [rotation, setRotation] = useState({ alpha: 45, beta: 60 }); // alpha: rotation around Y, beta: elevation
+  const [rotation, setRotation] = useState({ alpha: 45, beta: 60, gamma: 0 }); // alpha: Y-axis turntable, beta: X-axis tilt, gamma: Z-axis roll
   const [translation, setTranslation] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   
@@ -110,7 +110,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
   rotationRef.current = rotation; // Always keep ref in sync with state
   const [rotationStep, setRotationStep] = useState(15);
 
-  const animateRotation = useCallback((deltaAlpha: number, deltaBeta: number) => {
+  const animateRotation = useCallback((deltaAlpha: number, deltaBeta: number, deltaGamma: number = 0) => {
     // Cancel any existing animation
     if (animationRef.current !== null) {
       cancelAnimationFrame(animationRef.current);
@@ -122,6 +122,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
     // Read current rotation from ref (captures mid-animation position on rapid clicks)
     const startAlpha = rotationRef.current.alpha;
     const startBeta = rotationRef.current.beta;
+    const startGamma = rotationRef.current.gamma || 0;
 
     const animate = (now: number) => {
       const elapsed = now - startTime;
@@ -132,6 +133,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
       setRotation({
         alpha: (startAlpha + deltaAlpha * eased) % 360,
         beta: (startBeta + deltaBeta * eased) % 360,
+        gamma: (startGamma + deltaGamma * eased) % 360,
       });
 
       if (progress < 1) {
@@ -159,13 +161,13 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
       setZoom(1);
       switch(axisPair) {
           case 'f1f2': // Look from below: Z(F1) vs X(F2), F1 inverted to match standard vowel chart
-              setRotation({ alpha: 0, beta: -90 });
+              setRotation({ alpha: 0, beta: -90, gamma: 0 });
               break;
           case 'f2f3': // Look from Front: Y(F3) vs X(F2)
-              setRotation({ alpha: 0, beta: 0 });
+              setRotation({ alpha: 0, beta: 0, gamma: 0 });
               break;
           case 'f1f3': // Look from Side: Y(F3) vs Z(F1)
-              setRotation({ alpha: 90, beta: 0 });
+              setRotation({ alpha: 90, beta: 0, gamma: 0 });
               break;
       }
   };
@@ -212,22 +214,33 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
     const f3Min = config.f3Range[0], f3Max = config.f3Range[1];
 
     // Helper: Project 3D (normalized -1 to 1) to 2D
+    // Rotation order: Ry(alpha) * Rx(beta) * Rz(gamma)
+    //   - Beta (X-axis tilt): applied first — tilts the view up/down
+    //   - Alpha (Y-axis turntable): applied second — spins horizontally (no vertical effect)
+    //   - Gamma (Z-axis roll): applied last — spins in the plane of the screen (CW/CCW)
     const project = (x: number, y: number, z: number) => {
       const radAlpha = (rotation.alpha * Math.PI) / 180;
       const radBeta = (rotation.beta * Math.PI) / 180;
+      const radGamma = ((rotation.gamma || 0) * Math.PI) / 180;
 
-      // Rotate around Y axis (Alpha)
-      const x1 = x * Math.cos(radAlpha) - z * Math.sin(radAlpha);
-      const z1 = x * Math.sin(radAlpha) + z * Math.cos(radAlpha);
-      
-      // Rotate around X axis (Beta)
-      const y2 = y * Math.cos(radBeta) - z1 * Math.sin(radBeta);
-      const z2 = y * Math.sin(radBeta) + z1 * Math.cos(radBeta);
+      // Step 1: Rotate around X axis (Beta — tilt)
+      const x1 = x;
+      const y1 = y * Math.cos(radBeta) - z * Math.sin(radBeta);
+      const z1 = y * Math.sin(radBeta) + z * Math.cos(radBeta);
+
+      // Step 2: Rotate around Y axis (Alpha — turntable)
+      const x2 = x1 * Math.cos(radAlpha) - z1 * Math.sin(radAlpha);
+      const y2 = y1; // Alpha has no vertical effect
+      const z2 = x1 * Math.sin(radAlpha) + z1 * Math.cos(radAlpha);
+
+      // Step 3: Rotate around Z axis (Gamma — roll/spin)
+      const x3 = x2 * Math.cos(radGamma) - y2 * Math.sin(radGamma);
+      const y3 = x2 * Math.sin(radGamma) + y2 * Math.cos(radGamma);
 
       // Orthographic Projection
       return {
-        x: centerX + x1 * cubeSize,
-        y: centerY - y2 * cubeSize, // Y is up in 3D, down in Canvas
+        x: centerX + x3 * cubeSize,
+        y: centerY - y3 * cubeSize, // Y is up in 3D, down in Canvas
         depth: z2
       };
     };
@@ -791,7 +804,8 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
       if (dragMode.current === 'rotate') {
         setRotation(r => ({
           alpha: (r.alpha + dx * 0.5) % 360,
-          beta: (r.beta - dy * 0.5) % 360
+          beta: (r.beta - dy * 0.5) % 360,
+          gamma: r.gamma || 0
         }));
       } else {
         setTranslation(t => ({
@@ -925,18 +939,18 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                   >
                       <ChevronRight size={16} strokeWidth={2.5} />
                   </button>
-                  {/* Roll Left (CCW) */}
+                  {/* Spin CCW (Z-axis roll) */}
                   <button
-                      onClick={() => animateRotation(-rotationStep, -rotationStep)}
-                      title={`Roll CCW ${rotationStep}°`}
+                      onClick={() => animateRotation(0, 0, -rotationStep)}
+                      title={`Spin CCW ${rotationStep}°`}
                       className="absolute top-0 left-0 w-6 h-6 flex items-center justify-center rounded-md bg-slate-50 hover:bg-amber-50 hover:text-amber-700 text-slate-400 transition-colors active:bg-amber-100"
                   >
                       <RotateCcw size={12} strokeWidth={2} />
                   </button>
-                  {/* Roll Right (CW) */}
+                  {/* Spin CW (Z-axis roll) */}
                   <button
-                      onClick={() => animateRotation(rotationStep, rotationStep)}
-                      title={`Roll CW ${rotationStep}°`}
+                      onClick={() => animateRotation(0, 0, rotationStep)}
+                      title={`Spin CW ${rotationStep}°`}
                       className="absolute top-0 right-0 w-6 h-6 flex items-center justify-center rounded-md bg-slate-50 hover:bg-amber-50 hover:text-amber-700 text-slate-400 transition-colors active:bg-amber-100"
                   >
                       <RotateCw size={12} strokeWidth={2} />
@@ -972,7 +986,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
               <p>Shift + Drag to Rotate</p>
               <p>Scroll to Zoom</p>
           </div>
-          <button onClick={() => { setTranslation({x:0, y:0}); setRotation({alpha:45, beta:60}); setZoom(1); }} className="pointer-events-auto flex items-center justify-center gap-2 px-3 py-1 bg-white border border-slate-200 rounded shadow-sm text-[10px] font-bold hover:bg-slate-50">
+          <button onClick={() => { setTranslation({x:0, y:0}); setRotation({alpha:45, beta:60, gamma:0}); setZoom(1); }} className="pointer-events-auto flex items-center justify-center gap-2 px-3 py-1 bg-white border border-slate-200 rounded shadow-sm text-[10px] font-bold hover:bg-slate-50">
               <Rotate3D size={12} />
               RESET VIEW
           </button>

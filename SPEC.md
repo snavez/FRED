@@ -75,11 +75,12 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 - Point and trajectory modes
 - Adjustable F1, F2, F3 ranges
 - Quick-align buttons (F1 vs F2, F2 vs F3, F1 vs F3) with correct axis orientation
-- **Rotation control widget** — D-pad style directional arrows for predictable rotation with smooth animation (ease-out cubic, 300ms). Configurable step size (5°–90°). Diagonal roll buttons (CW/CCW). Complements shift+drag free rotation
+- **Rotation control widget** — D-pad style directional arrows for predictable rotation with smooth animation (ease-out cubic, 300ms). ←→ turntable (Y-axis), ↑↓ tilt (X-axis), CW/CCW spin (Z-axis roll). Configurable step size (5°–90°). Complements shift+drag free rotation
+- **3-axis rotation model**: alpha (Y-axis turntable, purely horizontal), beta (X-axis tilt), gamma (Z-axis roll/spin). Rotation order Ry·Rx·Rz for intuitive controls
 - Centroid size/opacity sliders in sidebar (shared with F1/F2 plot)
 - Combined color+shape legend when same variable mapped to both
 - Ellipse line width respects config slider
-- 360° unclamped rotation (alpha around Y, beta around X)
+- 360° unclamped rotation on all three axes
 
 ### Trajectory Time Series
 - Line plots of formant trajectories over normalized time
