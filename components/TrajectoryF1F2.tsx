@@ -320,15 +320,16 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         }
 
         if (config.showTrajectoryLabels) {
-          let labelText = cKey;
-          if (config.meanLabelType === 'color') labelText = cKey !== 'All' ? cKey : (lKey || cKey);
-          else if (config.meanLabelType === 'shape') labelText = lKey || cKey;
-          else if (config.meanLabelType === 'both') labelText = lKey && lKey !== 'Default' ? `${cKey} ${lKey}` : cKey;
+          const displayL = (!lKey || lKey === 'Default') ? 'All' : lKey;
+          let labelText: string;
+          if (config.meanLabelType === 'color') labelText = cKey;
+          else if (config.meanLabelType === 'shape') labelText = displayL;
+          else if (config.meanLabelType === 'both') labelText = cKey !== 'All' && displayL !== 'All' ? `${cKey} ${displayL}` : (cKey !== 'All' ? cKey : displayL);
           else {
             // Auto: show whichever variables are assigned
-            if (cKey !== 'All' && lKey && lKey !== 'Default') labelText = `${cKey} ${lKey}`;
-            else if (cKey === 'All' && lKey && lKey !== 'Default') labelText = lKey;
-            else labelText = cKey;
+            if (cKey !== 'All' && displayL !== 'All') labelText = `${cKey} ${displayL}`;
+            else if (cKey !== 'All') labelText = cKey;
+            else labelText = displayL;
           }
           
           ctx.save();
