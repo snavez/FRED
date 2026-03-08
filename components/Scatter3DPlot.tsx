@@ -925,7 +925,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                   </button>
                   {/* Left */}
                   <button
-                      onClick={() => animateRotation(-rotationStep, 0)}
+                      onClick={() => animateRotation(rotationStep, 0)}
                       title={`Rotate left ${rotationStep}°`}
                       className="absolute left-0 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-md bg-slate-100 hover:bg-sky-100 hover:text-sky-700 text-slate-600 transition-colors active:bg-sky-200"
                   >
@@ -933,7 +933,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                   </button>
                   {/* Right */}
                   <button
-                      onClick={() => animateRotation(rotationStep, 0)}
+                      onClick={() => animateRotation(-rotationStep, 0)}
                       title={`Rotate right ${rotationStep}°`}
                       className="absolute right-0 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-md bg-slate-100 hover:bg-sky-100 hover:text-sky-700 text-slate-600 transition-colors active:bg-sky-200"
                   >
