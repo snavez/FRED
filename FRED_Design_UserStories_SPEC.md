@@ -62,7 +62,6 @@ FRED (Formant Research for EDucation) is a browser-based application for visuali
 - Configurable hover tooltip (user selects which fields to display)
 - Non-linear opacity sliders for fine-grained control at low opacity values
 - High-resolution PNG export with smart defaults, NudgePad controls, and comprehensive layout options
-- AI-assisted acoustic analysis (Gemini integration)
 - Greyscale/B&W mode
 - Synthetic data generation for demo/testing
 
@@ -122,7 +121,7 @@ FRED (Formant Research for EDucation) is a browser-based application for visuali
 | 3D Rendering | Custom orthographic projection | No dependency on Three.js; canvas-based 3D scatter |
 | State | React hooks (useState, useMemo, useCallback) | Efficient recalculation of derived data |
 | Styling | Tailwind CSS | Rapid UI development |
-| AI | Google Gemini API (optional) | Automated acoustic phonetics insights |
+| AI | — (removed; planned for future reintegration) | — |
 
 ### 3.2 Component Architecture
 
@@ -132,7 +131,7 @@ App.tsx
 ├── Logic: filterData(), updateStyleOverride(), globalReferences
 │
 ├── Header.tsx
-│   └── Token counter, AI Insights button, branding
+│   └── Token counter, branding
 │
 ├── Sidebar.tsx
 │   ├── CSV file upload (drag & drop)
@@ -1172,34 +1171,16 @@ SVG export is planned but not yet implemented. Would enable:
 
 ---
 
-## 10. AI Integration
+## 10. AI Integration (Removed)
 
-### 10.1 Current Implementation
+The Gemini AI integration has been removed from the current build. A previous version included an "AI Insights" button that sent aggregated data to Google's Gemini API for automated acoustic analysis. This may be reintegrated in a future version.
 
-FRED integrates with the Google Gemini API (`gemini-3-flash-preview`) for automated acoustic phonetics insights.
-
-### 10.2 Workflow
-
-1. User clicks "AI Insights" button in the header
-2. FRED samples the first 50 tokens from the dataset
-3. Calculates mean F1/F2 from trajectory data per token
-4. Sends summary to Gemini with a phonetic analysis prompt
-5. Gemini returns a 3-paragraph academic summary covering:
-   - Overall vowel space distribution
-   - Stress-related patterns (e.g., centralisation)
-   - Outlier detection recommendations
-6. Result displayed in a floating panel below the header
-
-### 10.3 Requirements
-
-- Requires `API_KEY` environment variable with valid Google Gemini API key
-- Graceful fallback: displays error message if API is unavailable
-
-### 10.4 Future Considerations
+### 10.1 Future Considerations
 
 - Statistical analysis integration (means, SDs, ANOVA results)
 - Per-layer analysis comparison
 - Exportable analysis reports
+- AI-assisted acoustic phonetics insights (requires API integration)
 
 ---
 
@@ -1229,7 +1210,7 @@ Currently runs as a Vite dev server. Target: standalone local app runnable on an
 ### 11.3 Data Privacy
 
 - All processing client-side (no data uploaded to server, except optional AI analysis)
-- AI integration sends only aggregated summaries (first 50 tokens), not raw data
+- No AI integration in current build — all data stays in the browser
 - No analytics or tracking of user data content
 
 ---

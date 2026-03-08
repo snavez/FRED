@@ -103,22 +103,6 @@ FRED will load with some demo data so you can explore right away. Upload your ow
 
 ---
 
-## What about the AI Insights button?
-
-The "AI Insights" button in the header uses Google's Gemini AI to generate a short acoustic analysis of your data. This is **completely optional** — everything else works without it.
-
-If you want to enable it:
-
-1. Get a free API key from https://aistudio.google.com/apikey
-2. Create a file called `.env.local` in the FRED folder
-3. Add this line to it:
-   ```
-   GEMINI_API_KEY=your-key-here
-   ```
-4. Restart the app (`Ctrl + C`, then `npm run dev`)
-
----
-
 ## Troubleshooting
 
 | Problem | Solution |
