@@ -95,7 +95,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
   // Camera State
-  const [rotation, setRotation] = useState({ alpha: 45, beta: 60, gamma: 0 }); // alpha: Y-axis turntable, beta: X-axis tilt, gamma: Z-axis roll
+  const [rotation, setRotation] = useState({ alpha: -15, beta: -105, gamma: 0 }); // alpha: Y-axis turntable, beta: X-axis tilt, gamma: Z-axis roll
   const [translation, setTranslation] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   
@@ -941,7 +941,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                   </button>
                   {/* Spin CCW (Z-axis roll) */}
                   <button
-                      onClick={() => animateRotation(0, 0, -rotationStep)}
+                      onClick={() => animateRotation(0, 0, rotationStep)}
                       title={`Spin CCW ${rotationStep}°`}
                       className="absolute top-0 left-0 w-6 h-6 flex items-center justify-center rounded-md bg-slate-50 hover:bg-amber-50 hover:text-amber-700 text-slate-400 transition-colors active:bg-amber-100"
                   >
@@ -949,7 +949,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                   </button>
                   {/* Spin CW (Z-axis roll) */}
                   <button
-                      onClick={() => animateRotation(0, 0, rotationStep)}
+                      onClick={() => animateRotation(0, 0, -rotationStep)}
                       title={`Spin CW ${rotationStep}°`}
                       className="absolute top-0 right-0 w-6 h-6 flex items-center justify-center rounded-md bg-slate-50 hover:bg-amber-50 hover:text-amber-700 text-slate-400 transition-colors active:bg-amber-100"
                   >
@@ -986,7 +986,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
               <p>Shift + Drag to Rotate</p>
               <p>Scroll to Zoom</p>
           </div>
-          <button onClick={() => { setTranslation({x:0, y:0}); setRotation({alpha:45, beta:60, gamma:0}); setZoom(1); }} className="pointer-events-auto flex items-center justify-center gap-2 px-3 py-1 bg-white border border-slate-200 rounded shadow-sm text-[10px] font-bold hover:bg-slate-50">
+          <button onClick={() => { setTranslation({x:0, y:0}); setRotation({alpha:-15, beta:-105, gamma:0}); setZoom(1); }} className="pointer-events-auto flex items-center justify-center gap-2 px-3 py-1 bg-white border border-slate-200 rounded shadow-sm text-[10px] font-bold hover:bg-slate-50">
               <Rotate3D size={12} />
               RESET VIEW
           </button>
