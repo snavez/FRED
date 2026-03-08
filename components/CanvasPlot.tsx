@@ -688,7 +688,12 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
           ctx.strokeText(label, mx, my);
           ctx.fillText(label, mx, my);
         } else {
-          const centroidSize = (config.centroidSize * drawScale) / scale;
+          // In export mode, scale centroid shapes with dataLabelSize so the Data Labels
+          // slider controls both text and shape centroids proportionally
+          const centroidSizeBase = exportConfig
+            ? Math.max(config.centroidSize, exportConfig.dataLabelSize * 0.5)
+            : config.centroidSize;
+          const centroidSize = (centroidSizeBase * drawScale) / scale;
           // White halo: always draw as the filled (closed) variant
           const closedShape = shape.replace('-open', '');
           ctx.save();
@@ -796,8 +801,8 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       let curY = y;
       const isExport = !!exportConfig;
 
-      const fontSizeTitle = exportConfig ? exportConfig.legendTitleSize : (isExport ? 36 : 14) * drawScale;
-      const fontSizeItem = exportConfig ? exportConfig.legendItemSize : (isExport ? 24 : 12) * drawScale;
+      const fontSizeTitle = exportConfig ? exportConfig.legendTitleSize * drawScale : (isExport ? 36 : 14) * drawScale;
+      const fontSizeItem = exportConfig ? exportConfig.legendItemSize * drawScale : (isExport ? 24 : 12) * drawScale;
       const spacing = fontSizeItem * 1.6;
       const circleSize = fontSizeItem * 0.5;
       const xOffset = fontSizeItem * 1.5;
@@ -843,8 +848,8 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
                     ctx.stroke();
                     ctx.setLineDash([]);
                   } else if (shapeKey === colorKey && shapeMap[k]) {
-                    // Combined: draw colored shape
-                    drawShape(ctx, shapeMap[k] as string, x + (circleSize), curY + (circleSize/2), (circleSize * 0.8), 1, drawScale);
+                    // Combined: draw colored shape — proportional stroke for open shapes
+                    drawShape(ctx, shapeMap[k] as string, x + (circleSize), curY + (circleSize/2), (circleSize * 0.8), 1, drawScale, circleSize * 0.15);
                   } else {
                     ctx.beginPath(); ctx.arc(x + (circleSize), curY + (circleSize/2), circleSize, 0, Math.PI*2); ctx.fill();
                   }
@@ -867,7 +872,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
                   const count = shapeCounts ? (shapeCounts[k] || 0) : 0;
                   ctx.fillStyle = '#64748b';
                   ctx.strokeStyle = '#64748b';
-                  drawShape(ctx, s as string, x + (circleSize), curY + (circleSize/2), (circleSize * 0.8), 1, drawScale);
+                  drawShape(ctx, s as string, x + (circleSize), curY + (circleSize/2), (circleSize * 0.8), 1, drawScale, circleSize * 0.15);
                   ctx.fillStyle = '#334155';
                   ctx.fillText(`${k} ${count ? `(n=${count})` : ''}`, x + xOffset, curY + (circleSize/2));
                   curY += spacing;
