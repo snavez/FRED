@@ -940,29 +940,39 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       const graphX = (exportConfig.graphX || 0) * drawScale;
       const graphY = (exportConfig.graphY || 0) * drawScale;
 
+      // Dynamic margins based on font sizes so nothing overflows the canvas
+      const bottomMarginBase = Math.max(160, exportConfig.xAxisLabelSize * 1.5 + 30);
+      const leftMarginBase = Math.max(220, exportConfig.yAxisLabelSize * 1.5 + 100);
+      const topMarginBase = exportConfig.showPlotTitle
+          ? Math.max(200, (exportConfig.plotTitleSize || 128) + 100)
+          : Math.max(100, exportConfig.tickLabelSize + 40);
+
       const margin = {
-          top: ((exportConfig.showPlotTitle ? 200 : 100) * drawScale) + graphY,
+          top: (topMarginBase * drawScale) + graphY,
           right: 100 * drawScale,
-          bottom: 140 * drawScale,
-          left: (200 * drawScale) + graphX
+          bottom: bottomMarginBase * drawScale,
+          left: (leftMarginBase * drawScale) + graphX
       };
 
       let legendSpaceRight = 0;
       let legendSpaceBottom = 0;
 
       if (exportConfig.showLegend) {
+          // Scale legend space with font sizes so text fits
+          const legendSpace = Math.max(800, exportConfig.legendItemSize * 15, exportConfig.legendTitleSize * 10);
           if (exportConfig.legendPosition === 'right') {
-              legendSpaceRight = 800 * drawScale;
+              legendSpaceRight = legendSpace * drawScale;
           } else if (exportConfig.legendPosition === 'bottom') {
-              legendSpaceBottom = 800 * drawScale;
+              legendSpaceBottom = legendSpace * drawScale;
           }
       }
 
       const plotWidth = basePlotWidth * drawScale;
       const plotHeight = basePlotHeight * drawScale;
 
-      offscreen.width = (exportConfig.canvasWidth ? exportConfig.canvasWidth * drawScale : Math.max(100, plotWidth + legendSpaceRight + margin.left + margin.right));
-      offscreen.height = (exportConfig.canvasHeight ? exportConfig.canvasHeight * drawScale : Math.max(100, plotHeight + legendSpaceBottom + margin.top + margin.bottom));
+      // Always auto-size canvas to fit all elements
+      offscreen.width = Math.max(100, plotWidth + legendSpaceRight + margin.left + margin.right);
+      offscreen.height = Math.max(100, plotHeight + legendSpaceBottom + margin.top + margin.bottom);
       const ctx = offscreen.getContext('2d');
       if (!ctx) return '';
 
@@ -997,14 +1007,14 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       ctx.font = `bold ${xAxisSize}px Inter, sans-serif`;
       ctx.textAlign = 'center';
       const xAxisTitleX = (plotWidth / 2) + ((exportConfig.xAxisLabelX || 0) * drawScale);
-      const xAxisTitleY = plotHeight + (85 * drawScale) + ((exportConfig.xAxisLabelY || 0) * drawScale);
+      const xAxisTitleY = plotHeight + (bottomMarginBase * 0.55 * drawScale) + ((exportConfig.xAxisLabelY || 0) * drawScale);
       ctx.fillText('F2 (Hz)', xAxisTitleX, xAxisTitleY);
 
       const yAxisSize = exportConfig.yAxisLabelSize * drawScale;
       ctx.font = `bold ${yAxisSize}px Inter, sans-serif`;
       ctx.save();
 
-      const yAxisTitleX = -(160 * drawScale) + ((exportConfig.yAxisLabelX || 0) * drawScale);
+      const yAxisTitleX = -(leftMarginBase * 0.65 * drawScale) + ((exportConfig.yAxisLabelX || 0) * drawScale);
       const yAxisTitleY = (plotHeight / 2) + ((exportConfig.yAxisLabelY || 0) * drawScale);
       ctx.translate(yAxisTitleX, yAxisTitleY);
       ctx.rotate(-Math.PI / 2);
@@ -1039,7 +1049,8 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
               ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
           }
 
-          drawLegend(ctx, lx, ly, legendSpaceRight || (800 * drawScale), drawScale, exportConfig);
+          const legendDrawWidth = legendSpaceRight || (Math.max(800, exportConfig.legendItemSize * 15) * drawScale);
+          drawLegend(ctx, lx, ly, legendDrawWidth, drawScale, exportConfig);
           ctx.restore();
       }
 
@@ -1049,10 +1060,10 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     return {
         exportImage: () => {
             const defaultExportConfig: ExportConfig = {
-                scale: 3, xAxisLabelSize: 32, yAxisLabelSize: 32, tickLabelSize: 24, dataLabelSize: 24,
-                showLegend: true, legendTitleSize: 36, legendItemSize: 24,
+                scale: 3, xAxisLabelSize: 96, yAxisLabelSize: 96, tickLabelSize: 64, dataLabelSize: 64,
+                showLegend: true, legendTitleSize: 96, legendItemSize: 64,
                 legendPosition: 'right', legendX: 0, legendY: 0,
-                showPlotTitle: false, plotTitle: 'Vowel Space Plot', plotTitleSize: 48,
+                showPlotTitle: false, plotTitle: 'Vowel Space Plot', plotTitleSize: 128,
                 showColorLegend: true, colorLegendTitle: 'COLOR',
                 showShapeLegend: true, shapeLegendTitle: 'SHAPE',
                 showTextureLegend: true, textureLegendTitle: 'TEXTURE',

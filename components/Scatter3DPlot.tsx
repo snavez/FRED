@@ -567,8 +567,8 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
     exportImage: () => {
         // Legacy support
         const defaultExportConfig: ExportConfig = {
-            scale: 3, xAxisLabelSize: 32, yAxisLabelSize: 32, tickLabelSize: 24, dataLabelSize: 24,
-            showLegend: true, legendTitleSize: 36, legendItemSize: 24,
+            scale: 3, xAxisLabelSize: 96, yAxisLabelSize: 96, tickLabelSize: 64, dataLabelSize: 64,
+            showLegend: true, legendTitleSize: 96, legendItemSize: 64,
             showColorLegend: true, colorLegendTitle: config.colorBy.toUpperCase(),
             showShapeLegend: true, shapeLegendTitle: config.shapeBy.toUpperCase(),
             showTextureLegend: true, textureLegendTitle: '',
@@ -615,12 +615,17 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
         const plotW = baseWidth * graphScaleX;
         const plotH = baseHeight * graphScaleY;
 
-        // Margins
+        // Dynamic margins based on font sizes
+        const bottomMarginBase = Math.max(120, exportConfig.xAxisLabelSize * 1.2 + 20);
+        const leftMarginBase = Math.max(120, exportConfig.yAxisLabelSize * 1.2 + 20);
+        const topMarginBase = exportConfig.showPlotTitle
+            ? Math.max(200, (exportConfig.plotTitleSize || 128) + 100)
+            : Math.max(100, exportConfig.tickLabelSize + 40);
         const margin = {
-            top: (100 * drawScale) + ((exportConfig.graphY || 0) * drawScale),
+            top: (topMarginBase * drawScale) + ((exportConfig.graphY || 0) * drawScale),
             right: 100 * drawScale,
-            bottom: 100 * drawScale,
-            left: (100 * drawScale) + ((exportConfig.graphX || 0) * drawScale)
+            bottom: bottomMarginBase * drawScale,
+            left: (leftMarginBase * drawScale) + ((exportConfig.graphX || 0) * drawScale)
         };
 
         // Legend Calculation
@@ -629,8 +634,9 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
         let ly = 0;
 
         if (exportConfig.showLegend) {
+            const legendSpace = Math.max(800, exportConfig.legendItemSize * 15, exportConfig.legendTitleSize * 10);
             if (exportConfig.legendPosition === 'right') {
-                legendW = 800 * drawScale;
+                legendW = legendSpace * drawScale;
                 lx = margin.left + plotW + (100 * drawScale);
                 ly = margin.top;
             } else if (exportConfig.legendPosition === 'bottom') {

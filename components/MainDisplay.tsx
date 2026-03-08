@@ -1121,6 +1121,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
         plotRef={plotRef}
         layers={layers}
         defaultTitle={bgConfig.colorBy !== 'none' ? bgConfig.colorBy : bgConfig.groupBy}
+        activeTab={activeTab}
       />
 
       {/* Close dropdowns on click outside */}

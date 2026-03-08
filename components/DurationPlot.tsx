@@ -76,12 +76,15 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config }
 
     const isExport = !!exportConfig;
 
-    // Scale margins with drawScale for export
-    const margin = { 
-        top: (60 * drawScale) + ((exportConfig?.graphY || 0) * drawScale), 
-        right: 40 * drawScale, 
-        bottom: 80 * drawScale, 
-        left: (200 * drawScale) + ((exportConfig?.graphX || 0) * drawScale) // Giant left margin for axis
+    // Dynamic margins based on font sizes for export
+    const bottomMarginBase = exportConfig ? Math.max(100, exportConfig.xAxisLabelSize * 1.2 + 20) : 80;
+    const leftMarginBase = exportConfig ? Math.max(220, exportConfig.yAxisLabelSize * 1.5 + 100) : 200;
+    const topMarginBase = exportConfig?.showPlotTitle ? Math.max(120, (exportConfig.plotTitleSize || 128) + 40) : 60;
+    const margin = {
+        top: (topMarginBase * drawScale) + ((exportConfig?.graphY || 0) * drawScale),
+        right: 40 * drawScale,
+        bottom: bottomMarginBase * drawScale,
+        left: (leftMarginBase * drawScale) + ((exportConfig?.graphX || 0) * drawScale)
     };
     const chartW = width - margin.left - margin.right;
     const chartH = height - margin.top - margin.bottom;
@@ -128,7 +131,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config }
         ctx.fillStyle = '#0f172a';
         ctx.textAlign = 'center';
         // Position at vertical center of chart, rotated
-        const yLabelX = margin.left - (120 * drawScale) + ((exportConfig.yAxisLabelX || 0) * drawScale);
+        const yLabelX = margin.left - (leftMarginBase * 0.6 * drawScale) + ((exportConfig.yAxisLabelX || 0) * drawScale);
         const yLabelY = margin.top + (chartH / 2) + ((exportConfig.yAxisLabelY || 0) * drawScale);
         ctx.translate(yLabelX, yLabelY);
         ctx.rotate(-Math.PI / 2);
@@ -305,8 +308,8 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config }
         exportImage: () => {
             // Legacy Support
             const defaultExportConfig: ExportConfig = {
-                scale: 3, xAxisLabelSize: 48, yAxisLabelSize: 48, tickLabelSize: 24, dataLabelSize: 24,
-                showLegend: true, legendTitleSize: 36, legendItemSize: 24,
+                scale: 3, xAxisLabelSize: 96, yAxisLabelSize: 96, tickLabelSize: 64, dataLabelSize: 64,
+                showLegend: true, legendTitleSize: 96, legendItemSize: 64,
                 showColorLegend: true, colorLegendTitle: 'COLOR',
                 showShapeLegend: true, shapeLegendTitle: 'SHAPE',
                 showTextureLegend: true, textureLegendTitle: 'TEXTURE',

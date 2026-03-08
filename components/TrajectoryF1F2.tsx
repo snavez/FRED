@@ -466,11 +466,16 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         const plotWidth = baseWidth * graphScaleX;
         const plotHeight = baseHeight * graphScaleY;
 
-        // Margins
+        // Dynamic margins based on font sizes
+        const bottomMarginBase = Math.max(160, exportConfig.xAxisLabelSize * 1.5 + 30);
+        const leftMarginBase = Math.max(220, exportConfig.yAxisLabelSize * 1.5 + 100);
+        const topMarginBase = exportConfig.showPlotTitle
+            ? Math.max(200, (exportConfig.plotTitleSize || 128) + 100)
+            : Math.max(100, exportConfig.tickLabelSize + 40);
         const margin = {
-            top: (100 * drawScale) + ((exportConfig.graphY || 0) * drawScale),
-            bottom: (140 * drawScale),
-            left: (200 * drawScale) + ((exportConfig.graphX || 0) * drawScale),
+            top: (topMarginBase * drawScale) + ((exportConfig.graphY || 0) * drawScale),
+            bottom: bottomMarginBase * drawScale,
+            left: (leftMarginBase * drawScale) + ((exportConfig.graphX || 0) * drawScale),
             right: (100 * drawScale)
         };
 
@@ -480,8 +485,9 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         let ly = 0;
 
         if (exportConfig.showLegend) {
+            const legendSpace = Math.max(800, exportConfig.legendItemSize * 15, exportConfig.legendTitleSize * 10);
             if (exportConfig.legendPosition === 'right') {
-                legendWidth = 800 * drawScale;
+                legendWidth = legendSpace * drawScale;
                 lx = margin.left + plotWidth + (40 * drawScale);
                 ly = margin.top;
             } else if (exportConfig.legendPosition === 'bottom') {
@@ -535,7 +541,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         ctx.textAlign = 'center';
         
         const xLabelX = (plotWidth / 2) + ((exportConfig.xAxisLabelX || 0) * drawScale);
-        const xLabelY = plotHeight + (85 * drawScale) + ((exportConfig.xAxisLabelY || 0) * drawScale);
+        const xLabelY = plotHeight + (bottomMarginBase * 0.55 * drawScale) + ((exportConfig.xAxisLabelY || 0) * drawScale);
         ctx.fillText('F2 (Hz)', xLabelX, xLabelY);
         
         ctx.save();
@@ -556,7 +562,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         ctx.restore(); // Undo the previous save
         ctx.save();
         
-        const yAxisX = margin.left - (160 * drawScale) + ((exportConfig.yAxisLabelX || 0) * drawScale);
+        const yAxisX = margin.left - (leftMarginBase * 0.65 * drawScale) + ((exportConfig.yAxisLabelX || 0) * drawScale);
         const yAxisY = margin.top + (plotHeight / 2) + ((exportConfig.yAxisLabelY || 0) * drawScale);
         
         ctx.translate(yAxisX, yAxisY);
@@ -601,11 +607,11 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
             // Default Config for legacy direct call
             const defaultExportConfig: ExportConfig = {
                 scale: drawScale,
-                xAxisLabelSize: 48,
-                yAxisLabelSize: 48,
-                tickLabelSize: 28,
-                dataLabelSize: 24,
-                showLegend: true, legendTitleSize: 36, legendItemSize: 24,
+                xAxisLabelSize: 96,
+                yAxisLabelSize: 96,
+                tickLabelSize: 64,
+                dataLabelSize: 64,
+                showLegend: true, legendTitleSize: 96, legendItemSize: 64,
                 showColorLegend: true, colorLegendTitle: config.colorBy.toUpperCase(),
                 showShapeLegend: true, shapeLegendTitle: '',
                 showTextureLegend: true, textureLegendTitle: '',

@@ -320,30 +320,49 @@ Plus any custom columns from the dataset.
 ## 10. Export System
 
 ### Export Dialog
-- Full-screen modal with live preview
-- **Resolution**: configurable scale multiplier (default 3x)
-- **Graph geometry**: independent X/Y scale, X/Y offset
-- **Canvas size**: auto-sizing or manual width/height
+- Full-screen modal with live preview (scale-1 preview, full-resolution download)
+- **Smart defaults**: `computeExportDefaults()` derives config from current layers (legend titles, section visibility)
+- **Resolution**: configurable scale multiplier (1x–4x, default 3x)
+- **Canvas**: always auto-sized to fit plot + margins + legend; no manual canvas dimensions
+- **Dynamic margins**: margins in `generateImage()` scale with font sizes so nothing overflows
 
-### Typography Controls
-- X-axis label size + offset
-- Y-axis label size + offset
-- Tick label size + offset
-- Data label size
-- Font scale slider (proportionally scales all font sizes)
-- Linked/unlinked axis label sizes
+### Quick Settings (always visible)
+- Resolution buttons (1x–4x)
+- Global Font Scale slider (0.5x–3.0x) — proportionally scales all text
 
-### Title
-- Toggle visibility
-- Custom title text, size, and position offset
+### Collapsible Sections
+Each section is collapsible with a dot indicator when non-default values are set:
 
-### Legend
-- Position: Right, Bottom, Inside Top-Right, Inside Top-Left, Custom (x/y coordinates)
-- Per-layer legend control: show/hide, custom titles for color/shape/lineType/texture sections
-- Title and item font sizes
+- **Chart Title**: toggle on/off, text, size, NudgePad for position offset
+- **Graph Geometry**: graph scale (linked/unlinked X/Y), NudgePad for graph offset
+- **Axis Labels**: X/Y axis label sizes (linked/unlinked), tick number size, data label size; NudgePads for axis label offsets and tick offsets
+- **Legend**: show/hide toggle, position (Right/Bottom/Inside/Custom), per-layer controls with editable titles, heading/item font sizes
+
+### NudgePad Component
+Replaces raw X/Y offset inputs with directional arrows (↑↓←→) + reset button:
+- Default step: 10px (configurable per instance)
+- Hold Shift for fine control (×0.2), Ctrl for coarse (×5)
+- Center reset button returns to 0,0
+- Current offset values shown when non-zero
+
+### Typography Defaults (base sizes at 1.0x font scale)
+- Axis labels: 96px (was 32px — 3× increase for document readability)
+- Tick numbers: 64px (was 24px)
+- Data labels: 64px (was 24px)
+- Legend headings: 96px (was 36px)
+- Legend items: 64px (was 24px)
+- Plot title: 128px (was 48px)
+
+### Persistence (localStorage)
+- Font scale, resolution, and legend position persist across export sessions
+- Offset values always start fresh from computed defaults
+
+### Reset to Defaults
+- Header "Reset" button recomputes all settings from current layers
+- Resets font scale to 1.0x, re-derives legend titles, restores all offsets to 0
 
 ### Output
-- PNG download with timestamped filename
+- PNG download with timestamped filename (`fred_export_{timestamp}.png`)
 
 ---
 
