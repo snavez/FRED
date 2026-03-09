@@ -20,6 +20,7 @@ interface SidebarProps {
 
 /** Built-in filter fields and the column roles that enable them */
 const BUILTIN_FILTER_FIELDS: { key: string, label: string, roles: ColumnRole[] }[] = [
+  { key: 'file_id', label: 'File / Speaker', roles: ['file_id'] },
   { key: 'type', label: 'Type', roles: ['type', 'canonical_type'] },
   { key: 'vowelCategory', label: 'Vowel Category', roles: ['type', 'canonical_type'] },
   { key: 'canonical', label: 'Phonemes', roles: ['canonical'] },
@@ -68,6 +69,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   // Visibility flags
+  const showFileId = isFieldVisible('file_id');
   const showType = isFieldVisible('type');
   const showVowelCat = isFieldVisible('vowelCategory');
   const showPhonemes = isFieldVisible('canonical');
@@ -82,13 +84,14 @@ const Sidebar: React.FC<SidebarProps> = ({
   // --- Popover entries: all fields available in the dataset ---
   const popoverEntries = useMemo(() => {
     if (!datasetMeta) return [];
-    const entries: { key: string, label: string, visible: boolean }[] = [];
+    const entries: { key: string, label: string, visible: boolean, section: 'builtin' | 'custom' }[] = [];
 
     BUILTIN_FILTER_FIELDS.forEach(f => {
       if (f.roles.some(r => datasetMeta.columnMappings.some(m => m.role === r))) {
         entries.push({
           key: f.key,
           label: f.label,
+          section: 'builtin',
           visible: f.roles.some(r => {
             const mapping = datasetMeta.columnMappings.find(m => m.role === r);
             return mapping ? mapping.showInSidebar !== false : false;
@@ -102,6 +105,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       entries.push({
         key: col,
         label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+        section: 'custom',
         visible: mapping ? mapping.showInSidebar !== false : true
       });
     });
@@ -180,6 +184,10 @@ const Sidebar: React.FC<SidebarProps> = ({
   }, [phonemeFilteredData]);
 
   // Independent options (from full data)
+  const fileIdOptions = useMemo(() => {
+    return Array.from(new Set(data.map(t => t.file_id).filter(Boolean))).sort();
+  }, [data]);
+
   const alignmentOptions = useMemo(() => {
     return Array.from(new Set(data.map(t => t.alignment).filter(Boolean))).sort();
   }, [data]);
@@ -220,7 +228,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   }, [datasetMeta]);
 
   const hasData = data.length > 0;
-  const hasAnyFilters = showType || showVowelCat || showPhonemes || showWords || showAlignments || showProduced || showCanStress || showLexStress || showSylMark || showVoicePitch || visibleCustomColumns.length > 0;
+  const hasAnyFilters = showFileId || showType || showVowelCat || showPhonemes || showWords || showAlignments || showProduced || showCanStress || showLexStress || showSylMark || showVoicePitch || visibleCustomColumns.length > 0;
 
   /** Reusable button-toggle filter section */
   const renderFilterSection = (
@@ -305,7 +313,24 @@ const Sidebar: React.FC<SidebarProps> = ({
                   {showFieldSettings && (
                     <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-20 w-56 py-2 max-h-80 overflow-y-auto">
                       <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase border-b border-slate-100 mb-1">Show in sidebar</div>
-                      {popoverEntries.map(entry => (
+                      {popoverEntries.some(e => e.section === 'builtin') && (
+                        <div className="px-3 pt-1.5 pb-0.5 text-[9px] font-bold text-slate-400 uppercase">Filters</div>
+                      )}
+                      {popoverEntries.filter(e => e.section === 'builtin').map(entry => (
+                        <label key={entry.key} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={entry.visible}
+                            onChange={() => toggleFieldInPopover(entry)}
+                            className="rounded text-sky-700"
+                          />
+                          <span className="text-xs text-slate-700">{entry.label}</span>
+                        </label>
+                      ))}
+                      {popoverEntries.some(e => e.section === 'custom') && (
+                        <div className="px-3 pt-2 pb-0.5 text-[9px] font-bold text-slate-400 uppercase border-t border-slate-100 mt-1">Custom</div>
+                      )}
+                      {popoverEntries.filter(e => e.section === 'custom').map(entry => (
                         <label key={entry.key} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
                           <input
                             type="checkbox"
@@ -323,6 +348,9 @@ const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             <div className="space-y-4">
+              {/* File / Speaker */}
+              {showFileId && renderFilterSection('File / Speaker', fileIdOptions, filters.fileIds, 'fileIds')}
+
               {/* Type */}
               {showType && renderFilterSection('Type', typeOptions, filters.types, 'types')}
 

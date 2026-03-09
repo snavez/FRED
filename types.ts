@@ -38,6 +38,8 @@ export interface StyleOverrides {
   lineTypes: Record<string, string>; // key for dash pattern (e.g., 'solid', 'dash')
 }
 
+export type NormalizationMethod = 'hz' | 'bark' | 'erb' | 'mel' | 'lobanov' | 'nearey1';
+
 export interface PlotConfig {
   invertX: boolean; // F2
   invertY: boolean; // F1
@@ -49,6 +51,7 @@ export interface PlotConfig {
 
   // Data Source Config
   useSmoothing: boolean;
+  normalization: NormalizationMethod;
 
   timePoint: number; // 0, 10, ... 100
 
@@ -69,6 +72,7 @@ export interface PlotConfig {
   // Trajectory F1/F2 Config
   showIndividualLines: boolean;
   trajectoryLineOpacity: number;
+  trajectoryLineWidth: number;
   showTrajectoryLabels: boolean;
   meanTrajectoryLabelSize: number;
   meanTrajectoryWidth: number;
@@ -148,6 +152,7 @@ export interface FilterState {
   lexicalStress: string[];
   syllableMark: string[];
   voicePitch: string[];
+  fileIds: string[];
   customFilters?: Record<string, string[]>;
 }
 

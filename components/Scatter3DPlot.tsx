@@ -1,6 +1,7 @@
 
 import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
-import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig } from '../types';
+import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, NormalizationMethod } from '../types';
+import { normalizeFormant, getAxisLabel, SpeakerStatsMap } from '../utils/normalization';
 import { Layers, Rotate3D, Box, LayoutTemplate, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, RotateCcw, RotateCw } from 'lucide-react';
 
 interface Scatter3DPlotProps {
@@ -8,6 +9,7 @@ interface Scatter3DPlotProps {
   config: PlotConfig;
   styleOverrides?: StyleOverrides;
   onLegendClick?: (category: string, currentStyles: any, event: React.MouseEvent) => void;
+  speakerStats?: SpeakerStatsMap;
 }
 
 const COLORS = [
@@ -23,6 +25,12 @@ const SHAPES = [
 ];
 
 import { getLabel } from '../utils/getLabel';
+import { TrajectoryPoint } from '../types';
+
+const LINE_TYPE_PATTERNS: Record<string, number[]> = {
+    'solid': [], 'dash': [5, 5], 'dot': [2, 2], 'longdash': [10, 5], 'dotdash': [20, 5, 5, 5]
+};
+const DEFAULT_LINE_TYPE_NAMES = ['solid', 'dash', 'dot', 'longdash', 'dotdash'];
 
 // Find nearest available time-point in a token's trajectory
 const findNearestTimePoint = (trajectory: { time: number }[], target: number): number | undefined => {
@@ -90,7 +98,7 @@ const ShapeIcon = ({ shape, color, className }: { shape: string, color: string, 
     );
 };
 
-const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config, styleOverrides, onLegendClick }, ref) => {
+const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config, styleOverrides, onLegendClick, speakerStats }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -175,28 +183,41 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
   const mappings = useMemo(() => {
     const colorKey = config.colorBy === 'none' ? null : config.colorBy;
     const shapeKey = config.shapeBy === 'none' ? null : config.shapeBy;
+    const lineTypeKey = config.lineTypeBy === 'none' ? null : config.lineTypeBy;
     const colorValues: string[] = (Array.from(new Set(data.map(t => getLabel(t, colorKey || '')))) as string[]).filter(v => v !== '').sort();
     const shapeValues: string[] = (Array.from(new Set(data.map(t => getLabel(t, shapeKey || '')))) as string[]).filter(v => v !== '').sort();
+    const lineTypeValues: string[] = (Array.from(new Set(data.map(t => getLabel(t, lineTypeKey || '')))) as string[]).filter(v => v !== '').sort();
 
     const colorMap: Record<string, string> = {};
     const palette = config.bwMode ? ['#000', '#555', '#aaa'] : COLORS;
-    colorValues.forEach((v: string, i: number) => { 
-        colorMap[v] = styleOverrides?.colors?.[v] || palette[i % palette.length]; 
+    colorValues.forEach((v: string, i: number) => {
+        colorMap[v] = styleOverrides?.colors?.[v] || palette[i % palette.length];
     });
 
     const shapeMap: Record<string, string> = {};
-    shapeValues.forEach((v: string, i: number) => { 
-        shapeMap[v] = styleOverrides?.shapes?.[v] || SHAPES[i % SHAPES.length]; 
+    shapeValues.forEach((v: string, i: number) => {
+        shapeMap[v] = styleOverrides?.shapes?.[v] || SHAPES[i % SHAPES.length];
+    });
+
+    const lineTypeMap: Record<string, number[]> = {};
+    const lineTypeNameMap: Record<string, string> = {};
+    lineTypeValues.forEach((v: string, i: number) => {
+        const overrideName = styleOverrides?.lineTypes?.[v];
+        const name = (overrideName && LINE_TYPE_PATTERNS[overrideName]) ? overrideName : DEFAULT_LINE_TYPE_NAMES[i % DEFAULT_LINE_TYPE_NAMES.length];
+        lineTypeNameMap[v] = name;
+        lineTypeMap[v] = LINE_TYPE_PATTERNS[name] || [];
     });
 
     // Counts for Legend
     const colorCounts: Record<string, number> = {};
     const shapeCounts: Record<string, number> = {};
+    const lineTypeCounts: Record<string, number> = {};
     if (colorKey) data.forEach(t => { const k = getLabel(t, colorKey); colorCounts[k] = (colorCounts[k] || 0) + 1; });
     if (shapeKey) data.forEach(t => { const k = getLabel(t, shapeKey); shapeCounts[k] = (shapeCounts[k] || 0) + 1; });
+    if (lineTypeKey) data.forEach(t => { const k = getLabel(t, lineTypeKey); lineTypeCounts[k] = (lineTypeCounts[k] || 0) + 1; });
 
-    return { colorMap, shapeMap, colorKey, shapeKey, colorCounts, shapeCounts };
-  }, [data, config.colorBy, config.shapeBy, config.bwMode, styleOverrides]);
+    return { colorMap, shapeMap, lineTypeMap, lineTypeNameMap, colorKey, shapeKey, lineTypeKey, colorCounts, shapeCounts, lineTypeCounts };
+  }, [data, config.colorBy, config.shapeBy, config.lineTypeBy, config.bwMode, styleOverrides]);
 
   // drawScale added
   const renderPlot = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number, scale: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
@@ -366,52 +387,254 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
         ctx.fillText(label, tx, ty);
     };
 
+    const normLabel = (config.normalization || 'hz') as NormalizationMethod;
+
     // X Axis (F2)
-    drawAxisTicks('x', {x:-1, y:-1, z:1}, {x:1, y:-1, z:1}, 
-        config.invertX ? f2Max : f2Min, 
-        config.invertX ? f2Min : f2Max, 
-        "F2 (Hz)"
+    drawAxisTicks('x', {x:-1, y:-1, z:1}, {x:1, y:-1, z:1},
+        config.invertX ? f2Max : f2Min,
+        config.invertX ? f2Min : f2Max,
+        getAxisLabel('F2', normLabel)
     );
 
     // Y Axis (F3)
-    drawAxisTicks('y', {x:-1, y:-1, z:-1}, {x:-1, y:1, z:-1}, f3Min, f3Max, "F3 (Hz)");
+    drawAxisTicks('y', {x:-1, y:-1, z:-1}, {x:-1, y:1, z:-1}, f3Min, f3Max, getAxisLabel('F3', normLabel));
 
     // Z Axis (F1)
-    drawAxisTicks('z', {x:-1, y:-1, z:-1}, {x:-1, y:-1, z:1}, 
+    drawAxisTicks('z', {x:-1, y:-1, z:-1}, {x:-1, y:-1, z:1},
         config.invertY ? f1Max : f1Min,
         config.invertY ? f1Min : f1Max,
-        "F1 (Hz)"
+        getAxisLabel('F1', normLabel)
     );
+
+    // ── Shared helpers ──
+    const normMethod: NormalizationMethod = config.normalization || 'hz';
+    const normF = (pt: TrajectoryPoint, token: SpeechToken, formant: 'f1' | 'f2' | 'f3') => {
+      const raw = config.useSmoothing ? ((pt as any)[formant + '_smooth'] ?? (pt as any)[formant]) : (pt as any)[formant];
+      return normalizeFormant(raw, formant, normMethod, speakerStats?.[token.file_id || '__all__']);
+    };
+    const toCubeAndProject = (f1: number, f2: number, f3: number) => {
+      let nx = (f2 - f2Min) / (f2Max - f2Min) * 2 - 1;
+      if (config.invertX) nx = -nx;
+      let nz = (f1 - f1Min) / (f1Max - f1Min) * 2 - 1;
+      if (config.invertY) nz = -nz;
+      let ny = (f3 - f3Min) / (f3Max - f3Min) * 2 - 1;
+      return project(nx, ny, nz);
+    };
+
+    // ════════════════════════════════════════════════════════
+    // ── TRAJECTORY MODE ──
+    // ════════════════════════════════════════════════════════
+    if (config.plotType === 'trajectory') {
+      const renderQueue: { depth: number; draw: () => void }[] = [];
+      const onset = config.trajectoryOnset ?? 0;
+      const offset = config.trajectoryOffset ?? 100;
+      const lineOpacity = config.trajectoryLineOpacity ?? 0.5;
+      const lineWidth = (config.trajectoryLineWidth || 1) * drawScale;
+      const meanWidth = (config.meanTrajectoryWidth || 3) * drawScale;
+      const meanOpacity = config.meanTrajectoryOpacity ?? 1;
+      const ptSize = (config.meanTrajectoryPointSize ?? 4) * drawScale;
+      const arrowSize = config.meanTrajectoryArrowSize ?? 3;
+
+      // Group tokens by color|lineType
+      const groups: Record<string, SpeechToken[]> = {};
+      data.forEach(t => {
+        const cVal = mappings.colorKey ? getLabel(t, mappings.colorKey) : '';
+        const lVal = mappings.lineTypeKey ? getLabel(t, mappings.lineTypeKey) : '';
+        let key = 'default';
+        if (mappings.colorKey && mappings.lineTypeKey && mappings.colorKey !== mappings.lineTypeKey)
+          key = `${cVal}|${lVal}`;
+        else if (mappings.colorKey) key = cVal;
+        else if (mappings.lineTypeKey) key = lVal;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(t);
+      });
+
+      // ── Individual trajectory lines ──
+      if (lineOpacity > 0) {
+        data.forEach(t => {
+          const cVal = mappings.colorKey ? getLabel(t, mappings.colorKey) : '';
+          const color = mappings.colorKey ? (mappings.colorMap[cVal] || '#64748b') : (config.bwMode ? '#000' : '#64748b');
+          const lVal = mappings.lineTypeKey ? getLabel(t, mappings.lineTypeKey) : '';
+          const lineDash = mappings.lineTypeKey ? (mappings.lineTypeMap[lVal] || []) : [];
+
+          const pts = t.trajectory
+            .filter(p => p.time >= onset && p.time <= offset)
+            .map(p => {
+              const f1 = normF(p, t, 'f1'), f2 = normF(p, t, 'f2'), f3 = normF(p, t, 'f3');
+              if (isNaN(f1) || isNaN(f2) || isNaN(f3)) return null;
+              const proj = toCubeAndProject(f1, f2, f3);
+              return { px: proj.x, py: proj.y, depth: proj.depth };
+            }).filter(Boolean) as { px: number; py: number; depth: number }[];
+
+          // Line segments
+          for (let i = 1; i < pts.length; i++) {
+            const p0 = pts[i - 1], p1 = pts[i];
+            const avgDepth = (p0.depth + p1.depth) / 2;
+            renderQueue.push({ depth: avgDepth, draw: () => {
+              ctx.globalAlpha = lineOpacity;
+              ctx.strokeStyle = color;
+              ctx.lineWidth = lineWidth;
+              ctx.setLineDash(lineDash.map(d => d * lineWidth));
+              ctx.beginPath(); ctx.moveTo(p0.px, p0.py); ctx.lineTo(p1.px, p1.py); ctx.stroke();
+              ctx.setLineDash([]);
+            }});
+          }
+
+          // Arrow on individual line
+          if (arrowSize > 0 && pts.length > 1) {
+            const last = pts[pts.length - 1], prev = pts[pts.length - 2];
+            renderQueue.push({ depth: last.depth + 0.01, draw: () => {
+              const angle = Math.atan2(last.py - prev.py, last.px - prev.px);
+              const aLen = 6 * lineWidth, aW = 3 * lineWidth;
+              ctx.globalAlpha = lineOpacity;
+              ctx.save(); ctx.translate(last.px, last.py); ctx.rotate(angle);
+              ctx.fillStyle = color;
+              ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-aLen, -aW); ctx.lineTo(-aLen, aW); ctx.closePath(); ctx.fill();
+              ctx.restore();
+            }});
+          }
+        });
+      }
+
+      // ── Mean trajectories ──
+      if (config.showMeanTrajectories) {
+        Object.entries(groups).forEach(([key, tokens]) => {
+          let groupColor = config.bwMode ? '#000' : '#000';
+          let lineDash: number[] = [];
+          if (key.includes('|')) {
+            const [c, l] = key.split('|');
+            groupColor = mappings.colorMap[c] || groupColor;
+            lineDash = mappings.lineTypeMap[l] || [];
+          } else {
+            if (mappings.colorKey) groupColor = mappings.colorMap[key] || groupColor;
+            if (mappings.lineTypeKey) lineDash = mappings.lineTypeMap[key] || [];
+          }
+
+          // Derive time-steps from data
+          const allTimes = new Set<number>();
+          tokens.forEach(tk => tk.trajectory.forEach(p => allTimes.add(p.time)));
+          const timeSteps = Array.from(allTimes).sort((a, b) => a - b)
+            .filter(t => t >= onset && t <= offset);
+
+          const meanPts = timeSteps.map(time => {
+            let sF1 = 0, sF2 = 0, sF3 = 0, cnt = 0;
+            tokens.forEach(token => {
+              const pt = token.trajectory.find(p => p.time === time);
+              if (pt) {
+                const f1 = normF(pt, token, 'f1'), f2 = normF(pt, token, 'f2'), f3 = normF(pt, token, 'f3');
+                if (!isNaN(f1) && !isNaN(f2) && !isNaN(f3)) { sF1 += f1; sF2 += f2; sF3 += f3; cnt++; }
+              }
+            });
+            if (cnt === 0) return null;
+            const proj = toCubeAndProject(sF1 / cnt, sF2 / cnt, sF3 / cnt);
+            return { px: proj.x, py: proj.y, depth: proj.depth, time };
+          }).filter(Boolean) as { px: number; py: number; depth: number; time: number }[];
+
+          // Mean line segments
+          for (let i = 1; i < meanPts.length; i++) {
+            const p0 = meanPts[i - 1], p1 = meanPts[i];
+            const avgDepth = (p0.depth + p1.depth) / 2;
+            renderQueue.push({ depth: avgDepth, draw: () => {
+              ctx.globalAlpha = meanOpacity;
+              ctx.strokeStyle = groupColor;
+              ctx.lineWidth = meanWidth;
+              ctx.setLineDash(lineDash.map(d => d * meanWidth));
+              ctx.beginPath(); ctx.moveTo(p0.px, p0.py); ctx.lineTo(p1.px, p1.py); ctx.stroke();
+              ctx.setLineDash([]);
+            }});
+          }
+
+          // Points on mean
+          if (ptSize > 0) {
+            meanPts.forEach(p => {
+              renderQueue.push({ depth: p.depth + 0.01, draw: () => {
+                ctx.globalAlpha = meanOpacity;
+                ctx.fillStyle = groupColor;
+                ctx.beginPath(); ctx.arc(p.px, p.py, ptSize, 0, Math.PI * 2); ctx.fill();
+              }});
+            });
+          }
+
+          // Arrow on mean
+          if (arrowSize > 0 && meanPts.length > 1) {
+            const last = meanPts[meanPts.length - 1], prev = meanPts[meanPts.length - 2];
+            renderQueue.push({ depth: last.depth + 0.02, draw: () => {
+              const angle = Math.atan2(last.py - prev.py, last.px - prev.px);
+              const mw = config.meanTrajectoryWidth || 3;
+              const aLen = arrowSize * mw * drawScale, aW = arrowSize * 0.5 * mw * drawScale;
+              ctx.globalAlpha = meanOpacity;
+              ctx.save(); ctx.translate(last.px, last.py); ctx.rotate(angle);
+              ctx.fillStyle = groupColor;
+              ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-aLen, -aW); ctx.lineTo(-aLen, aW); ctx.closePath(); ctx.fill();
+              ctx.restore();
+            }});
+          }
+
+          // Label on mean
+          if (config.showTrajectoryLabels && meanPts.length > 0) {
+            const mid = meanPts[Math.floor(meanPts.length / 2)];
+            let label = key;
+            if (key.includes('|')) {
+              const [c, l] = key.split('|');
+              if (config.meanLabelType === 'color') label = c;
+              else if (config.meanLabelType === 'shape') label = l;
+              else if (config.meanLabelType === 'both') label = `${c} / ${l}`;
+              else label = c; // auto
+            }
+            const fontSize = (config.meanTrajectoryLabelSize || 12) * drawScale;
+            renderQueue.push({ depth: mid.depth + 999, draw: () => {
+              ctx.globalAlpha = 1;
+              ctx.font = `bold ${fontSize}px sans-serif`;
+              ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+              ctx.strokeStyle = '#fff'; ctx.lineWidth = 3 * drawScale;
+              ctx.strokeText(label, mid.px, mid.py);
+              ctx.fillStyle = groupColor;
+              ctx.fillText(label, mid.px, mid.py);
+            }});
+          }
+        });
+      }
+
+      // Sort render queue (far first) and execute
+      renderQueue.sort((a, b) => a.depth - b.depth);
+      renderQueue.forEach(item => item.draw());
+      ctx.globalAlpha = 1;
+
+    } else {
+    // ════════════════════════════════════════════════════════
+    // ── POINT MODE (existing code) ──
+    // ════════════════════════════════════════════════════════
 
     // Prepare Points
     const points: (Point3D & { px: number, py: number, depth: number })[] = [];
-    
+
     data.forEach(t => {
       const nearestTime = findNearestTimePoint(t.trajectory, config.timePoint);
       const pt = nearestTime !== undefined ? t.trajectory.find(p => p.time === nearestTime) : undefined;
       if (!pt) return;
 
-      const f1 = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
-      const f2 = config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
-      const f3 = config.useSmoothing ? (pt.f3_smooth ?? pt.f3) : pt.f3;
+      const stats = speakerStats?.[t.file_id || '__all__'];
+      const f1 = normalizeFormant(config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1, 'f1', normMethod, stats);
+      const f2 = normalizeFormant(config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2, 'f2', normMethod, stats);
+      const f3 = normalizeFormant(config.useSmoothing ? (pt.f3_smooth ?? pt.f3) : pt.f3, 'f3', normMethod, stats);
 
       // Filter out invalid points
       if (isNaN(f1) || isNaN(f2) || isNaN(f3)) return;
 
       // Normalize to -1 to 1 range
-      let nx = (f2 - f2Min) / (f2Max - f2Min) * 2 - 1; 
-      if (config.invertX) nx = -nx; 
+      let nx = (f2 - f2Min) / (f2Max - f2Min) * 2 - 1;
+      if (config.invertX) nx = -nx;
 
       let nz = (f1 - f1Min) / (f1Max - f1Min) * 2 - 1;
-      if (config.invertY) nz = -nz; 
+      if (config.invertY) nz = -nz;
 
       let ny = (f3 - f3Min) / (f3Max - f3Min) * 2 - 1;
 
       const proj = project(nx, ny, nz);
-      
+
       const cKey = mappings.colorKey ? getLabel(t, mappings.colorKey) : '';
       const sKey = mappings.shapeKey ? getLabel(t, mappings.shapeKey) : '';
-      
+
       points.push({
         x: nx, y: ny, z: nz,
         px: proj.x, py: proj.y, depth: proj.depth,
@@ -563,29 +786,33 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
       points.forEach(p => {
          ctx.fillStyle = p.color;
          ctx.strokeStyle = p.color;
-         const depthScale = 1 + (p.depth * 0.3); 
+         const depthScale = 1 + (p.depth * 0.3);
          drawShape(ctx, p.shape, p.px, p.py, Math.max(1, config.pointSize * depthScale * zoom) * drawScale, drawScale);
       });
     }
 
-  }, [data, config, mappings, rotation, translation, zoom]);
+    } // end else (point mode)
+
+  }, [data, config, mappings, rotation, translation, zoom, speakerStats]);
 
   const drawLegend = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
-    const { colorMap, shapeMap, colorKey, shapeKey, colorCounts, shapeCounts } = mappings;
+    const { colorMap, shapeMap, lineTypeMap, lineTypeNameMap, colorKey, shapeKey, lineTypeKey, colorCounts, shapeCounts, lineTypeCounts } = mappings;
     let curY = y;
-    
+
     const isExport = !!exportConfig;
+    const isTrajectory = config.plotType === 'trajectory';
 
     // If custom position, override x and y
     if (exportConfig && exportConfig.legendPosition === 'custom') {
         // Handled by translation in generateImage
     }
-    
+
     const fontSizeTitle = exportConfig ? exportConfig.legendTitleSize * drawScale : (isExport ? 36 : 14) * drawScale;
     const fontSizeItem = exportConfig ? exportConfig.legendItemSize * drawScale : (isExport ? 24 : 12) * drawScale;
     const spacing = fontSizeItem * 1.6;
     const circleSize = fontSizeItem * 0.5;
     const xOffset = fontSizeItem * 1.5;
+    const lineSwatchW = fontSizeItem * 1.2;
 
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
@@ -597,6 +824,8 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
     const colorTitle = (layerLegendCfg?.colorTitle) || (exportConfig?.colorLegendTitle) || (colorKey ? colorKey.toUpperCase() : 'COLOR');
     const showShape = layerLegendCfg ? layerLegendCfg.show : (exportConfig?.showShapeLegend !== false);
     const shapeTitle = (layerLegendCfg?.shapeTitle) || (exportConfig?.shapeLegendTitle) || (shapeKey ? shapeKey.toUpperCase() : 'SHAPE');
+    const showLineType = layerLegendCfg ? layerLegendCfg.show : (exportConfig?.showLineTypeLegend !== false);
+    const lineTypeTitle = (exportConfig?.lineTypeLegendTitle) || (lineTypeKey ? lineTypeKey.toUpperCase() : 'LINE TYPE');
 
     const legendLayerIds = exportConfig?.legendLayers;
     const isInLegend = !legendLayerIds || legendLayerIds.includes('bg');
@@ -609,13 +838,23 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
         ctx.font = `${fontSizeItem}px Inter`;
         Object.entries(colorMap).sort().forEach(([k, c]) => {
             const count = colorCounts[k] || 0;
-            ctx.fillStyle = c as string;
-            ctx.strokeStyle = c as string;
-            if (shapeKey === colorKey && shapeMap[k]) {
-                // Combined: draw colored shape — proportional stroke for open shapes
-                drawShape(ctx, shapeMap[k] as string, x + (circleSize), curY + (circleSize), (circleSize * 0.8), drawScale, circleSize * 0.15);
+            if (isTrajectory) {
+                // Draw colored line swatch
+                ctx.strokeStyle = c as string;
+                ctx.lineWidth = 2.5 * drawScale;
+                ctx.setLineDash([]);
+                ctx.beginPath();
+                ctx.moveTo(x, curY + circleSize);
+                ctx.lineTo(x + lineSwatchW, curY + circleSize);
+                ctx.stroke();
             } else {
-                ctx.beginPath(); ctx.arc(x + (circleSize), curY + (circleSize), circleSize, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = c as string;
+                ctx.strokeStyle = c as string;
+                if (shapeKey === colorKey && shapeMap[k]) {
+                    drawShape(ctx, shapeMap[k] as string, x + (circleSize), curY + (circleSize), (circleSize * 0.8), drawScale, circleSize * 0.15);
+                } else {
+                    ctx.beginPath(); ctx.arc(x + (circleSize), curY + (circleSize), circleSize, 0, Math.PI*2); ctx.fill();
+                }
             }
             ctx.fillStyle = '#334155';
             ctx.fillText(`${k} (n=${count})`, x + xOffset, curY + (circleSize));
@@ -624,7 +863,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
         curY += fontSizeTitle;
     }
 
-    if (isInLegend && showShape && shapeKey && shapeKey !== colorKey) {
+    if (isInLegend && showShape && shapeKey && shapeKey !== colorKey && !isTrajectory) {
         ctx.font = `bold ${fontSizeTitle}px Inter`;
         ctx.fillStyle = '#0f172a';
         ctx.fillText(shapeTitle, x, curY);
@@ -636,6 +875,32 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
             ctx.fillStyle = '#64748b';
             ctx.strokeStyle = '#64748b';
             drawShape(ctx, s as string, x + (circleSize), curY + (circleSize), (circleSize * 0.8), drawScale, circleSize * 0.15);
+            ctx.fillStyle = '#334155';
+            ctx.fillText(`${k} (n=${count})`, x + xOffset, curY + (circleSize));
+            curY += spacing;
+        });
+        curY += fontSizeTitle;
+    }
+
+    // Line Type legend (trajectory mode only)
+    if (isInLegend && showLineType && lineTypeKey && lineTypeKey !== colorKey && isTrajectory) {
+        ctx.font = `bold ${fontSizeTitle}px Inter`;
+        ctx.fillStyle = '#0f172a';
+        ctx.fillText(lineTypeTitle, x, curY);
+        curY += fontSizeTitle * 1.4;
+
+        ctx.font = `${fontSizeItem}px Inter`;
+        Object.entries(lineTypeMap).sort().forEach(([k, dash]) => {
+            const count = lineTypeCounts[k] || 0;
+            ctx.strokeStyle = '#64748b';
+            ctx.lineWidth = 2.5 * drawScale;
+            const scaledDash = (dash as number[]).map(d => d * 2 * drawScale);
+            ctx.setLineDash(scaledDash);
+            ctx.beginPath();
+            ctx.moveTo(x, curY + circleSize);
+            ctx.lineTo(x + lineSwatchW, curY + circleSize);
+            ctx.stroke();
+            ctx.setLineDash([]);
             ctx.fillStyle = '#334155';
             ctx.fillText(`${k} (n=${count})`, x + xOffset, curY + (circleSize));
             curY += spacing;
@@ -840,8 +1105,15 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
 
   // Screen Legend
   const renderScreenLegend = () => {
-      const { colorMap, shapeMap, colorKey, shapeKey, colorCounts, shapeCounts } = mappings;
-      if (!colorKey && !shapeKey) return null;
+      const { colorMap, shapeMap, lineTypeMap, lineTypeNameMap, colorKey, shapeKey, lineTypeKey, colorCounts, shapeCounts, lineTypeCounts } = mappings;
+      const isTrajectory = config.plotType === 'trajectory';
+
+      // In trajectory mode, show if colorKey or lineTypeKey set; in point mode, colorKey or shapeKey
+      if (isTrajectory) {
+          if (!colorKey && !lineTypeKey) return null;
+      } else {
+          if (!colorKey && !shapeKey) return null;
+      }
 
       return (
         <div className="absolute top-4 right-4 bg-white/95 backdrop-blur p-3 rounded-xl border border-slate-200 text-xs shadow-xl flex flex-col space-y-3 max-h-[85%] overflow-y-auto w-56 pointer-events-auto">
@@ -851,9 +1123,12 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                     {Object.entries(colorMap).sort().map(([k, c]) => (
                         <div key={k} className="flex items-center gap-2 justify-between cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(k, 'color', e)}>
                             <div className="flex items-center gap-2">
-                                {shapeKey === colorKey && shapeMap[k]
-                                    ? <ShapeIcon shape={shapeMap[k] as string} color={c as string} />
-                                    : <div className="w-3 h-3 rounded-full" style={{background: c as string}}></div>
+                                {isTrajectory
+                                    ? <svg width="20" height="14" viewBox="0 0 20 14"><line x1="0" y1="7" x2="20" y2="7" stroke={c as string} strokeWidth="2.5" /></svg>
+                                    : (shapeKey === colorKey && shapeMap[k]
+                                        ? <ShapeIcon shape={shapeMap[k] as string} color={c as string} />
+                                        : <div className="w-3 h-3 rounded-full" style={{background: c as string}}></div>
+                                    )
                                 }
                                 <span>{k}</span>
                             </div>
@@ -862,7 +1137,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                     ))}
                 </div>
             )}
-            {shapeKey && shapeKey !== colorKey && (
+            {!isTrajectory && shapeKey && shapeKey !== colorKey && (
                 <div className="space-y-1">
                     <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1">{shapeKey}</h4>
                     {Object.entries(shapeMap).sort().map(([k, s]) => (
@@ -874,6 +1149,30 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                             <span className="text-slate-400 text-[10px]">({shapeCounts[k]})</span>
                         </div>
                     ))}
+                </div>
+            )}
+            {isTrajectory && lineTypeKey && lineTypeKey !== colorKey && (
+                <div className="space-y-1">
+                    <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1">{lineTypeKey}</h4>
+                    {Object.entries(lineTypeMap).sort().map(([k, dash]) => {
+                        const dashName = lineTypeNameMap[k] || 'solid';
+                        const svgDash = dashName === 'solid' ? '' :
+                            dashName === 'dash' ? '5,5' :
+                            dashName === 'dot' ? '2,2' :
+                            dashName === 'longdash' ? '10,5' :
+                            dashName === 'dotdash' ? '10,3,2,3' : '';
+                        return (
+                            <div key={k} className="flex items-center gap-2 justify-between cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(k, 'color', e)}>
+                                <div className="flex items-center gap-2">
+                                    <svg width="20" height="14" viewBox="0 0 20 14">
+                                        <line x1="0" y1="7" x2="20" y2="7" stroke="#64748b" strokeWidth="2.5" strokeDasharray={svgDash} />
+                                    </svg>
+                                    <span>{k}</span>
+                                </div>
+                                <span className="text-slate-400 text-[10px]">({lineTypeCounts[k]})</span>
+                            </div>
+                        );
+                    })}
                 </div>
             )}
         </div>

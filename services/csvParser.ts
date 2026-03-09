@@ -188,7 +188,7 @@ addAliases(['canonical', 'phoneme', 'target', 'target_phoneme', 'vowel', 'segmen
 addAliases(['produced', 'allophone', 'actual', 'realised', 'realized', 'transcribed'], 'produced');
 addAliases(['alignment', 'align', 'align_type'], 'alignment');
 addAliases(['type', 'segment_type'], 'type');
-addAliases(['canonical_type', 'can_type', 'vowel_type'], 'canonical_type');
+addAliases(['canonical_type', 'can_type', 'vowel_type', 'vowel_category', 'vowel_cat'], 'canonical_type');
 addAliases(['duration', 'dur', 'seg_dur'], 'duration');
 addAliases(['xmin', 'onset', 'start', 'start_time'], 'xmin');
 addAliases(['voice_pitch', 'pitch'], 'voice_pitch');
@@ -197,7 +197,7 @@ const FORMANT_REGEX = /^(f[123])_(\d+)(?:_(.+))?$/i;
 
 /** Built-in roles that can appear as sidebar filter sections */
 export const SIDEBAR_ELIGIBLE_ROLES = new Set<ColumnRole>([
-  'type', 'canonical_type', 'canonical', 'word', 'alignment', 'produced',
+  'file_id', 'type', 'canonical_type', 'canonical', 'word', 'alignment', 'produced',
   'canonical_stress', 'lexical_stress', 'syllable_mark', 'voice_pitch'
 ]);
 

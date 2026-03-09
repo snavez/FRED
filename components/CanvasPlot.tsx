@@ -1,13 +1,15 @@
 
 // ... existing imports
 import React, { useRef, useEffect, useState, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
-import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, Layer, DatasetMeta } from '../types';
+import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, Layer, DatasetMeta, NormalizationMethod } from '../types';
+import { normalizeFormant, getAxisLabel, getTickStep, formatTick, SpeakerStatsMap } from '../utils/normalization';
 
 interface CanvasPlotProps {
   layers: Layer[];
   layerData: Record<string, SpeechToken[]>;
   onLegendClick?: (category: string, currentStyles: any, event: React.MouseEvent, layerId?: string) => void;
   datasetMeta?: DatasetMeta | null;
+  speakerStats?: SpeakerStatsMap;
 }
 
 const COLORS = [
@@ -284,7 +286,7 @@ const Legend = ({ layers, allMappings, onLegendClick }: {
   );
 };
 
-const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData, onLegendClick, datasetMeta }, ref) => {
+const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData, onLegendClick, datasetMeta, speakerStats }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
@@ -300,6 +302,17 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
 
   // Background layer always controls coordinate space
   const bgConfig = layers[0].config;
+  const normMethod: NormalizationMethod = bgConfig.normalization || 'hz';
+
+  // Normalization helpers: apply smoothing + normalization in one step
+  const normF1 = (pt: { f1: number; f1_smooth: number }, token: SpeechToken, config: PlotConfig) => {
+    const raw = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
+    return normalizeFormant(raw, 'f1', normMethod, speakerStats?.[token.file_id || '__all__']);
+  };
+  const normF2 = (pt: { f2: number; f2_smooth: number }, token: SpeechToken, config: PlotConfig) => {
+    const raw = config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
+    return normalizeFormant(raw, 'f2', normMethod, speakerStats?.[token.file_id || '__all__']);
+  };
 
   // Cleanup RAF on unmount
   useEffect(() => {
@@ -362,8 +375,8 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
           const pts = t.trajectory
             .filter(p => p.time >= (config.trajectoryOnset ?? 0) && p.time <= (config.trajectoryOffset ?? 100));
           pts.forEach(pt => {
-            const f1 = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
-            const f2 = config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
+            const f1 = normF1(pt, t, config);
+            const f2 = normF2(pt, t, config);
             if (isNaN(f1) || isNaN(f2)) return;
             addToGrid(mapX(f2), mapY(f1), t, layer.id);
           });
@@ -371,8 +384,8 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
           const nearestTime = findNearestTimePoint(t.trajectory, config.timePoint);
           const pt = nearestTime !== undefined ? t.trajectory.find(p => p.time === nearestTime) : undefined;
           if (!pt) return;
-          const f1 = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
-          const f2 = config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
+          const f1 = normF1(pt, t, config);
+          const f2 = normF2(pt, t, config);
           if (isNaN(f1) || isNaN(f2)) return;
           addToGrid(mapX(f2), mapY(f1), t, layer.id);
         }
@@ -380,7 +393,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     });
 
     return { grid, cols, rows, cellSize: CELL_SIZE, originX, originY };
-  }, [layers, layerData, bgConfig.f1Range, bgConfig.f2Range, bgConfig.invertX, bgConfig.invertY]);
+  }, [layers, layerData, bgConfig.f1Range, bgConfig.f2Range, bgConfig.invertX, bgConfig.invertY, normMethod, speakerStats]);
 
   // Helper functions for drawing individual layers
   const drawTrajectoryLayer = (
@@ -400,7 +413,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         const lineOpacity = config.trajectoryLineOpacity !== undefined ? config.trajectoryLineOpacity : 0.5;
         if (lineOpacity > 0) {
             ctx.globalAlpha = lineOpacity;
-            ctx.lineWidth = (1 * drawScale) / scale;
+            ctx.lineWidth = ((config.trajectoryLineWidth || 1) * drawScale) / scale;
 
             data.forEach(t => {
                 const color = mappings.colorKey ? (mappings.colorMap[getLabel(t, mappings.colorKey)] || '#64748b') : (config.bwMode ? '#000' : '#64748b');
@@ -413,8 +426,8 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
                 const pts = t.trajectory
                     .filter(p => p.time >= (config.trajectoryOnset ?? 0) && p.time <= (config.trajectoryOffset ?? 100))
                     .map(p => {
-                        const f1 = config.useSmoothing ? (p.f1_smooth ?? p.f1) : p.f1;
-                        const f2 = config.useSmoothing ? (p.f2_smooth ?? p.f2) : p.f2;
+                        const f1 = normF1(p, t, config);
+                        const f2 = normF2(p, t, config);
                         if (f1 === undefined || f2 === undefined || isNaN(f1) || isNaN(f2)) return null;
                         return { x: mapX(f2), y: mapY(f1) };
                     }).filter(p => p !== null) as {x: number, y: number}[];
@@ -429,7 +442,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
                 ctx.stroke();
 
                 // Draw arrows on individual lines
-                if (config.showArrows && pts.length > 1) {
+                if ((config.meanTrajectoryArrowSize ?? 3) > 0 && pts.length > 1) {
                     const last = pts[pts.length - 1];
                     const prev = pts[pts.length - 2];
                     const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
@@ -479,8 +492,8 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
                 tokens.forEach(token => {
                     const pt = token.trajectory.find(p => p.time === t);
                     if (pt) {
-                        const f1 = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
-                        const f2 = config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
+                        const f1 = normF1(pt, token, config);
+                        const f2 = normF2(pt, token, config);
                         if (f1 !== undefined && f2 !== undefined && !isNaN(f1) && !isNaN(f2)) {
                             sumF1 += f1; sumF2 += f2; count++;
                         }
@@ -506,7 +519,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
             ctx.setLineDash([]);
 
             // Draw points on mean trajectory if enabled
-            if (config.showMeanTrajectoryPoints) {
+            if ((config.meanTrajectoryPointSize ?? 4) > 0) {
                 const ptSize = ((config.meanTrajectoryPointSize || 4) * drawScale) / scale;
                 ctx.fillStyle = groupColor;
                 meanPts.forEach(p => {
@@ -517,7 +530,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
             }
 
             // Draw arrow at end of mean trajectory
-            if (config.showArrows && meanPts.length > 1) {
+            if ((config.meanTrajectoryArrowSize ?? 3) > 0 && meanPts.length > 1) {
                 const last = meanPts[meanPts.length - 1];
                 const prev = meanPts[meanPts.length - 2];
                 const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
@@ -590,9 +603,10 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         const pts = tokens.map(t => {
           const nearestTime = findNearestTimePoint(t.trajectory, config.timePoint);
           const p = nearestTime !== undefined ? t.trajectory.find(pt => pt.time === nearestTime) : undefined;
-          const f1 = config.useSmoothing && p ? (p.f1_smooth ?? p.f1) : p?.f1;
-          const f2 = config.useSmoothing && p ? (p.f2_smooth ?? p.f2) : p?.f2;
-          if (!p || f1 === undefined || f2 === undefined || isNaN(f1) || isNaN(f2)) return null;
+          if (!p) return null;
+          const f1 = normF1(p, t, config);
+          const f2 = normF2(p, t, config);
+          if (f1 === undefined || f2 === undefined || isNaN(f1) || isNaN(f2)) return null;
           return { x: mapX(f2), y: mapY(f1) };
         }).filter(p => p !== null) as {x: number, y: number}[];
 
@@ -631,8 +645,8 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         const nearestTime = findNearestTimePoint(t.trajectory, config.timePoint);
         const pt = nearestTime !== undefined ? t.trajectory.find(p => p.time === nearestTime) : undefined;
         if (!pt) return;
-        const f1 = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
-        const f2 = config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
+        const f1 = normF1(pt, t, config);
+        const f2 = normF2(pt, t, config);
         if (isNaN(f1) || isNaN(f2)) return;
         const x = mapX(f2);
         const y = mapY(f1);
@@ -665,9 +679,10 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         const pts = tokens.map(t => {
           const nearestTime = findNearestTimePoint(t.trajectory, config.timePoint);
           const p = nearestTime !== undefined ? t.trajectory.find(pt => pt.time === nearestTime) : undefined;
-          const f1 = config.useSmoothing && p ? (p.f1_smooth ?? p.f1) : p?.f1;
-          const f2 = config.useSmoothing && p ? (p.f2_smooth ?? p.f2) : p?.f2;
-          if (!p || f1 === undefined || f2 === undefined || isNaN(f1) || isNaN(f2)) return null;
+          if (!p) return null;
+          const f1 = normF1(p, t, config);
+          const f2 = normF2(p, t, config);
+          if (f1 === undefined || f2 === undefined || isNaN(f1) || isNaN(f2)) return null;
           return { x: mapX(f2), y: mapY(f1) };
         }).filter(p => p !== null) as {x: number, y: number}[];
         if (pts.length === 0) return;
@@ -751,11 +766,11 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     ctx.font = `bold ${tickFontSize}px Inter`;
 
     const f2Span = bgConfig.f2Range[1] - bgConfig.f2Range[0];
-    const f2Step = f2Span > 1500 ? 500 : 250;
+    const f2Step = getTickStep(normMethod, f2Span);
     const startF2 = Math.ceil(bgConfig.f2Range[0] / f2Step) * f2Step;
 
     const f1Span = bgConfig.f1Range[1] - bgConfig.f1Range[0];
-    const f1Step = f1Span > 800 ? 200 : 100;
+    const f1Step = getTickStep(normMethod, f1Span);
     const startF1 = Math.ceil(bgConfig.f1Range[0] / f1Step) * f1Step;
 
     const tickOffset = isExport ? (10 * drawScale) : (4 * drawScale);
@@ -767,7 +782,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       if (x > cornerThreshold) {
           const xOffset = exportConfig ? (exportConfig.xAxisTickX || 0) * drawScale : 0;
           const yOffset = exportConfig ? (exportConfig.xAxisTickY || 0) * drawScale : 0;
-          ctx.fillText(`${f2}`, x + (2*drawScale) + xOffset, height - tickOffset + yOffset);
+          ctx.fillText(formatTick(f2, normMethod), x + (2*drawScale) + xOffset, height - tickOffset + yOffset);
       }
     }
     for (let f1 = startF1; f1 <= bgConfig.f1Range[1]; f1 += f1Step) {
@@ -776,7 +791,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       if (y < height - cornerThreshold) {
           const xOffset = exportConfig ? (exportConfig.yAxisTickX || 0) * drawScale : 0;
           const yOffset = exportConfig ? (exportConfig.yAxisTickY || 0) * drawScale : 0;
-          ctx.fillText(`${f1}`, tickOffset + xOffset, y - (2*drawScale) + yOffset);
+          ctx.fillText(formatTick(f1, normMethod), tickOffset + xOffset, y - (2*drawScale) + yOffset);
       }
     }
 
@@ -797,7 +812,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     });
 
     ctx.restore();
-  }, [layers, layerData, allMappings, bgConfig]);
+  }, [layers, layerData, allMappings, bgConfig, normMethod, speakerStats]);
 
   const drawLegend = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
       let curY = y;
@@ -1015,7 +1030,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       ctx.textAlign = 'center';
       const xAxisTitleX = (plotWidth / 2) + ((exportConfig.xAxisLabelX || 0) * drawScale);
       const xAxisTitleY = plotHeight + (bottomMarginBase * 0.55 * drawScale) + ((exportConfig.xAxisLabelY || 0) * drawScale);
-      ctx.fillText('F2 (Hz)', xAxisTitleX, xAxisTitleY);
+      ctx.fillText(getAxisLabel('F2', normMethod), xAxisTitleX, xAxisTitleY);
 
       const yAxisSize = exportConfig.yAxisLabelSize * drawScale;
       ctx.font = `bold ${yAxisSize}px Inter, sans-serif`;
@@ -1026,7 +1041,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       ctx.translate(yAxisTitleX, yAxisTitleY);
       ctx.rotate(-Math.PI / 2);
       ctx.textAlign = 'center';
-      ctx.fillText('F1 (Hz)', 0, 0);
+      ctx.fillText(getAxisLabel('F1', normMethod), 0, 0);
       ctx.restore();
 
       ctx.restore();

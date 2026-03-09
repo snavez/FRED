@@ -1,6 +1,7 @@
 
 import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
-import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, StyleOverrides, ExportConfig } from '../types';
+import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, StyleOverrides, ExportConfig, NormalizationMethod } from '../types';
+import { normalizeFormant, getAxisLabel, getTickStep, formatTick, SpeakerStatsMap } from '../utils/normalization';
 
 interface TrajectoryF1F2Props {
   data: SpeechToken[];
@@ -8,6 +9,7 @@ interface TrajectoryF1F2Props {
   globalReferences: ReferenceCentroid[];
   styleOverrides?: StyleOverrides;
   onLegendClick?: (category: string, currentStyles: any, event: React.MouseEvent) => void;
+  speakerStats?: SpeakerStatsMap;
 }
 
 const COLORS = [
@@ -39,7 +41,7 @@ const DASH_PATTERNS = [
 
 const DASH_NAMES = ['solid', 'dash', 'dot', 'longdash', 'dotdash', 'solid'];
 
-const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, config, globalReferences, styleOverrides, onLegendClick }, ref) => {
+const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, config, globalReferences, styleOverrides, onLegendClick, speakerStats }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Hover state uses refs + lightweight tick to avoid triggering canvas redraws
@@ -102,14 +104,14 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         let sumF1 = 0, sumF2 = 0, count = 0;
         tks.forEach(token => {
           const pt = token.trajectory.find(p => p.time === t);
-          if (pt) { const vF1 = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1; const vF2 = config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2; if (!isNaN(vF1) && !isNaN(vF2)) { sumF1 += vF1; sumF2 += vF2; count++; } }
+          if (pt) { const normM = (config.normalization || 'hz') as NormalizationMethod; const sts = speakerStats?.[token.file_id || '__all__']; const vF1 = normalizeFormant(config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1, 'f1', normM, sts); const vF2 = normalizeFormant(config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2, 'f2', normM, sts); if (!isNaN(vF1) && !isNaN(vF2)) { sumF1 += vF1; sumF2 += vF2; count++; } }
         });
         if (count > 0) path.push({ f1: sumF1 / count, f2: sumF2 / count });
       }
       paths[key] = path;
     });
     return paths;
-  }, [data, config.colorBy, config.lineTypeBy, config.showMeanTrajectories, config.useSmoothing, config.trajectoryOnset, config.trajectoryOffset]);
+  }, [data, config.colorBy, config.lineTypeBy, config.showMeanTrajectories, config.useSmoothing, config.trajectoryOnset, config.trajectoryOffset, config.normalization, speakerStats]);
 
   const renderPlot = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number, scale: number, translate: {x:number, y:number}, drawScale: number = 1, exportConfig?: ExportConfig) => {
     ctx.clearRect(0, 0, width, height);
@@ -140,12 +142,13 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
     const tickFontSize = (tickBaseSize * drawScale) / scale;
     ctx.font = `bold ${tickFontSize}px Inter`;
 
+    const normMethod: NormalizationMethod = config.normalization || 'hz';
     const f2Span = config.f2Range[1] - config.f2Range[0];
-    const f2Step = f2Span > 1500 ? 500 : 250;
+    const f2Step = getTickStep(normMethod, f2Span);
     const startF2 = Math.ceil(config.f2Range[0] / f2Step) * f2Step;
 
     const f1Span = config.f1Range[1] - config.f1Range[0];
-    const f1Step = f1Span > 800 ? 200 : 100;
+    const f1Step = getTickStep(normMethod, f1Span);
     const startF1 = Math.ceil(config.f1Range[0] / f1Step) * f1Step;
 
     const tickOffset = isExport ? (10 * drawScale) : (4 * drawScale);
@@ -161,14 +164,14 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
       const x = mapX(f2);
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
       if (x > cornerThreshold) {
-          ctx.fillText(`${f2}`, x + (4*drawScale) + xTickOffsetX, height - tickOffset + xTickOffsetY);
+          ctx.fillText(formatTick(f2, normMethod), x + (4*drawScale) + xTickOffsetX, height - tickOffset + xTickOffsetY);
       }
     }
     for (let f1 = startF1; f1 <= config.f1Range[1]; f1 += f1Step) {
       const y = mapY(f1);
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
       if (y < height - cornerThreshold) {
-          ctx.fillText(`${f1}`, tickOffset + yTickOffsetX, y - (4*drawScale) + yTickOffsetY);
+          ctx.fillText(formatTick(f1, normMethod), tickOffset + yTickOffsetX, y - (4*drawScale) + yTickOffsetY);
       }
     }
 
@@ -189,15 +192,38 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
       : [];
 
     if (activeRefs.length > 0) {
+      const isSpeakerNorm = normMethod === 'lobanov' || normMethod === 'nearey1';
       activeRefs.forEach((ref) => {
-        const cx = mapX(ref.f2);
-        const cy = mapY(ref.f1);
-        let color = '#94a3b8'; 
+        const normRefF1 = normalizeFormant(ref.f1, 'f1', normMethod);
+        const normRefF2 = normalizeFormant(ref.f2, 'f2', normMethod);
+        const cx = mapX(normRefF2);
+        const cy = mapY(normRefF1);
+        let color = '#94a3b8';
         if (config.colorBy === 'phoneme' && colorMap[ref.canonical]) {
             color = colorMap[ref.canonical];
         }
-        const rx = Math.abs(mapX(config.f2Range[0] + ref.sdX) - mapX(config.f2Range[0]));
-        const ry = Math.abs(mapY(config.f1Range[0] + ref.sdY) - mapY(config.f1Range[0]));
+        // For speaker-dependent normalization, skip ellipses (reference stats are aggregate, not per-speaker)
+        if (isSpeakerNorm) {
+          // Just draw the label, skip ellipse
+          ctx.save();
+          ctx.globalAlpha = config.refVowelLabelOpacity;
+          const labelSize = (config.refVowelLabelSize * drawScale) / scale;
+          ctx.font = `bold ${labelSize}px Inter`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = color;
+          ctx.strokeStyle = 'white';
+          ctx.lineWidth = (3 * drawScale) / scale;
+          ctx.strokeText(ref.canonical, cx, cy);
+          ctx.fillText(ref.canonical, cx, cy);
+          ctx.restore();
+          return;
+        }
+        // For pointwise transforms, normalize the SD endpoints to get radii
+        const normRefF2Plus = normalizeFormant(ref.f2 + ref.sdX, 'f2', normMethod);
+        const normRefF1Plus = normalizeFormant(ref.f1 + ref.sdY, 'f1', normMethod);
+        const rx = Math.abs(mapX(normRefF2Plus) - mapX(normRefF2));
+        const ry = Math.abs(mapY(normRefF1Plus) - mapY(normRefF1));
 
         ctx.save();
         ctx.translate(cx, cy);
@@ -250,8 +276,9 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
           const filteredTrajectory = token.trajectory.filter(pt => pt.time >= (config.trajectoryOnset ?? 0) && pt.time <= (config.trajectoryOffset ?? 100));
 
           filteredTrajectory.forEach((pt) => {
-            const f1 = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
-            const f2 = config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
+            const sts = speakerStats?.[token.file_id || '__all__'];
+            const f1 = normalizeFormant(config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1, 'f1', normMethod, sts);
+            const f2 = normalizeFormant(config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2, 'f2', normMethod, sts);
             if (isNaN(f1) || isNaN(f2)) { hasStarted = false; return; }
             const x = mapX(f2);
             const y = mapY(f1);
@@ -260,7 +287,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
           });
           ctx.stroke();
           ctx.setLineDash([]); 
-          if (config.showArrows && lastX !== null && lastY !== null && secondLastX !== null && secondLastY !== null) {
+          if ((config.meanTrajectoryArrowSize ?? 3) > 0 && lastX !== null && lastY !== null && secondLastX !== null && secondLastY !== null) {
              drawArrowHead(ctx, secondLastX, secondLastY, lastX, lastY, ((6 + config.lineWidth * 2) * drawScale) / scale);
           }
         });
@@ -315,7 +342,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         ctx.stroke();
         ctx.setLineDash([]); 
 
-        if (config.showArrows) {
+        if ((config.meanTrajectoryArrowSize ?? 3) > 0) {
           drawArrowHead(ctx, prevX, prevY, lastX, lastY, ((10 + config.lineWidth * 2) * drawScale) / scale);
         }
 
@@ -550,7 +577,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         
         const xLabelX = (plotWidth / 2) + ((exportConfig.xAxisLabelX || 0) * drawScale);
         const xLabelY = plotHeight + (bottomMarginBase * 0.55 * drawScale) + ((exportConfig.xAxisLabelY || 0) * drawScale);
-        ctx.fillText('F2 (Hz)', xLabelX, xLabelY);
+        ctx.fillText(getAxisLabel('F2', config.normalization || 'hz'), xLabelX, xLabelY);
         
         ctx.save();
         const yLabelX = -(160 * drawScale) + ((exportConfig.yAxisLabelX || 0) * drawScale);
@@ -577,7 +604,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         ctx.rotate(-Math.PI / 2);
         ctx.font = `bold ${exportConfig.yAxisLabelSize * drawScale}px Inter, sans-serif`;
         ctx.textAlign = 'center';
-        ctx.fillText('F1 (Hz)', 0, 0);
+        ctx.fillText(getAxisLabel('F1', config.normalization || 'hz'), 0, 0);
         ctx.restore();
 
         ctx.restore(); // Restore from margin translation
@@ -679,11 +706,13 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
       return config.invertY ? norm * height : (1 - norm) * height;
     };
 
+    const normM: NormalizationMethod = config.normalization || 'hz';
     for (const t of data) {
       const last = t.trajectory[t.trajectory.length - 1];
       if (!last) continue;
-      const f1 = config.useSmoothing ? (last.f1_smooth ?? last.f1) : last.f1;
-      const f2 = config.useSmoothing ? (last.f2_smooth ?? last.f2) : last.f2;
+      const sts = speakerStats?.[t.file_id || '__all__'];
+      const f1 = normalizeFormant(config.useSmoothing ? (last.f1_smooth ?? last.f1) : last.f1, 'f1', normM, sts);
+      const f2 = normalizeFormant(config.useSmoothing ? (last.f2_smooth ?? last.f2) : last.f2, 'f2', normM, sts);
       if (isNaN(f1) || isNaN(f2)) continue;
       const px = mapX(f2);
       const py = mapY(f1);
@@ -696,7 +725,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
       }
     }
     return { grid, cols, rows, cellSize: CELL_SIZE };
-  }, [data, config.f1Range, config.f2Range, config.invertX, config.invertY, config.useSmoothing]);
+  }, [data, config.f1Range, config.f2Range, config.invertX, config.invertY, config.useSmoothing, config.normalization, speakerStats]);
 
   // Cleanup RAF on unmount
   useEffect(() => {

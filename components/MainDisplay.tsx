@@ -1,6 +1,7 @@
 
 import React, { useState, useRef, useCallback, useMemo } from 'react';
-import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, VariableType, StyleOverrides, Layer, DatasetMeta } from '../types';
+import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, VariableType, StyleOverrides, Layer, DatasetMeta, NormalizationMethod } from '../types';
+import { SpeakerStatsMap, getRangeStep, getAxisLabel } from '../utils/normalization';
 import CanvasPlot from './CanvasPlot';
 import TrajectoryTimeSeries from './TrajectoryTimeSeries';
 import TrajectoryF1F2 from './TrajectoryF1F2';
@@ -26,10 +27,15 @@ interface MainDisplayProps {
   globalReferences?: ReferenceCentroid[];
   updateStyleOverride: (fieldKey: 'colors' | 'shapes' | 'textures' | 'lineTypes', category: string, value: any, layerId?: string) => void;
   datasetMeta?: DatasetMeta | null;
+  speakerStats: SpeakerStatsMap;
+  data: SpeechToken[];
 }
 
 const BUILT_IN_VARIABLE_OPTIONS: { label: string, value: VariableType }[] = [
   { label: 'None', value: 'none' },
+  { label: 'File / Speaker', value: 'file_id' },
+  { label: 'Segment Type', value: 'type' },
+  { label: 'Vowel Category', value: 'canonical_type' },
   { label: 'Phoneme', value: 'phoneme' },
   { label: 'Word', value: 'word' },
   { label: 'Allophone', value: 'produced' },
@@ -65,7 +71,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   layers, layerData, activeLayerId, setActiveLayerId,
   updateLayerConfig, addLayer, removeLayer, reorderLayer,
   toggleLayerVisibility, renameLayer, setActiveConfig,
-  globalReferences = [], updateStyleOverride, datasetMeta
+  globalReferences = [], updateStyleOverride, datasetMeta, speakerStats, data
 }) => {
   const [activeTab, setActiveTab] = useState<'vowel' | '3d' | 'traj_f1f2' | 'traj_series' | 'duration' | 'dist' | 'table'>('vowel');
   const [showRefDropdown, setShowRefDropdown] = useState(false);
@@ -474,107 +480,456 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
         {/* Dynamic Config Toolbar */}
         {activeTab !== 'table' && (
-          <div className="bg-slate-100 rounded-lg p-3 border border-slate-200 flex flex-wrap items-center gap-4 text-xs">
-            <div className="flex items-center gap-2 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
-              <Settings2 size={14} />
-              <span>Config</span>
-            </div>
+          <div className="bg-slate-100 rounded-lg p-3 border border-slate-200 text-xs">
 
-            <div className="h-6 w-px bg-slate-300"></div>
+            {/* ═══ F1/F2 & 3D: Two-Row Layout ═══ */}
+            {(activeTab === 'vowel' || activeTab === '3d') && (
+              <div className="space-y-2">
+                {/* ── Row 1: Data & Coordinate Space ── */}
+                <div className="flex items-center gap-4 flex-wrap">
+                  <div className="flex items-center gap-2 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
+                    <Settings2 size={14} />
+                    <span>Config</span>
+                  </div>
 
-            {/* Config: Formant Variant Dropdown */}
-            {(activeTab === 'vowel' || activeTab === '3d' || activeTab === 'traj_f1f2' || activeTab === 'traj_series') && datasetMeta?.formantVariants && datasetMeta.formantVariants.length >= 2 && (
-                <div className="flex items-center gap-1.5 mr-2">
-                    <span className="font-semibold text-slate-600 flex items-center gap-1"><Waves size={12} />Data:</span>
-                    <select
+                  <div className="h-6 w-px bg-slate-300"></div>
+
+                  {/* Data variant */}
+                  {datasetMeta?.formantVariants && datasetMeta.formantVariants.length >= 2 && (
+                    <div className="flex items-center gap-1.5 mr-2">
+                      <span className="font-semibold text-slate-600 flex items-center gap-1"><Waves size={12} />Data:</span>
+                      <select
                         value={currentConfig.useSmoothing ? datasetMeta.formantVariants[1] : datasetMeta.formantVariants[0]}
                         onChange={e => handleConfig('useSmoothing', e.target.value !== datasetMeta!.formantVariants![0])}
                         className="text-xs p-1 border border-slate-200 rounded bg-white font-bold text-slate-700"
                         title="Select formant data variant"
-                    >
+                      >
                         {datasetMeta.formantVariants.map(variant => (
-                            <option key={variant} value={variant}>{variant}</option>
+                          <option key={variant} value={variant}>{variant}</option>
                         ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Scale */}
+                  <div className="flex items-center gap-1.5 mr-2">
+                    <span className="font-semibold text-slate-600 flex items-center gap-1"><ArrowUpDown size={12} />Scale:</span>
+                    <select
+                      value={bgConfig.normalization || 'hz'}
+                      onChange={e => updateLayerConfig(layers[0].id, 'normalization', e.target.value as NormalizationMethod)}
+                      className="text-xs p-1 border border-slate-200 rounded bg-white font-bold text-slate-700"
+                      title="Formant normalization method"
+                    >
+                      <option value="hz">Hz</option>
+                      <option value="bark">Bark</option>
+                      <option value="erb">ERB</option>
+                      <option value="mel">Mel</option>
+                      <option value="lobanov">Lobanov</option>
+                      <option value="nearey1">Nearey 1</option>
                     </select>
+                  </div>
+
+                  {/* Axis ranges */}
+                  <div className="flex items-center gap-2 border-r border-slate-300 pr-4 mr-2">
+                    <div className="flex flex-col">
+                      <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">{getAxisLabel('F1', (bgConfig.normalization || 'hz') as NormalizationMethod)}</span>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] font-bold text-slate-500">Min</span>
+                        <input type="number" step={getRangeStep(bgConfig.normalization || 'hz')} className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f1Range[0]} onChange={e => updateLayerConfig(layers[0].id, 'f1Range', [parseFloat(e.target.value), bgConfig.f1Range[1]])} />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] font-bold text-slate-500">Max</span>
+                        <input type="number" step={getRangeStep(bgConfig.normalization || 'hz')} className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f1Range[1]} onChange={e => updateLayerConfig(layers[0].id, 'f1Range', [bgConfig.f1Range[0], parseFloat(e.target.value)])} />
+                      </div>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">{getAxisLabel('F2', (bgConfig.normalization || 'hz') as NormalizationMethod)}</span>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] font-bold text-slate-500">Min</span>
+                        <input type="number" step={getRangeStep(bgConfig.normalization || 'hz')} className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f2Range[0]} onChange={e => updateLayerConfig(layers[0].id, 'f2Range', [parseFloat(e.target.value), bgConfig.f2Range[1]])} />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] font-bold text-slate-500">Max</span>
+                        <input type="number" step={getRangeStep(bgConfig.normalization || 'hz')} className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f2Range[1]} onChange={e => updateLayerConfig(layers[0].id, 'f2Range', [bgConfig.f2Range[0], parseFloat(e.target.value)])} />
+                      </div>
+                    </div>
+                    {activeTab === '3d' && (
+                      <div className="flex flex-col">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">{getAxisLabel('F3', (bgConfig.normalization || 'hz') as NormalizationMethod)}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-bold text-slate-500">Min</span>
+                          <input type="number" step={getRangeStep(bgConfig.normalization || 'hz')} className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f3Range[0]} onChange={e => updateLayerConfig(layers[0].id, 'f3Range', [parseFloat(e.target.value), bgConfig.f3Range[1]])} />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-bold text-slate-500">Max</span>
+                          <input type="number" step={getRangeStep(bgConfig.normalization || 'hz')} className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f3Range[1]} onChange={e => updateLayerConfig(layers[0].id, 'f3Range', [bgConfig.f3Range[0], parseFloat(e.target.value)])} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Mode */}
+                  <div className="flex items-center gap-1.5">
+                    <label className="font-semibold text-slate-600">Mode:</label>
+                    <select
+                      className="p-1.5 border border-slate-300 rounded bg-white text-slate-700 text-xs font-bold"
+                      value={currentConfig.plotType}
+                      onChange={e => {
+                        const newType = e.target.value;
+                        handleConfig('plotType', newType);
+                        if (newType === 'trajectory') {
+                          // Ensure trajectory range spans full range on mode switch
+                          const maxTime = availableTimePoints.length > 0 ? availableTimePoints[availableTimePoints.length - 1] : 100;
+                          const minTime = availableTimePoints.length > 0 ? availableTimePoints[0] : 0;
+                          if ((currentConfig.trajectoryOnset ?? 0) >= (currentConfig.trajectoryOffset ?? 100)) {
+                            handleConfig('trajectoryOnset', minTime);
+                            handleConfig('trajectoryOffset', maxTime);
+                          }
+                        }
+                      }}
+                    >
+                      <option value="point">Point</option>
+                      <option value="trajectory">Trajectory</option>
+                    </select>
+                  </div>
+
+                  {/* Time / Range */}
+                  {currentConfig.plotType !== 'trajectory' ? (
+                    <div className="flex items-center gap-2">
+                      <label className="font-semibold text-slate-600">Time:</label>
+                      <select
+                        className="p-1.5 border border-slate-300 rounded bg-white text-slate-700 w-16"
+                        value={currentConfig.timePoint}
+                        onChange={e => handleConfig('timePoint', parseInt(e.target.value))}
+                      >
+                        {availableTimePoints.map(t => (
+                          <option key={t} value={t}>{t}%</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[9px] font-bold text-slate-500 uppercase">Range</span>
+                        <div className="flex items-center gap-1">
+                          <select className="p-0.5 border rounded text-[10px] w-12" value={currentConfig.trajectoryOnset ?? 0} onChange={e => handleConfig('trajectoryOnset', parseInt(e.target.value))}>
+                            {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                          </select>
+                          <span className="text-slate-400">-</span>
+                          <select className="p-0.5 border rounded text-[10px] w-12" value={currentConfig.trajectoryOffset ?? 100} onChange={e => handleConfig('trajectoryOffset', parseInt(e.target.value))}>
+                            {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
+
+                {/* ── Row 2: Visual Controls ── */}
+                <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2">
+                  {/* Colour */}
+                  {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
+
+                  {/* Shape / Line Type */}
+                  {currentConfig.plotType === 'trajectory'
+                    ? renderVariableSelect('Line Type', currentConfig.lineTypeBy, val => handleConfig('lineTypeBy', val))
+                    : renderVariableSelect('Shape', currentConfig.shapeBy, val => handleConfig('shapeBy', val))
+                  }
+
+                  <div className="w-px h-6 bg-slate-300"></div>
+
+                  {/* ── Trajectory mode: Lines / Means / Labels ── */}
+                  {currentConfig.plotType === 'trajectory' && (
+                    <>
+                      {/* Lines */}
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold">Lines</span>
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                            <span>Width</span>
+                            <input type="range" min="0.5" max="5" step="0.5" title="Individual Line Width" value={currentConfig.trajectoryLineWidth ?? 1} onChange={e => handleConfig('trajectoryLineWidth', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
+                          </div>
+                          <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                            <span>Opacity</span>
+                            <input type="range" min="0" max="1" step="0.02" title="Individual Line Opacity (0 = hidden)" value={opacityToSlider(currentConfig.trajectoryLineOpacity ?? 0.5)} onChange={e => handleConfig('trajectoryLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="w-px h-6 bg-slate-200"></div>
+
+                      {/* Means */}
+                      <div className="flex items-center gap-1.5">
+                        <label className="flex items-center gap-1 cursor-pointer" title="Show Mean Trajectories">
+                          <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showMeanTrajectories} onChange={e => handleConfig('showMeanTrajectories', e.target.checked)} />
+                          <span className="font-bold">Means</span>
+                        </label>
+                        {currentConfig.showMeanTrajectories && (
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                              <span>Width</span>
+                              <input type="range" min="1" max="10" step="0.5" title="Mean Line Width" value={currentConfig.meanTrajectoryWidth ?? 3} onChange={e => handleConfig('meanTrajectoryWidth', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
+                            </div>
+                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                              <span>Opacity</span>
+                              <input type="range" min="0" max="1" step="0.02" title="Mean Line Opacity" value={opacityToSlider(currentConfig.meanTrajectoryOpacity ?? 1)} onChange={e => handleConfig('meanTrajectoryOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
+                            </div>
+                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                              <span>Pts</span>
+                              <input type="range" min="0" max="10" step="0.5" title="Mean Point Size (0 = hidden)" value={currentConfig.meanTrajectoryPointSize ?? 4} onChange={e => handleConfig('meanTrajectoryPointSize', parseFloat(e.target.value))} className="w-12 h-1 accent-slate-600" />
+                            </div>
+                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                              <span>Arrow</span>
+                              <input type="range" min="0" max="8" step="0.5" title="Arrow Size (0 = hidden)" value={currentConfig.meanTrajectoryArrowSize ?? 3} onChange={e => handleConfig('meanTrajectoryArrowSize', parseFloat(e.target.value))} className="w-12 h-1 accent-slate-600" />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="w-px h-6 bg-slate-200"></div>
+
+                      {/* Labels */}
+                      <div className="flex items-center gap-1.5">
+                        <label className="flex items-center gap-1 cursor-pointer" title="Show Trajectory Labels">
+                          <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showTrajectoryLabels} onChange={e => handleConfig('showTrajectoryLabels', e.target.checked)} />
+                          <span className="font-bold">Labels</span>
+                        </label>
+                        {currentConfig.showTrajectoryLabels && (
+                          <>
+                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                              <span>Size</span>
+                              <input type="range" min="8" max="72" step="1" title="Label Size" value={currentConfig.meanTrajectoryLabelSize || 12} onChange={e => handleConfig('meanTrajectoryLabelSize', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
+                            </div>
+                            {(currentConfig.colorBy !== 'none' || currentConfig.lineTypeBy !== 'none') && (
+                              <select className="text-[9px] p-0.5 border rounded" title="Label Source" value={currentConfig.meanLabelType} onChange={e => handleConfig('meanLabelType', e.target.value)}>
+                                <option value="auto">Auto</option>
+                                <option value="color">Color Key</option>
+                                <option value="shape">Line Key</option>
+                                <option value="both">Both</option>
+                              </select>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {/* ── Point mode: Pts / Ellip / Means / Labels ── */}
+                  {currentConfig.plotType !== 'trajectory' && (
+                    <>
+                      {/* Points */}
+                      <div className="flex items-center gap-1.5">
+                        <label className="flex items-center gap-1 cursor-pointer" title="Show Individual Points">
+                          <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showPoints} onChange={e => handleConfig('showPoints', e.target.checked)} />
+                          <span className="font-bold">Pts</span>
+                        </label>
+                        {currentConfig.showPoints && (
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                              <span>Size</span>
+                              <input type="range" min="1" max="10" title="Point Size" value={currentConfig.pointSize} onChange={e => handleConfig('pointSize', parseInt(e.target.value))} className="w-16 h-1 accent-slate-600" />
+                            </div>
+                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                              <span>Opacity</span>
+                              <input type="range" min="0" max="1" step="0.02" title="Point Opacity" value={opacityToSlider(currentConfig.pointOpacity)} onChange={e => handleConfig('pointOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="w-px h-6 bg-slate-200"></div>
+
+                      {/* Ellipses */}
+                      <div className="flex items-center gap-1.5 border-r border-slate-200 pr-2">
+                        <label className="flex items-center gap-1 cursor-pointer" title="Show Standard Deviation Ellipses">
+                          <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showEllipses} onChange={e => handleConfig('showEllipses', e.target.checked)} />
+                          <span className="font-bold">Ellip</span>
+                        </label>
+                        {currentConfig.showEllipses && (
+                          <div className="flex items-center gap-1.5">
+                            <select className="p-0.5 border rounded text-[10px]" value={currentConfig.ellipseSD} onChange={e => handleConfig('ellipseSD', parseFloat(e.target.value))} title="Standard Deviations">
+                              {[1, 1.5, 2, 2.5, 3].map(sd => <option key={sd} value={sd}>{sd}σ</option>)}
+                            </select>
+                            <div className="flex flex-col gap-0.5">
+                              <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                                <span>Width</span>
+                                <input type="range" min="0.5" max="8" step="0.5" title="Line Width" value={currentConfig.ellipseLineWidth} onChange={e => handleConfig('ellipseLineWidth', parseFloat(e.target.value))} className="w-10 h-1 accent-slate-600" />
+                              </div>
+                              <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                                <span>Line</span>
+                                <input type="range" min="0" max="1" step="0.02" title="Line Opacity" value={opacityToSlider(currentConfig.ellipseLineOpacity)} onChange={e => handleConfig('ellipseLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-10 h-1 accent-slate-600" />
+                              </div>
+                              <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                                <span>Fill</span>
+                                <input type="range" min="0" max="1" step="0.02" title="Fill Opacity" value={opacityToSlider(currentConfig.ellipseFillOpacity)} onChange={e => handleConfig('ellipseFillOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-10 h-1 accent-slate-600" />
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Means (point mode) */}
+                      <div className="flex items-center gap-1.5">
+                        <label className="flex items-center gap-1 cursor-pointer" title="Show Means">
+                          <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showCentroids} onChange={e => handleConfig('showCentroids', e.target.checked)} />
+                          <span className="font-bold">Means</span>
+                        </label>
+                        {currentConfig.showCentroids && (
+                          <>
+                            <div className="flex flex-col gap-0.5">
+                              <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                                <span>Size</span>
+                                <input type="range" min="4" max="20" title="Centroid Size" value={currentConfig.centroidSize} onChange={e => handleConfig('centroidSize', parseInt(e.target.value))} className="w-16 h-1 accent-slate-600" />
+                              </div>
+                              <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                                <span>Opacity</span>
+                                <input type="range" min="0" max="1" step="0.02" title="Centroid Opacity" value={opacityToSlider(currentConfig.centroidOpacity)} onChange={e => handleConfig('centroidOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
+                              </div>
+                            </div>
+
+                            {/* Mean Label Source dropdown */}
+                            {(currentConfig.colorBy !== 'none' || currentConfig.shapeBy !== 'none') && (
+                              <select className="text-[9px] p-0.5 border rounded" title="Label Source" value={currentConfig.meanLabelType} onChange={e => handleConfig('meanLabelType', e.target.value)}>
+                                <option value="auto">Auto</option>
+                                <option value="color">Color Key</option>
+                                <option value="shape">Shape Key</option>
+                                <option value="both">Both</option>
+                              </select>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {/* Labels (point mode) */}
+                      <label className="flex items-center gap-1 cursor-pointer ml-1">
+                        <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.labelAsCentroid} onChange={e => handleConfig('labelAsCentroid', e.target.checked)} />
+                        <span className="font-bold">Labels</span>
+                      </label>
+                      {currentConfig.labelAsCentroid && (
+                        <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                          <span>Size</span>
+                          <input type="range" min="8" max="72" title="Text Size" value={currentConfig.labelSize} onChange={e => handleConfig('labelSize', parseInt(e.target.value))} className="w-10 h-1 accent-slate-600" />
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
             )}
 
-            {/* Range Controls (Context Sensitive) */}
-            <div className="flex items-center gap-2 border-r border-slate-300 pr-4 mr-2">
-                 {(activeTab === 'vowel' || activeTab === '3d' || activeTab === 'traj_f1f2') && (
+            {/* ═══ Non-vowel/3d tabs: original flat layout ═══ */}
+            {activeTab !== 'vowel' && activeTab !== '3d' && (
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
+                  <Settings2 size={14} />
+                  <span>Config</span>
+                </div>
+
+                <div className="h-6 w-px bg-slate-300"></div>
+
+                {/* Data variant (traj tabs) */}
+                {(activeTab === 'traj_f1f2' || activeTab === 'traj_series') && datasetMeta?.formantVariants && datasetMeta.formantVariants.length >= 2 && (
+                  <div className="flex items-center gap-1.5 mr-2">
+                    <span className="font-semibold text-slate-600 flex items-center gap-1"><Waves size={12} />Data:</span>
+                    <select
+                      value={currentConfig.useSmoothing ? datasetMeta.formantVariants[1] : datasetMeta.formantVariants[0]}
+                      onChange={e => handleConfig('useSmoothing', e.target.value !== datasetMeta!.formantVariants![0])}
+                      className="text-xs p-1 border border-slate-200 rounded bg-white font-bold text-slate-700"
+                      title="Select formant data variant"
+                    >
+                      {datasetMeta.formantVariants.map(variant => (
+                        <option key={variant} value={variant}>{variant}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Scale (traj tabs) */}
+                {(activeTab === 'traj_f1f2' || activeTab === 'traj_series') && (
+                  <div className="flex items-center gap-1.5 mr-2">
+                    <span className="font-semibold text-slate-600 flex items-center gap-1"><ArrowUpDown size={12} />Scale:</span>
+                    <select
+                      value={bgConfig.normalization || 'hz'}
+                      onChange={e => updateLayerConfig(layers[0].id, 'normalization', e.target.value as NormalizationMethod)}
+                      className="text-xs p-1 border border-slate-200 rounded bg-white font-bold text-slate-700"
+                      title="Formant normalization method"
+                    >
+                      <option value="hz">Hz</option>
+                      <option value="bark">Bark</option>
+                      <option value="erb">ERB</option>
+                      <option value="mel">Mel</option>
+                      <option value="lobanov">Lobanov</option>
+                      <option value="nearey1">Nearey 1</option>
+                    </select>
+                  </div>
+                )}
+
+                {/* Range Controls */}
+                <div className="flex items-center gap-2 border-r border-slate-300 pr-4 mr-2">
+                  {activeTab === 'traj_f1f2' && (
+                    <>
+                      <div className="flex flex-col">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">{getAxisLabel('F1', (bgConfig.normalization || 'hz') as NormalizationMethod)}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-bold text-slate-500">Min</span>
+                          <input type="number" step={getRangeStep(bgConfig.normalization || 'hz')} className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f1Range[0]} onChange={e => updateLayerConfig(layers[0].id, 'f1Range', [parseFloat(e.target.value), bgConfig.f1Range[1]])} />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-bold text-slate-500">Max</span>
+                          <input type="number" step={getRangeStep(bgConfig.normalization || 'hz')} className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f1Range[1]} onChange={e => updateLayerConfig(layers[0].id, 'f1Range', [bgConfig.f1Range[0], parseFloat(e.target.value)])} />
+                        </div>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">{getAxisLabel('F2', (bgConfig.normalization || 'hz') as NormalizationMethod)}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-bold text-slate-500">Min</span>
+                          <input type="number" step={getRangeStep(bgConfig.normalization || 'hz')} className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f2Range[0]} onChange={e => updateLayerConfig(layers[0].id, 'f2Range', [parseFloat(e.target.value), bgConfig.f2Range[1]])} />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-bold text-slate-500">Max</span>
+                          <input type="number" step={getRangeStep(bgConfig.normalization || 'hz')} className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f2Range[1]} onChange={e => updateLayerConfig(layers[0].id, 'f2Range', [bgConfig.f2Range[0], parseFloat(e.target.value)])} />
+                        </div>
+                      </div>
+                    </>
+                  )}
+                  {activeTab === 'traj_series' && (
                     <div className="flex flex-col gap-1">
-                       <div className="flex items-center gap-1">
-                          <span className="text-[9px] font-bold text-slate-500 w-6">F1 Min</span>
-                          <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f1Range[0]} onChange={e => updateLayerConfig(layers[0].id, 'f1Range', [parseInt(e.target.value), bgConfig.f1Range[1]])} />
-                       </div>
-                       <div className="flex items-center gap-1">
-                          <span className="text-[9px] font-bold text-slate-500 w-6">F1 Max</span>
-                          <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f1Range[1]} onChange={e => updateLayerConfig(layers[0].id, 'f1Range', [bgConfig.f1Range[0], parseInt(e.target.value)])} />
-                       </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] font-bold text-slate-500 w-8">Freq Min</span>
+                        <input type="number" step="100" className="w-16 p-0.5 border rounded text-[10px]" value={bgConfig.timeSeriesFrequencyRange ? bgConfig.timeSeriesFrequencyRange[0] : 0} onChange={e => updateLayerConfig(layers[0].id, 'timeSeriesFrequencyRange', [parseInt(e.target.value), bgConfig.timeSeriesFrequencyRange[1]])} />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] font-bold text-slate-500 w-8">Freq Max</span>
+                        <input type="number" step="100" className="w-16 p-0.5 border rounded text-[10px]" value={bgConfig.timeSeriesFrequencyRange ? bgConfig.timeSeriesFrequencyRange[1] : 4000} onChange={e => updateLayerConfig(layers[0].id, 'timeSeriesFrequencyRange', [bgConfig.timeSeriesFrequencyRange[0], parseInt(e.target.value)])} />
+                      </div>
                     </div>
-                 )}
-                 {(activeTab === 'vowel' || activeTab === '3d' || activeTab === 'traj_f1f2') && (
-                    <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-1">
-                            <span className="text-[9px] font-bold text-slate-500 w-6">F2 Min</span>
-                            <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f2Range[0]} onChange={e => updateLayerConfig(layers[0].id, 'f2Range', [parseInt(e.target.value), bgConfig.f2Range[1]])} />
-                        </div>
-                        <div className="flex items-center gap-1">
-                            <span className="text-[9px] font-bold text-slate-500 w-6">F2 Max</span>
-                            <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f2Range[1]} onChange={e => updateLayerConfig(layers[0].id, 'f2Range', [bgConfig.f2Range[0], parseInt(e.target.value)])} />
-                        </div>
+                  )}
+                  {activeTab === 'duration' && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-[9px] font-bold text-slate-500">Max Duration (s)</span>
+                      <input type="number" step="0.1" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.durationRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'durationRange', [0, parseFloat(e.target.value)])} />
                     </div>
-                 )}
-                 {activeTab === 'traj_series' && (
-                    <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-1">
-                            <span className="text-[9px] font-bold text-slate-500 w-8">Freq Min</span>
-                            <input type="number" step="100" className="w-16 p-0.5 border rounded text-[10px]" value={bgConfig.timeSeriesFrequencyRange ? bgConfig.timeSeriesFrequencyRange[0] : 0} onChange={e => updateLayerConfig(layers[0].id, 'timeSeriesFrequencyRange', [parseInt(e.target.value), bgConfig.timeSeriesFrequencyRange[1]])} />
-                        </div>
-                        <div className="flex items-center gap-1">
-                            <span className="text-[9px] font-bold text-slate-500 w-8">Freq Max</span>
-                            <input type="number" step="100" className="w-16 p-0.5 border rounded text-[10px]" value={bgConfig.timeSeriesFrequencyRange ? bgConfig.timeSeriesFrequencyRange[1] : 4000} onChange={e => updateLayerConfig(layers[0].id, 'timeSeriesFrequencyRange', [bgConfig.timeSeriesFrequencyRange[0], parseInt(e.target.value)])} />
-                        </div>
+                  )}
+                  {activeTab === 'dist' && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-[9px] font-bold text-slate-500">Max Count</span>
+                      <input type="number" step="10" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.countRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'countRange', [0, parseInt(e.target.value)])} />
                     </div>
-                 )}
-                 {activeTab === '3d' && (
-                     <div className="flex flex-col gap-1">
-                         <div className="flex items-center gap-1">
-                             <span className="text-[9px] font-bold text-slate-500 w-6">F3 Min</span>
-                             <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f3Range[0]} onChange={e => updateLayerConfig(layers[0].id, 'f3Range', [parseInt(e.target.value), bgConfig.f3Range[1]])} />
-                         </div>
-                         <div className="flex items-center gap-1">
-                             <span className="text-[9px] font-bold text-slate-500 w-6">F3 Max</span>
-                             <input type="number" step="100" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.f3Range[1]} onChange={e => updateLayerConfig(layers[0].id, 'f3Range', [bgConfig.f3Range[0], parseInt(e.target.value)])} />
-                         </div>
-                     </div>
-                 )}
-                 {activeTab === 'duration' && (
-                     <div className="flex items-center gap-1">
-                        <span className="text-[9px] font-bold text-slate-500">Max Duration (s)</span>
-                        <input type="number" step="0.1" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.durationRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'durationRange', [0, parseFloat(e.target.value)])} />
-                     </div>
-                 )}
-                 {activeTab === 'dist' && (
-                     <div className="flex items-center gap-1">
-                        <span className="text-[9px] font-bold text-slate-500">Max Count</span>
-                        <input type="number" step="10" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.countRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'countRange', [0, parseInt(e.target.value)])} />
-                     </div>
-                 )}
-            </div>
+                  )}
+                </div>
 
-            {/* General Visualization Controls */}
-            {activeTab === 'duration' && (
-                 renderVariableSelect('Group By', currentConfig.groupBy, v => handleConfig('groupBy', v))
-            )}
+                {/* General Visualization Controls */}
+                {activeTab === 'duration' && (
+                  renderVariableSelect('Group By', currentConfig.groupBy, v => handleConfig('groupBy', v))
+                )}
 
-            {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
+                {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
 
-            {(activeTab === 'duration' || activeTab === 'dist') && (
-                 renderVariableSelect('Texture By', currentConfig.textureBy, v => handleConfig('textureBy', v))
-            )}
+                {(activeTab === 'duration' || activeTab === 'dist') && (
+                  renderVariableSelect('Texture By', currentConfig.textureBy, v => handleConfig('textureBy', v))
+                )}
 
-            <div className="h-6 w-px bg-slate-300"></div>
+                <div className="h-6 w-px bg-slate-300"></div>
 
             {/* Distribution Specific Ordering Controls */}
             {activeTab === 'dist' && (
@@ -679,232 +1034,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 </div>
             )}
 
-            {/* Plot-Specific Toggles */}
-            {(activeTab === 'vowel' || activeTab === '3d') && (
-              <>
-                 {currentConfig.plotType === 'trajectory' ? (
-                   renderVariableSelect('Line Type', currentConfig.lineTypeBy, (val) => handleConfig('lineTypeBy', val))
-                 ) : (
-                   renderVariableSelect('Shape', currentConfig.shapeBy, (val) => handleConfig('shapeBy', val))
-                 )}
 
-                 {/* Plot Type Select */}
-                 <div className="flex items-center gap-1.5 ml-2">
-                    <label className="font-semibold text-slate-600">Mode:</label>
-                    <select
-                        className="p-1.5 border border-slate-300 rounded bg-white text-slate-700 text-xs font-bold"
-                        value={currentConfig.plotType}
-                        onChange={e => handleConfig('plotType', e.target.value)}
-                    >
-                        <option value="point">Point</option>
-                        <option value="trajectory">Trajectory</option>
-                    </select>
-                 </div>
-
-                 {currentConfig.plotType !== 'trajectory' ? (
-                    <div className="flex items-center gap-2 ml-2">
-                      <label className="font-semibold text-slate-600">Time:</label>
-                      <select
-                        className="p-1.5 border border-slate-300 rounded bg-white text-slate-700 w-16"
-                        value={currentConfig.timePoint}
-                        onChange={e => handleConfig('timePoint', parseInt(e.target.value))}
-                      >
-                        {availableTimePoints.map(t => (
-                          <option key={t} value={t}>{t}%</option>
-                        ))}
-                      </select>
-                    </div>
-                 ) : (
-                    <div className="flex items-center gap-2 ml-2">
-                        <div className="flex flex-col gap-0.5">
-                            <span className="text-[9px] font-bold text-slate-500 uppercase">Range</span>
-                            <div className="flex items-center gap-1">
-                                <select
-                                    className="p-0.5 border rounded text-[10px] w-12"
-                                    value={currentConfig.trajectoryOnset ?? 0}
-                                    onChange={e => handleConfig('trajectoryOnset', parseInt(e.target.value))}
-                                >
-                                    {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
-                                </select>
-                                <span className="text-slate-400">-</span>
-                                <select
-                                    className="p-0.5 border rounded text-[10px] w-12"
-                                    value={currentConfig.trajectoryOffset ?? 100}
-                                    onChange={e => handleConfig('trajectoryOffset', parseInt(e.target.value))}
-                                >
-                                    {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
-                                </select>
-                            </div>
-                        </div>
-
-                        <div className="flex flex-col gap-0.5 ml-2 border-l border-slate-200 pl-2">
-                             <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                <span>Lines</span>
-                                <input type="range" min="0" max="1" step="0.02" value={opacityToSlider(currentConfig.trajectoryLineOpacity ?? 0.5)} onChange={e => handleConfig('trajectoryLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" title="Individual Line Opacity (0 = hidden)" />
-                             </div>
-                        </div>
-                    </div>
-                 )}
-
-                <div className="h-6 w-px bg-slate-300 mx-2"></div>
-
-                <div className="flex items-center gap-3 flex-wrap">
-                   {/* Points Config */}
-                   {currentConfig.plotType !== 'trajectory' && (
-                       <div className="flex items-center gap-1.5">
-                         <label className="flex items-center gap-1 cursor-pointer" title="Show Individual Points">
-                           <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showPoints} onChange={e => handleConfig('showPoints', e.target.checked)} />
-                           <span className="font-bold">Pts</span>
-                         </label>
-                         {currentConfig.showPoints && (
-                           <div className="flex flex-col gap-0.5">
-                             <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                               <span>Size</span>
-                               <input type="range" min="1" max="10" title="Point Size" value={currentConfig.pointSize} onChange={e => handleConfig('pointSize', parseInt(e.target.value))} className="w-16 h-1 accent-slate-600" />
-                             </div>
-                             <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                               <span>Opacity</span>
-                               <input type="range" min="0" max="1" step="0.02" title="Point Opacity" value={opacityToSlider(currentConfig.pointOpacity)} onChange={e => handleConfig('pointOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
-                             </div>
-                           </div>
-                         )}
-                       </div>
-                   )}
-
-                   {currentConfig.plotType !== 'trajectory' && <div className="w-px h-6 bg-slate-200"></div>}
-
-                   {/* Ellipse Config */}
-                   {(activeTab === 'vowel' || activeTab === '3d') && currentConfig.plotType !== 'trajectory' && (
-                     <div className="flex items-center gap-1.5 border-r border-slate-200 pr-2">
-                       <label className="flex items-center gap-1 cursor-pointer" title="Show Standard Deviation Ellipses">
-                         <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showEllipses} onChange={e => handleConfig('showEllipses', e.target.checked)} />
-                         <span className="font-bold">Ellip</span>
-                       </label>
-                       {currentConfig.showEllipses && (
-                         <div className="flex items-center gap-1.5">
-                           <select className="p-0.5 border rounded text-[10px]" value={currentConfig.ellipseSD} onChange={e => handleConfig('ellipseSD', parseFloat(e.target.value))} title="Standard Deviations">
-                             {[1, 1.5, 2, 2.5, 3].map(sd => <option key={sd} value={sd}>{sd}σ</option>)}
-                           </select>
-                           <div className="flex flex-col gap-0.5">
-                               <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                  <span>Width</span>
-                                  <input type="range" min="0.5" max="8" step="0.5" title="Line Width" value={currentConfig.ellipseLineWidth} onChange={e => handleConfig('ellipseLineWidth', parseFloat(e.target.value))} className="w-10 h-1 accent-slate-600" />
-                               </div>
-                               <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                  <span>Line</span>
-                                  <input type="range" min="0" max="1" step="0.02" title="Line Opacity" value={opacityToSlider(currentConfig.ellipseLineOpacity)} onChange={e => handleConfig('ellipseLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-10 h-1 accent-slate-600" />
-                               </div>
-                               <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                  <span>Fill</span>
-                                  <input type="range" min="0" max="1" step="0.02" title="Fill Opacity" value={opacityToSlider(currentConfig.ellipseFillOpacity)} onChange={e => handleConfig('ellipseFillOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-10 h-1 accent-slate-600" />
-                               </div>
-                           </div>
-                         </div>
-                       )}
-                     </div>
-                   )}
-
-                   {/* Means / Centroids */}
-                   <div className="flex items-center gap-1.5">
-                     <label className="flex items-center gap-1 cursor-pointer" title="Show Means">
-                       <input
-                            type="checkbox"
-                            className="rounded text-sky-700"
-                            checked={currentConfig.plotType === 'trajectory' ? currentConfig.showMeanTrajectories : currentConfig.showCentroids}
-                            onChange={e => handleConfig(currentConfig.plotType === 'trajectory' ? 'showMeanTrajectories' : 'showCentroids', e.target.checked)}
-                       />
-                       <span className="font-bold">Means</span>
-                     </label>
-                     {(currentConfig.plotType === 'trajectory' ? currentConfig.showMeanTrajectories : currentConfig.showCentroids) && (
-                        <>
-                           {currentConfig.plotType === 'trajectory' ? (
-                                <>
-                                <div className="flex flex-col gap-0.5">
-                                     <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                        <span>Width</span>
-                                        <input type="range" min="1" max="10" step="0.5" title="Mean Line Width" value={currentConfig.meanTrajectoryWidth ?? 3} onChange={e => handleConfig('meanTrajectoryWidth', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
-                                     </div>
-                                     <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                        <span>Opacity</span>
-                                        <input type="range" min="0" max="1" step="0.02" title="Mean Line Opacity" value={opacityToSlider(currentConfig.meanTrajectoryOpacity ?? 1)} onChange={e => handleConfig('meanTrajectoryOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
-                                     </div>
-                                     <div className="flex items-center gap-1">
-                                        <label className="flex items-center gap-1 cursor-pointer text-[9px] text-slate-500">
-                                            <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showTrajectoryLabels} onChange={e => handleConfig('showTrajectoryLabels', e.target.checked)} />
-                                            <span>Lbl</span>
-                                        </label>
-                                        {currentConfig.showTrajectoryLabels && (
-                                            <input type="range" min="8" max="72" step="1" title="Label Size" value={currentConfig.meanTrajectoryLabelSize || 12} onChange={e => handleConfig('meanTrajectoryLabelSize', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
-                                        )}
-                                     </div>
-                                </div>
-                                <div className="w-px h-8 bg-slate-200"></div>
-                                <div className="flex flex-col gap-0.5">
-                                     <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                        <label className="flex items-center gap-1 cursor-pointer">
-                                            <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showMeanTrajectoryPoints} onChange={e => handleConfig('showMeanTrajectoryPoints', e.target.checked)} />
-                                            <span>Pts</span>
-                                        </label>
-                                        {currentConfig.showMeanTrajectoryPoints && (
-                                            <input type="range" min="1" max="10" step="0.5" title="Mean Point Size" value={currentConfig.meanTrajectoryPointSize ?? 4} onChange={e => handleConfig('meanTrajectoryPointSize', parseFloat(e.target.value))} className="w-12 h-1 accent-slate-600" />
-                                        )}
-                                     </div>
-                                     <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                        <label className="flex items-center gap-1 cursor-pointer">
-                                            <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showArrows} onChange={e => handleConfig('showArrows', e.target.checked)} />
-                                            <span>Arrow</span>
-                                        </label>
-                                        {currentConfig.showArrows && (
-                                            <input type="range" min="1" max="8" step="0.5" title="Arrow Size" value={currentConfig.meanTrajectoryArrowSize ?? 3} onChange={e => handleConfig('meanTrajectoryArrowSize', parseFloat(e.target.value))} className="w-12 h-1 accent-slate-600" />
-                                        )}
-                                     </div>
-                                </div>
-                                </>
-                           ) : (
-                                <>
-                                   {(activeTab === 'vowel' || activeTab === '3d') && (
-                                       <div className="flex flex-col gap-0.5">
-                                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                              <span>Size</span>
-                                              <input type="range" min="4" max="20" title="Centroid Size" value={currentConfig.centroidSize} onChange={e => handleConfig('centroidSize', parseInt(e.target.value))} className="w-16 h-1 accent-slate-600" />
-                                            </div>
-                                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                              <span>Opacity</span>
-                                              <input type="range" min="0" max="1" step="0.02" title="Centroid Opacity" value={opacityToSlider(currentConfig.centroidOpacity)} onChange={e => handleConfig('centroidOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
-                                            </div>
-                                       </div>
-                                   )}
-
-                                   <label className="flex items-center gap-1 cursor-pointer text-[10px] text-slate-500 ml-1">
-                                    <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.labelAsCentroid} onChange={e => handleConfig('labelAsCentroid', e.target.checked)} />
-                                    <span>Txt</span>
-                                   </label>
-                                   {currentConfig.labelAsCentroid && (
-                                     <input type="range" min="8" max="72" title="Text Size" value={currentConfig.labelSize} onChange={e => handleConfig('labelSize', parseInt(e.target.value))} className="w-10 h-1 accent-slate-600" />
-                                   )}
-                                </>
-                           )}
-
-                           {/* Mean Label Interaction Type */}
-                           {(currentConfig.colorBy !== 'none' || (currentConfig.plotType !== 'trajectory' && currentConfig.shapeBy !== 'none') || (currentConfig.plotType === 'trajectory' && currentConfig.lineTypeBy !== 'none')) && (
-                               <select
-                                 className="text-[9px] p-0.5 border rounded"
-                                 title="Label Source"
-                                 value={currentConfig.meanLabelType}
-                                 onChange={e => handleConfig('meanLabelType', e.target.value)}
-                               >
-                                   <option value="auto">Auto</option>
-                                   <option value="color">Color Key</option>
-                                   <option value="shape">{currentConfig.plotType === 'trajectory' ? 'Line Key' : 'Shape Key'}</option>
-                                   <option value="both">Both</option>
-                               </select>
-                           )}
-                        </>
-                     )}
-                   </div>
-                </div>
-              </>
-            )}
             {/* ... Rest of Toggles ... */}
             {(activeTab === 'traj_f1f2' || activeTab === 'traj_series') && (
                <>
@@ -1025,6 +1155,9 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                </>
             )}
 
+              </div>
+            )}
+
           </div>
         )}
       </div>
@@ -1038,6 +1171,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             layerData={layerData}
             onLegendClick={handleLegendClick}
             datasetMeta={datasetMeta}
+            speakerStats={speakerStats}
           />
         )}
         {activeTab === '3d' && (
@@ -1047,6 +1181,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             config={currentConfig}
             onLegendClick={handleLegendClick}
             styleOverrides={styleOverrides}
+            speakerStats={speakerStats}
           />
         )}
         {activeTab === 'traj_f1f2' && (
@@ -1057,6 +1192,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             globalReferences={globalReferences}
             onLegendClick={handleLegendClick}
             styleOverrides={styleOverrides}
+            speakerStats={speakerStats}
           />
         )}
         {activeTab === 'traj_series' && (
@@ -1066,6 +1202,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             config={currentConfig}
             onLegendClick={handleLegendClick}
             styleOverrides={styleOverrides}
+            speakerStats={speakerStats}
           />
         )}
         {activeTab === 'duration' && (

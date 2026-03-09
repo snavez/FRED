@@ -4,7 +4,8 @@ import Sidebar from './components/Sidebar';
 import MainDisplay from './components/MainDisplay';
 import Header from './components/Header';
 import { parseSpeechCSV, isMonophthong, detectDelimiter, splitRow, autoDetectMappings, parseWithMappings } from './services/csvParser';
-import { SpeechToken, PlotConfig, FilterState, ReferenceCentroid, Layer, LayerCounters, StyleOverrides, ColumnMapping, DatasetMeta } from './types';
+import { SpeechToken, PlotConfig, FilterState, ReferenceCentroid, Layer, LayerCounters, StyleOverrides, ColumnMapping, DatasetMeta, NormalizationMethod } from './types';
+import { computeSpeakerStats, computeNormalizedRange, SpeakerStatsMap } from './utils/normalization';
 import DataMappingDialog from './components/DataMappingDialog';
 
 const INITIAL_CONFIG: PlotConfig = {
@@ -19,6 +20,7 @@ const INITIAL_CONFIG: PlotConfig = {
 
   // Data Source
   useSmoothing: false,
+  normalization: 'hz' as NormalizationMethod,
 
   // New categorical defaults
   groupBy: 'phoneme',
@@ -32,6 +34,7 @@ const INITIAL_CONFIG: PlotConfig = {
   showMeanTrajectories: true,
   showIndividualLines: true,
   trajectoryLineOpacity: 0.1,
+  trajectoryLineWidth: 1,
   showTrajectoryLabels: false,
   meanTrajectoryLabelSize: 12,
   meanTrajectoryWidth: 3,
@@ -107,6 +110,7 @@ const INITIAL_FILTERS: FilterState = {
   lexicalStress: [],
   syllableMark: [],
   voicePitch: [],
+  fileIds: [],
   customFilters: {},
 };
 
@@ -134,6 +138,7 @@ const computeSelectAllFilters = (tokens: SpeechToken[], meta: DatasetMeta | null
     lexicalStress: Array.from(new Set(tokens.map(t => t.lexical_stress).filter(Boolean))),
     syllableMark: Array.from(new Set(tokens.map(t => t.syllable_mark).filter(Boolean))),
     voicePitch: Array.from(new Set(tokens.map(t => t.voice_pitch).filter(Boolean))),
+    fileIds: Array.from(new Set(tokens.map(t => t.file_id).filter(Boolean))),
     customFilters,
   };
 };
@@ -210,7 +215,21 @@ const App: React.FC = () => {
     setData(tokens);
     setDatasetMeta(meta);
     const allFilters = computeSelectAllFilters(tokens, meta);
-    setLayers(prev => prev.map(l => ({ ...l, filters: allFilters })));
+
+    // Compute auto-fit ranges for the initial Hz view
+    const initStats = computeSpeakerStats(tokens, INITIAL_CONFIG.useSmoothing);
+    const method = INITIAL_CONFIG.normalization;
+    const smooth = INITIAL_CONFIG.useSmoothing;
+    const f1Range = computeNormalizedRange(tokens, 'f1', method, initStats, smooth);
+    const f2Range = computeNormalizedRange(tokens, 'f2', method, initStats, smooth);
+    const f3Range = computeNormalizedRange(tokens, 'f3', method, initStats, smooth);
+    const tsFreqRange: [number, number] = [Math.min(f1Range[0], f2Range[0]), Math.max(f1Range[1], f2Range[1])];
+
+    setLayers(prev => prev.map(l => ({
+      ...l,
+      filters: allFilters,
+      config: { ...l.config, f1Range, f2Range, f3Range, timeSeriesFrequencyRange: tsFreqRange, trajectoryOnset: 0, trajectoryOffset: 100 },
+    })));
     setMappingDialog(null);
     setIsLoading(false);
   }, [mappingDialog]);
@@ -229,6 +248,7 @@ const App: React.FC = () => {
     const lexStressSet = new Set(currentFilters.lexicalStress);
     const sylMarkSet = new Set(currentFilters.syllableMark);
     const pitchSet = new Set(currentFilters.voicePitch);
+    const fileIdSet = new Set(currentFilters.fileIds);
 
     const customSets: Record<string, Set<string>> = {};
     if (currentFilters.customFilters) {
@@ -259,6 +279,7 @@ const App: React.FC = () => {
       if (lexStressSet.size > 0 && !lexStressSet.has(token.lexical_stress)) return false;
       if (sylMarkSet.size > 0 && !sylMarkSet.has(token.syllable_mark)) return false;
       if (pitchSet.size > 0 && !pitchSet.has(token.voice_pitch)) return false;
+      if (fileIdSet.size > 0 && !fileIdSet.has(token.file_id)) return false;
       // Custom filters
       for (const [field, set] of Object.entries(customSets)) {
         if (!set.has(token.customFields?.[field] ?? '')) return false;
@@ -276,6 +297,12 @@ const App: React.FC = () => {
     return result;
   }, [data, layers, filterData]);
 
+  // Pre-compute speaker stats for normalization (from full unfiltered data, stable across filters)
+  const speakerStats = useMemo<SpeakerStatsMap>(() => {
+    if (data.length === 0) return {};
+    return computeSpeakerStats(data, layers[0].config.useSmoothing);
+  }, [data, layers[0].config.useSmoothing]);
+
   // Derived: active layer
   const activeLayer = useMemo(() => layers.find(l => l.id === activeLayerId) || layers[0], [layers, activeLayerId]);
 
@@ -285,10 +312,24 @@ const App: React.FC = () => {
   }, []);
 
   const updateLayerConfig = useCallback((layerId: string, key: keyof PlotConfig, value: any) => {
-    setLayers(prev => prev.map(l =>
-      l.id === layerId ? { ...l, config: { ...l.config, [key]: value } } : l
-    ));
-  }, []);
+    setLayers(prev => prev.map(l => {
+      if (l.id !== layerId) return l;
+      const newConfig = { ...l.config, [key]: value };
+      // When normalization changes on the background layer, auto-adjust all ranges
+      if (key === 'normalization' && l.isBackground && data.length > 0) {
+        const method = value as NormalizationMethod;
+        const smooth = l.config.useSmoothing;
+        newConfig.f1Range = computeNormalizedRange(data, 'f1', method, speakerStats, smooth);
+        newConfig.f2Range = computeNormalizedRange(data, 'f2', method, speakerStats, smooth);
+        newConfig.f3Range = computeNormalizedRange(data, 'f3', method, speakerStats, smooth);
+        newConfig.timeSeriesFrequencyRange = [
+          Math.min(newConfig.f1Range[0], newConfig.f2Range[0]),
+          Math.max(newConfig.f1Range[1], newConfig.f2Range[1]),
+        ];
+      }
+      return { ...l, config: newConfig };
+    }));
+  }, [data, speakerStats]);
 
   const updateLayerFilters = useCallback((layerId: string, newFilters: FilterState) => {
     setLayers(prev => prev.map(l =>
@@ -525,6 +566,8 @@ const App: React.FC = () => {
               globalReferences={globalReferences}
               updateStyleOverride={updateStyleOverride}
               datasetMeta={datasetMeta}
+              speakerStats={speakerStats}
+              data={data}
             />
           )}
         </main>

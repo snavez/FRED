@@ -1,12 +1,14 @@
 
 import React, { useRef, useEffect, useMemo, useState, forwardRef, useImperativeHandle, useCallback } from 'react';
-import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig } from '../types';
+import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, NormalizationMethod } from '../types';
+import { normalizeFormant, SpeakerStatsMap } from '../utils/normalization';
 
 interface TrajectoryTimeSeriesProps {
   data: SpeechToken[];
   config: PlotConfig;
   styleOverrides?: StyleOverrides;
   onLegendClick?: (category: string, currentStyles: any, event: React.MouseEvent) => void;
+  speakerStats?: SpeakerStatsMap;
 }
 
 const COLORS = [
@@ -41,7 +43,7 @@ import { getLabel } from '../utils/getLabel';
 
 const lerp = (v0: number, v1: number, t: number) => v0 * (1 - t) + v1 * t;
 
-const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>(({ data, config, styleOverrides, onLegendClick }, ref) => {
+const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>(({ data, config, styleOverrides, onLegendClick, speakerStats }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hoveredToken, setHoveredToken] = useState<SpeechToken | null>(null);
@@ -129,13 +131,15 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
       const maxDur = Math.max(...tks.map(t => t.duration));
       const binSize = config.timeNormalized ? (sortedNormTimes.length > 1 ? sortedNormTimes[1] - sortedNormTimes[0] : 10) : maxDur / binCount;
 
+      const normM = (config.normalization || 'hz') as NormalizationMethod;
       tks.forEach(t => {
+         const sts = speakerStats?.[t.file_id || '__all__'];
          if (config.timeNormalized) {
              t.trajectory.forEach(p => {
                  // Map trajectory point time to bin index using sorted time-points
                  const idx = sortedNormTimes.indexOf(p.time);
-                 const f1 = config.useSmoothing ? (p.f1_smooth ?? p.f1) : p.f1;
-                 const f2 = config.useSmoothing ? (p.f2_smooth ?? p.f2) : p.f2;
+                 const f1 = normalizeFormant(config.useSmoothing ? (p.f1_smooth ?? p.f1) : p.f1, 'f1', normM, sts);
+                 const f2 = normalizeFormant(config.useSmoothing ? (p.f2_smooth ?? p.f2) : p.f2, 'f2', normM, sts);
                  if(idx >= 0 && idx < normBinCount && !isNaN(f1) && !isNaN(f2)) {
                      f1Sums[idx]+=f1; f2Sums[idx]+=f2; counts[idx]++;
                  }
@@ -157,10 +161,10 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
                  const p0 = t.trajectory[p0Idx];
                  const p1 = t.trajectory[p1Idx];
                  if(p0 && p1) {
-                     const f1_0 = config.useSmoothing ? (p0.f1_smooth ?? p0.f1) : p0.f1;
-                     const f1_1 = config.useSmoothing ? (p1.f1_smooth ?? p1.f1) : p1.f1;
-                     const f2_0 = config.useSmoothing ? (p0.f2_smooth ?? p0.f2) : p0.f2;
-                     const f2_1 = config.useSmoothing ? (p1.f2_smooth ?? p1.f2) : p1.f2;
+                     const f1_0 = normalizeFormant(config.useSmoothing ? (p0.f1_smooth ?? p0.f1) : p0.f1, 'f1', normM, sts);
+                     const f1_1 = normalizeFormant(config.useSmoothing ? (p1.f1_smooth ?? p1.f1) : p1.f1, 'f1', normM, sts);
+                     const f2_0 = normalizeFormant(config.useSmoothing ? (p0.f2_smooth ?? p0.f2) : p0.f2, 'f2', normM, sts);
+                     const f2_1 = normalizeFormant(config.useSmoothing ? (p1.f2_smooth ?? p1.f2) : p1.f2, 'f2', normM, sts);
 
                      if (!isNaN(f1_0) && !isNaN(f1_1) && !isNaN(f2_0) && !isNaN(f2_1)) {
                         const span = p1.time - p0.time;
@@ -292,10 +296,13 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
           }
 
           let hasStarted = false;
+          const normM = (config.normalization || 'hz') as NormalizationMethod;
+          const sts = speakerStats?.[token.file_id || '__all__'];
           token.trajectory.forEach((p) => {
-              const val = isF1 
+              const rawVal = isF1
                   ? (config.useSmoothing ? (p.f1_smooth ?? p.f1) : p.f1)
                   : (config.useSmoothing ? (p.f2_smooth ?? p.f2) : p.f2);
+              const val = normalizeFormant(rawVal, isF1 ? 'f1' : 'f2', normM, sts);
 
               if (isNaN(val)) {
                   hasStarted = false;
@@ -639,7 +646,8 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
         ctx.rotate(-Math.PI / 2);
         ctx.font = `bold ${exportConfig.yAxisLabelSize * drawScale}px Inter, sans-serif`;
         ctx.textAlign = 'center';
-        ctx.fillText('Frequency (Hz)', 0, 0);
+        const normUnitLabel = config.normalization === 'lobanov' ? 'z-score' : config.normalization === 'nearey1' ? 'log' : config.normalization === 'bark' ? 'Bark' : config.normalization === 'erb' ? 'ERB' : config.normalization === 'mel' ? 'Mel' : 'Hz';
+        ctx.fillText(`Frequency (${normUnitLabel})`, 0, 0);
         ctx.restore();
         ctx.restore(); // Restore from margin translation
 
@@ -736,8 +744,10 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
        const px = mapX(tVal);
        
        if (Math.abs(px - x) < 20) {
-           const f1 = config.useSmoothing ? (mid.f1_smooth ?? mid.f1) : mid.f1;
-           const f2 = config.useSmoothing ? (mid.f2_smooth ?? mid.f2) : mid.f2;
+           const normMH = (config.normalization || 'hz') as NormalizationMethod;
+           const stsH = speakerStats?.[t.file_id || '__all__'];
+           const f1 = normalizeFormant(config.useSmoothing ? (mid.f1_smooth ?? mid.f1) : mid.f1, 'f1', normMH, stsH);
+           const f2 = normalizeFormant(config.useSmoothing ? (mid.f2_smooth ?? mid.f2) : mid.f2, 'f2', normMH, stsH);
            if (isNaN(f1) || isNaN(f2)) continue;
 
            const py1 = mapY(f1);
