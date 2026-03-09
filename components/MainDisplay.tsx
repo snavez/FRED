@@ -31,41 +31,18 @@ interface MainDisplayProps {
   data: SpeechToken[];
 }
 
-const BUILT_IN_VARIABLE_OPTIONS: { label: string, value: VariableType }[] = [
-  { label: 'None', value: 'none' },
-  { label: 'File / Speaker', value: 'file_id' },
-  { label: 'Segment Type', value: 'type' },
-  { label: 'Vowel Category', value: 'canonical_type' },
-  { label: 'Phoneme', value: 'phoneme' },
-  { label: 'Word', value: 'word' },
-  { label: 'Allophone', value: 'produced' },
-  { label: 'Alignment', value: 'alignment' },
-  { label: 'Expected Stress', value: 'canonical_stress' },
-  { label: 'Transcr. Stress', value: 'lexical_stress' },
-  { label: 'Syllable Mark', value: 'syllable_mark' },
-  { label: 'Voice Pitch', value: 'voice_pitch' },
-];
-
 // Non-linear opacity slider helpers: x^2 curve gives more travel at the transparent end
 const opacityToSlider = (opacity: number) => Math.sqrt(opacity);
 const sliderToOpacity = (slider: number) => slider * slider;
 
-const TOOLTIP_FIELD_OPTIONS: { key: string; label: string }[] = [
-  { key: 'file_id', label: 'File ID' },
-  { key: 'word', label: 'Word' },
-  { key: 'syllable', label: 'Syllable' },
-  { key: 'syllable_mark', label: 'Syllable Mark' },
-  { key: 'canonical_stress', label: 'Expected Stress' },
-  { key: 'lexical_stress', label: 'Transcribed Stress' },
-  { key: 'canonical', label: 'Phoneme' },
-  { key: 'produced', label: 'Allophone' },
-  { key: 'alignment', label: 'Alignment' },
-  { key: 'type', label: 'Type' },
-  { key: 'canonical_type', label: 'Vowel Category' },
-  { key: 'voice_pitch', label: 'Voice Pitch' },
-  { key: 'xmin', label: 'Time (xmin)' },
-  { key: 'duration', label: 'Duration' },
-];
+/** Pretty label for a field key */
+const prettyLabel = (key: string): string => {
+  if (key === 'speaker') return 'Speaker';
+  if (key === 'file_id') return 'File ID';
+  if (key === 'xmin') return 'Time (xmin)';
+  if (key === 'duration') return 'Duration';
+  return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+};
 
 const MainDisplay: React.FC<MainDisplayProps> = ({
   layers, layerData, activeLayerId, setActiveLayerId,
@@ -82,42 +59,24 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   const [layerPanelOpen, setLayerPanelOpen] = useState(false);
   const [showTooltipSettings, setShowTooltipSettings] = useState(false);
 
-  // Dynamic variable options: built-in + custom columns, filtered to sidebar-active fields
+  // Dynamic variable options: built from datasetMeta column mappings
   const variableOptions = useMemo(() => {
-    // Map variable option values to column roles ('phoneme' → 'canonical', others match directly)
-    const VARIABLE_TO_ROLE: Record<string, string> = { 'phoneme': 'canonical' };
+    const options: { label: string; value: VariableType }[] = [{ label: 'None', value: 'none' }];
+    if (!datasetMeta) return options;
+    const seen = new Set<string>();
 
-    // Build sets of sidebar-active roles and custom field names
-    const sidebarActiveRoles = new Set<string>();
-    const sidebarActiveCustom = new Set<string>();
-    if (datasetMeta?.columnMappings) {
-      for (const m of datasetMeta.columnMappings) {
-        if (m.showInSidebar) {
-          if (m.role === 'custom' && m.customFieldName) {
-            sidebarActiveCustom.add(m.customFieldName);
-          } else {
-            sidebarActiveRoles.add(m.role);
-          }
-        }
-      }
+    for (const m of datasetMeta.columnMappings) {
+      if (m.showInSidebar === false) continue;
+      let key: string | null = null;
+      if (m.role === 'speaker') key = 'speaker';
+      else if (m.role === 'file_id') key = 'file_id';
+      else if (m.role === 'field' && m.fieldName) key = m.fieldName;
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      options.push({ label: prettyLabel(key), value: key });
     }
 
-    // Filter built-in options: 'none' always shown, others only if sidebar-active
-    const builtIn = BUILT_IN_VARIABLE_OPTIONS.filter(opt => {
-      if (opt.value === 'none') return true;
-      const role = VARIABLE_TO_ROLE[opt.value] || opt.value;
-      return sidebarActiveRoles.has(role);
-    });
-
-    // Filter custom columns to sidebar-active only
-    const custom = (datasetMeta?.customColumns || [])
-      .filter(col => sidebarActiveCustom.has(col))
-      .map(col => ({
-        label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-        value: col,
-      }));
-
-    return [...builtIn, ...custom];
+    return options;
   }, [datasetMeta]);
 
   // Dynamic time-points (from dataset or default 0-100 by 10)
@@ -165,21 +124,11 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   };
 
   const selectAllRefVowels = () => {
-     setActiveConfig(prev => ({ ...prev, selectedReferenceVowels: globalReferences.map(r => r.canonical) }));
+     setActiveConfig(prev => ({ ...prev, selectedReferenceVowels: globalReferences.map(r => r.label) }));
   };
 
   const clearRefVowels = () => {
     setActiveConfig(prev => ({ ...prev, selectedReferenceVowels: [] }));
-  };
-
-  const availablePitches = useMemo(() => Array.from(new Set(activeData.map(t => t.voice_pitch))).filter(Boolean).sort(), [activeData]);
-
-  const togglePitchFilter = (p: string) => {
-      setActiveConfig(prev => {
-          const current = prev.referencePitchFilter || [];
-          if (current.includes(p)) return { ...prev, referencePitchFilter: current.filter(v => v !== p) };
-          return { ...prev, referencePitchFilter: [...current, p] };
-      });
   };
 
   const handleExportClick = () => {
@@ -424,19 +373,22 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                        </div>
                        <div className="max-h-[300px] overflow-y-auto space-y-1">
                          {(() => {
-                           // Only show fields that actually exist in the loaded dataset
-                           const mappedRoles = new Set(
-                             (datasetMeta?.columnMappings || [])
-                               .filter(m => m.role !== 'ignore' && m.role !== 'formant')
-                               .map(m => m.role)
-                           );
-                           const allFields = [
-                             ...TOOLTIP_FIELD_OPTIONS.filter(f => mappedRoles.has(f.key)),
-                             ...(datasetMeta?.customColumns || []).map(col => ({
-                               key: col,
-                               label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-                             })),
-                           ];
+                           // Build tooltip field options dynamically from datasetMeta
+                           const allFields: { key: string; label: string }[] = [];
+                           const seen = new Set<string>();
+                           if (datasetMeta) {
+                             for (const m of datasetMeta.columnMappings) {
+                               let key: string | null = null;
+                               if (m.role === 'speaker') key = 'speaker';
+                               else if (m.role === 'file_id') key = 'file_id';
+                               else if (m.role === 'xmin') key = 'xmin';
+                               else if (m.role === 'duration') key = 'duration';
+                               else if (m.role === 'field' && m.fieldName) key = m.fieldName;
+                               if (!key || seen.has(key)) continue;
+                               seen.add(key);
+                               allFields.push({ key, label: prettyLabel(key) });
+                             }
+                           }
                            const selected = currentConfig.tooltipFields || [];
                            const atMax = selected.length >= 10;
                            return allFields.map(field => {
@@ -1102,23 +1054,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                 <button onClick={() => setShowRefDropdown(false)} className="text-slate-400 hover:text-slate-600">×</button>
                             </div>
 
-                            <div className="mb-2">
-                                <span className="text-[10px] font-bold text-slate-500 uppercase">Voice Pitch Filter</span>
-                                <div className="flex flex-wrap gap-1 mt-1">
-                                    {availablePitches.map(p => (
-                                        <button
-                                            key={p}
-                                            onClick={() => togglePitchFilter(p)}
-                                            className={`px-2 py-0.5 rounded text-[10px] border ${(currentConfig.referencePitchFilter || []).includes(p) ? 'bg-slate-600 text-white border-slate-600' : 'bg-slate-50 border-slate-200 text-slate-500'}`}
-                                        >
-                                            {p}
-                                        </button>
-                                    ))}
-                                    {availablePitches.length === 0 && <span className="text-[10px] text-slate-400 italic">No pitch data</span>}
-                                </div>
-                            </div>
-
-                            <div className="mb-3 space-y-2 pb-3 border-b border-slate-100 mt-3">
+                            <div className="mb-3 space-y-2 pb-3 border-b border-slate-100">
                                 <div className="flex items-center justify-between text-[10px] text-slate-500">
                                     <span>Label Size</span>
                                     <input type="range" min="8" max="24" value={currentConfig.refVowelLabelSize} onChange={e => handleConfig('refVowelLabelSize', parseInt(e.target.value))} className="w-24 h-1 accent-slate-600" />
@@ -1138,9 +1074,9 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                             </div>
                             <div className="max-h-32 overflow-y-auto space-y-1">
                                 {globalReferences.map(ref => (
-                                <label key={ref.canonical} className="flex items-center space-x-2 text-[11px] cursor-pointer hover:bg-slate-50 p-1 rounded">
-                                    <input type="checkbox" checked={currentConfig.selectedReferenceVowels.includes(ref.canonical)} onChange={() => toggleReferenceVowel(ref.canonical)} className="rounded text-sky-700" />
-                                    <span className="font-mono font-bold text-slate-700">{ref.canonical}</span>
+                                <label key={ref.label} className="flex items-center space-x-2 text-[11px] cursor-pointer hover:bg-slate-50 p-1 rounded">
+                                    <input type="checkbox" checked={currentConfig.selectedReferenceVowels.includes(ref.label)} onChange={() => toggleReferenceVowel(ref.label)} className="rounded text-sky-700" />
+                                    <span className="font-mono font-bold text-slate-700">{ref.label}</span>
                                 </label>
                                 ))}
                             </div>
@@ -1221,14 +1157,33 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             styleOverrides={styleOverrides}
           />
         )}
-        {activeTab === 'table' && (
+        {activeTab === 'table' && (() => {
+           // Build dynamic table columns from datasetMeta
+           const tableCols: { key: string; label: string; accessor: (t: SpeechToken) => string }[] = [];
+           if (datasetMeta) {
+             const seen = new Set<string>();
+             for (const m of datasetMeta.columnMappings) {
+               if (m.role === 'speaker' && !seen.has('speaker')) {
+                 seen.add('speaker');
+                 tableCols.push({ key: 'speaker', label: 'Speaker', accessor: t => t.speaker });
+               } else if (m.role === 'file_id' && !seen.has('file_id')) {
+                 seen.add('file_id');
+                 tableCols.push({ key: 'file_id', label: 'File ID', accessor: t => t.file_id });
+               } else if (m.role === 'field' && m.fieldName && !seen.has(m.fieldName)) {
+                 const fn = m.fieldName;
+                 seen.add(fn);
+                 tableCols.push({ key: fn, label: prettyLabel(fn), accessor: t => t.fields[fn] ?? '' });
+               }
+             }
+           }
+           return (
            <div className="h-full overflow-auto">
              <table className="w-full text-left text-[13px]">
                 <thead className="sticky top-0 bg-slate-50/90 backdrop-blur border-b border-slate-200 z-10">
                   <tr>
-                    <th className="px-4 py-3 font-bold text-slate-500 uppercase tracking-tighter">Word</th>
-                    <th className="px-4 py-3 font-bold text-slate-500 uppercase tracking-tighter">Phoneme</th>
-                    <th className="px-4 py-3 font-bold text-slate-500 uppercase tracking-tighter">Produced</th>
+                    {tableCols.map(col => (
+                      <th key={col.key} className="px-4 py-3 font-bold text-slate-500 uppercase tracking-tighter">{col.label}</th>
+                    ))}
                     <th className="px-4 py-3 font-bold text-slate-500 uppercase tracking-tighter text-right">Duration (s)</th>
                     <th className="px-4 py-3 font-bold text-slate-500 uppercase tracking-tighter text-right">F1 (Avg)</th>
                     <th className="px-4 py-3 font-bold text-slate-500 uppercase tracking-tighter text-right">F2 (Avg)</th>
@@ -1242,9 +1197,9 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     const f3_mean = token.trajectory.length > 0 ? token.trajectory.reduce((acc, p) => acc + (currentConfig.useSmoothing ? (p.f3_smooth ?? p.f3) : p.f3), 0) / token.trajectory.length : 0;
                     return (
                       <tr key={token.id} className="hover:bg-sky-50/40 transition-colors">
-                        <td className="px-4 py-2 text-slate-900 font-semibold">{token.word}</td>
-                        <td className="px-4 py-2 font-mono text-sky-700 font-bold">{token.canonical}</td>
-                        <td className="px-4 py-2 text-slate-500 font-mono">{token.produced}</td>
+                        {tableCols.map(col => (
+                          <td key={col.key} className="px-4 py-2 text-slate-700 font-medium">{col.accessor(token)}</td>
+                        ))}
                         <td className="px-4 py-2 text-slate-600 text-right font-mono">{token.duration.toFixed(3)}</td>
                         <td className="px-4 py-2 text-slate-600 text-right font-mono">{Math.round(f1_mean)}</td>
                         <td className="px-4 py-2 text-slate-600 text-right font-mono">{Math.round(f2_mean)}</td>
@@ -1260,7 +1215,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 </div>
              )}
            </div>
-        )}
+           );
+        })()}
       </div>
 
       {editingItem && (

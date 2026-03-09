@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  parseSpeechCSV,
   detectDelimiter,
   splitRow,
   autoDetectMappings,
@@ -56,18 +55,18 @@ describe('splitRow', () => {
 // ─── autoDetectMappings ────────────────────────────────────────────
 
 describe('autoDetectMappings', () => {
-  it('maps known aliases to built-in roles', () => {
-    const headers = ['speaker', 'vowel', 'dur', 'pitch'];
+  it('maps known aliases to special roles', () => {
+    const headers = ['speaker', 'file_id', 'dur', 'onset'];
     const sampleRows = [
-      ['spk1', 'a', '0.12', '120'],
-      ['spk2', 'i', '0.15', '130'],
+      ['spk1', 'f001', '0.12', '0.5'],
+      ['spk2', 'f002', '0.15', '1.2'],
     ];
     const mappings = autoDetectMappings(headers, sampleRows);
 
-    expect(mappings.find(m => m.csvHeader === 'speaker')?.role).toBe('file_id');
-    expect(mappings.find(m => m.csvHeader === 'vowel')?.role).toBe('canonical');
+    expect(mappings.find(m => m.csvHeader === 'speaker')?.role).toBe('speaker');
+    expect(mappings.find(m => m.csvHeader === 'file_id')?.role).toBe('file_id');
     expect(mappings.find(m => m.csvHeader === 'dur')?.role).toBe('duration');
-    expect(mappings.find(m => m.csvHeader === 'pitch')?.role).toBe('voice_pitch');
+    expect(mappings.find(m => m.csvHeader === 'onset')?.role).toBe('xmin');
   });
 
   it('detects formant columns via regex', () => {
@@ -88,13 +87,13 @@ describe('autoDetectMappings', () => {
     expect(f2.isSmooth).toBe(true);
   });
 
-  it('classifies low-cardinality unknown columns as custom', () => {
+  it('classifies low-cardinality unknown columns as field', () => {
     const headers = ['dialect'];
     const sampleRows = [['north'], ['south'], ['north'], ['east']];
     const mappings = autoDetectMappings(headers, sampleRows);
 
-    expect(mappings[0].role).toBe('custom');
-    expect(mappings[0].customFieldName).toBe('dialect');
+    expect(mappings[0].role).toBe('field');
+    expect(mappings[0].fieldName).toBe('dialect');
   });
 
   it('classifies high-cardinality numeric unknown columns as ignore', () => {
@@ -110,20 +109,20 @@ describe('autoDetectMappings', () => {
 // ─── parseWithMappings ─────────────────────────────────────────────
 
 describe('parseWithMappings', () => {
-  it('parses CSV into correct SpeechToken fields via mappings', () => {
-    const csv = 'speaker,vowel,word\nspk1,a,cat\nspk2,i,sit';
+  it('parses CSV with speaker and file_id roles', () => {
+    const csv = 'speaker,file_id,phoneme\nspk1,f001,a\nspk2,f002,i';
     const mappings: ColumnMapping[] = [
-      { csvHeader: 'speaker', role: 'file_id' },
-      { csvHeader: 'vowel', role: 'canonical' },
-      { csvHeader: 'word', role: 'word' },
+      { csvHeader: 'speaker', role: 'speaker' },
+      { csvHeader: 'file_id', role: 'file_id' },
+      { csvHeader: 'phoneme', role: 'field', fieldName: 'phoneme' },
     ];
     const { tokens, meta } = parseWithMappings(csv, mappings, 'test.csv');
 
     expect(tokens).toHaveLength(2);
-    expect(tokens[0].file_id).toBe('spk1');
-    expect(tokens[0].canonical).toBe('a');
-    expect(tokens[0].word).toBe('cat');
-    expect(tokens[1].file_id).toBe('spk2');
+    expect(tokens[0].speaker).toBe('spk1');
+    expect(tokens[0].file_id).toBe('f001');
+    expect(tokens[0].fields['phoneme']).toBe('a');
+    expect(tokens[1].speaker).toBe('spk2');
     expect(meta.rowCount).toBe(2);
     expect(meta.fileName).toBe('test.csv');
   });
@@ -144,62 +143,60 @@ describe('parseWithMappings', () => {
     expect(meta.timePoints).toEqual([0, 50]);
   });
 
-  it('populates customFields for custom-role columns', () => {
-    const csv = 'vowel,dialect,age\na,northern,young\ni,southern,old';
+  it('populates fields for field-role columns', () => {
+    const csv = 'phoneme,dialect,age\na,northern,young\ni,southern,old';
     const mappings: ColumnMapping[] = [
-      { csvHeader: 'vowel', role: 'canonical' },
-      { csvHeader: 'dialect', role: 'custom', customFieldName: 'dialect' },
-      { csvHeader: 'age', role: 'custom', customFieldName: 'age' },
+      { csvHeader: 'phoneme', role: 'field', fieldName: 'phoneme' },
+      { csvHeader: 'dialect', role: 'field', fieldName: 'dialect' },
+      { csvHeader: 'age', role: 'field', fieldName: 'age' },
     ];
-    const { tokens, meta } = parseWithMappings(csv, mappings);
+    const { tokens } = parseWithMappings(csv, mappings);
 
-    expect(tokens[0].customFields).toEqual({ dialect: 'northern', age: 'young' });
-    expect(tokens[1].customFields).toEqual({ dialect: 'southern', age: 'old' });
-    expect(meta.customColumns).toEqual(['dialect', 'age']);
+    expect(tokens[0].fields).toEqual({ phoneme: 'a', dialect: 'northern', age: 'young' });
+    expect(tokens[1].fields).toEqual({ phoneme: 'i', dialect: 'southern', age: 'old' });
   });
 
   it('skips ignore-role columns', () => {
-    const csv = 'vowel,junk\na,xyz\ni,abc';
+    const csv = 'phoneme,junk\na,xyz\ni,abc';
     const mappings: ColumnMapping[] = [
-      { csvHeader: 'vowel', role: 'canonical' },
+      { csvHeader: 'phoneme', role: 'field', fieldName: 'phoneme' },
       { csvHeader: 'junk', role: 'ignore' },
     ];
     const { tokens } = parseWithMappings(csv, mappings);
 
-    expect(tokens[0].canonical).toBe('a');
-    // 'junk' should not appear in customFields
-    expect(tokens[0].customFields).toBeUndefined();
+    expect(tokens[0].fields['phoneme']).toBe('a');
+    // 'junk' should not appear in fields
+    expect(tokens[0].fields['junk']).toBeUndefined();
   });
 
   it('returns correct DatasetMeta', () => {
-    const csv = 'vowel,f1_00,f2_00,f1_50,f2_50,region\na,400,1800,450,1700,east';
+    const csv = 'phoneme,f1_00,f2_00,f1_50,f2_50,region\na,400,1800,450,1700,east';
     const mappings: ColumnMapping[] = [
-      { csvHeader: 'vowel', role: 'canonical' },
+      { csvHeader: 'phoneme', role: 'field', fieldName: 'phoneme' },
       { csvHeader: 'f1_00', role: 'formant', formant: 'f1', timePoint: 0 },
       { csvHeader: 'f2_00', role: 'formant', formant: 'f2', timePoint: 0 },
       { csvHeader: 'f1_50', role: 'formant', formant: 'f1', timePoint: 50 },
       { csvHeader: 'f2_50', role: 'formant', formant: 'f2', timePoint: 50 },
-      { csvHeader: 'region', role: 'custom', customFieldName: 'region' },
+      { csvHeader: 'region', role: 'field', fieldName: 'region' },
     ];
     const { meta } = parseWithMappings(csv, mappings, 'data.csv');
 
     expect(meta.timePoints).toEqual([0, 50]);
-    expect(meta.customColumns).toEqual(['region']);
     expect(meta.rowCount).toBe(1);
     expect(meta.fileName).toBe('data.csv');
   });
 
   it('handles tab-delimited input', () => {
-    const tsv = 'vowel\tword\na\tcat\ni\tsit';
+    const tsv = 'phoneme\tword\na\tcat\ni\tsit';
     const mappings: ColumnMapping[] = [
-      { csvHeader: 'vowel', role: 'canonical' },
-      { csvHeader: 'word', role: 'word' },
+      { csvHeader: 'phoneme', role: 'field', fieldName: 'phoneme' },
+      { csvHeader: 'word', role: 'field', fieldName: 'word' },
     ];
     const { tokens } = parseWithMappings(tsv, mappings);
 
     expect(tokens).toHaveLength(2);
-    expect(tokens[0].canonical).toBe('a');
-    expect(tokens[0].word).toBe('cat');
+    expect(tokens[0].fields['phoneme']).toBe('a');
+    expect(tokens[0].fields['word']).toBe('cat');
   });
 
   it('handles smooth formant values with raw fallback', () => {
@@ -234,50 +231,17 @@ describe('parseWithMappings', () => {
   });
 
   it('produces sensible defaults for missing values', () => {
-    const csv = 'vowel\na';
+    const csv = 'phoneme\na';
     const mappings: ColumnMapping[] = [
-      { csvHeader: 'vowel', role: 'canonical' },
+      { csvHeader: 'phoneme', role: 'field', fieldName: 'phoneme' },
     ];
     const { tokens } = parseWithMappings(csv, mappings);
 
+    expect(tokens[0].speaker).toBe('');
     expect(tokens[0].file_id).toBe('');
-    expect(tokens[0].word).toBe('');
-    expect(tokens[0].type).toBe('vowel');
-    expect(tokens[0].canonical_type).toBe('vowel');
     expect(tokens[0].xmin).toBe(0);
     expect(tokens[0].duration).toBe(0);
     expect(tokens[0].trajectory).toEqual([]);
-  });
-});
-
-// ─── parseSpeechCSV (regression) ───────────────────────────────────
-
-describe('parseSpeechCSV', () => {
-  it('parses original fixed-format CSV correctly', () => {
-    const csv = [
-      'file_id,word,syllable,syllable_mark,canonical_stress,lexical_stress,canonical,produced,alignment,type,canonical_type,voice_pitch,xmin,duration,f1_00,f2_00,f1_50,f2_50',
-      'spk01,cat,cat,1,primary,stressed,æ,æ,correct,vowel,monophthong,low,0.5,0.12,700,1800,720,1750',
-    ].join('\n');
-
-    const tokens = parseSpeechCSV(csv);
-
-    expect(tokens).toHaveLength(1);
-    const t = tokens[0];
-    expect(t.file_id).toBe('spk01');
-    expect(t.word).toBe('cat');
-    expect(t.canonical).toBe('æ');
-    expect(t.alignment).toBe('correct');
-    expect(t.type).toBe('vowel');
-    expect(t.voice_pitch).toBe('low');
-    expect(t.xmin).toBe(0.5);
-    expect(t.duration).toBe(0.12);
-    expect(t.trajectory).toHaveLength(2);
-    expect(t.trajectory[0]).toMatchObject({ time: 0, f1: 700, f2: 1800 });
-    expect(t.trajectory[1]).toMatchObject({ time: 50, f1: 720, f2: 1750 });
-  });
-
-  it('returns empty array for input with no data rows', () => {
-    expect(parseSpeechCSV('header_only')).toEqual([]);
-    expect(parseSpeechCSV('')).toEqual([]);
+    expect(tokens[0].fields['phoneme']).toBe('a');
   });
 });

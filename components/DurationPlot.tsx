@@ -401,10 +401,14 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config }
       />
       {hoveredToken && (
         <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-16 top-16 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]">
-          <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-sky-400">File ID: {hoveredToken.file_id}</div>
+          {hoveredToken.file_id && <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-sky-400">File ID: {hoveredToken.file_id}</div>}
           <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-             <p><span className="text-slate-400 font-bold uppercase text-[9px]">Word:</span> {hoveredToken.word}</p>
-             <p><span className="text-slate-400 font-bold uppercase text-[9px]">Phoneme:</span> {hoveredToken.canonical}</p>
+             {config.groupBy && config.groupBy !== 'none' && (
+               <p><span className="text-slate-400 font-bold uppercase text-[9px]">{config.groupBy}:</span> {getLabel(hoveredToken, config.groupBy)}</p>
+             )}
+             {config.colorBy && config.colorBy !== 'none' && config.colorBy !== config.groupBy && (
+               <p><span className="text-slate-400 font-bold uppercase text-[9px]">{config.colorBy}:</span> {getLabel(hoveredToken, config.colorBy)}</p>
+             )}
              <p className="col-span-2"><span className="text-slate-400 font-bold uppercase text-[9px]">Duration:</span> {hoveredToken.duration.toFixed(3)}s</p>
           </div>
         </div>

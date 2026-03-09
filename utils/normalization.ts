@@ -109,7 +109,7 @@ export function computeSpeakerStats(data: SpeechToken[], useSmoothing: boolean):
   const groups: Record<string, { f1: number[]; f2: number[]; f3: number[] }> = {};
 
   for (const token of data) {
-    const spk = token.file_id || '__all__';
+    const spk = token.speaker || '__all__';
     if (!groups[spk]) groups[spk] = { f1: [], f2: [], f3: [] };
     const g = groups[spk];
     for (const pt of token.trajectory) {
@@ -157,7 +157,7 @@ export function computeNormalizedRange(
   const smoothKey = `${formant}_smooth` as keyof import('../types').TrajectoryPoint;
 
   for (const token of data) {
-    const stats = statsMap[token.file_id || '__all__'];
+    const stats = statsMap[token.speaker || '__all__'];
     for (const pt of token.trajectory) {
       const raw = useSmoothing ? ((pt[smoothKey] as number) ?? (pt[formant] as number)) : (pt[formant] as number);
       if (isNaN(raw) || raw <= 0) continue;

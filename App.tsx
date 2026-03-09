@@ -3,7 +3,8 @@ import React, { useState, useMemo, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import MainDisplay from './components/MainDisplay';
 import Header from './components/Header';
-import { parseSpeechCSV, isMonophthong, detectDelimiter, splitRow, autoDetectMappings, parseWithMappings } from './services/csvParser';
+import { detectDelimiter, splitRow, autoDetectMappings, parseWithMappings } from './services/csvParser';
+import { getLabel } from './utils/getLabel';
 import { SpeechToken, PlotConfig, FilterState, ReferenceCentroid, Layer, LayerCounters, StyleOverrides, ColumnMapping, DatasetMeta, NormalizationMethod } from './types';
 import { computeSpeakerStats, computeNormalizedRange, SpeakerStatsMap } from './utils/normalization';
 import DataMappingDialog from './components/DataMappingDialog';
@@ -23,7 +24,7 @@ const INITIAL_CONFIG: PlotConfig = {
   normalization: 'hz' as NormalizationMethod,
 
   // New categorical defaults
-  groupBy: 'phoneme',
+  groupBy: 'none',
 
   // Base Plot Mode
   plotType: 'point',
@@ -100,47 +101,26 @@ const INITIAL_CONFIG: PlotConfig = {
 };
 
 const INITIAL_FILTERS: FilterState = {
-  types: [],
-  vowelCategories: [],
-  phonemes: [],
-  alignments: [],
-  produced: [],
-  words: [],
-  canonicalStress: [],
-  lexicalStress: [],
-  syllableMark: [],
-  voicePitch: [],
-  fileIds: [],
-  customFilters: {},
+  filters: {},
 };
 
 /** Compute a FilterState with all values selected from the data */
 const computeSelectAllFilters = (tokens: SpeechToken[], meta: DatasetMeta | null): FilterState => {
-  const customFilters: Record<string, string[]> = {};
-  if (meta) {
-    meta.customColumns.forEach(col => {
-      customFilters[col] = Array.from(new Set(tokens.map(t => t.customFields?.[col] ?? '').filter(v => v !== '')));
-    });
-  }
-  const vowelTokens = tokens.filter(t => t.canonical_type?.toLowerCase() === 'vowel');
-  const categories: string[] = [];
-  if (vowelTokens.some(t => isMonophthong(t.canonical))) categories.push('monophthong');
-  if (vowelTokens.some(t => !isMonophthong(t.canonical))) categories.push('diphthong');
+  const filters: Record<string, string[]> = {};
+  if (!meta) return { filters };
 
-  return {
-    types: Array.from(new Set(tokens.map(t => t.canonical_type?.toLowerCase()).filter(Boolean))),
-    vowelCategories: categories,
-    phonemes: Array.from(new Set(tokens.map(t => t.canonical).filter(Boolean))),
-    alignments: Array.from(new Set(tokens.map(t => t.alignment).filter(Boolean))),
-    produced: Array.from(new Set(tokens.map(t => t.produced).filter(Boolean))),
-    words: Array.from(new Set(tokens.map(t => t.word).filter(Boolean))),
-    canonicalStress: Array.from(new Set(tokens.map(t => t.canonical_stress).filter(Boolean))),
-    lexicalStress: Array.from(new Set(tokens.map(t => t.lexical_stress).filter(Boolean))),
-    syllableMark: Array.from(new Set(tokens.map(t => t.syllable_mark).filter(Boolean))),
-    voicePitch: Array.from(new Set(tokens.map(t => t.voice_pitch).filter(Boolean))),
-    fileIds: Array.from(new Set(tokens.map(t => t.file_id).filter(Boolean))),
-    customFilters,
-  };
+  for (const m of meta.columnMappings) {
+    if (m.role === 'speaker') {
+      filters['speaker'] = Array.from(new Set(tokens.map(t => t.speaker).filter(Boolean)));
+    } else if (m.role === 'file_id') {
+      filters['file_id'] = Array.from(new Set(tokens.map(t => t.file_id).filter(Boolean)));
+    } else if (m.role === 'field' && m.fieldName) {
+      const key = m.fieldName;
+      filters[key] = Array.from(new Set(tokens.map(t => t.fields[key] ?? '').filter(v => v !== '')));
+    }
+  }
+
+  return { filters };
 };
 
 const INITIAL_STYLE_OVERRIDES: StyleOverrides = {
@@ -237,52 +217,26 @@ const App: React.FC = () => {
   const filterData = useCallback((sourceData: SpeechToken[], currentFilters: FilterState) => {
     if (sourceData.length === 0) return [];
 
-    // Pre-convert arrays to Sets for O(1) lookups instead of O(n) Array.includes()
-    const typeSet = new Set(currentFilters.types);
-    const catSet = new Set(currentFilters.vowelCategories);
-    const phonemeSet = new Set(currentFilters.phonemes);
-    const alignSet = new Set(currentFilters.alignments);
-    const producedSet = new Set(currentFilters.produced);
-    const wordSet = new Set(currentFilters.words);
-    const canStressSet = new Set(currentFilters.canonicalStress);
-    const lexStressSet = new Set(currentFilters.lexicalStress);
-    const sylMarkSet = new Set(currentFilters.syllableMark);
-    const pitchSet = new Set(currentFilters.voicePitch);
-    const fileIdSet = new Set(currentFilters.fileIds);
+    // Build accessor+set pairs for all active filters
+    const filterEntries: { accessor: (t: SpeechToken) => string; set: Set<string> }[] = [];
+    for (const [key, values] of Object.entries(currentFilters.filters)) {
+      if (values.length === 0) continue; // empty = nothing passes, handled below
+      const set = new Set(values);
+      let accessor: (t: SpeechToken) => string;
+      if (key === 'speaker') accessor = t => t.speaker;
+      else if (key === 'file_id') accessor = t => t.file_id;
+      else accessor = t => t.fields[key] ?? '';
+      filterEntries.push({ accessor, set });
+    }
 
-    const customSets: Record<string, Set<string>> = {};
-    if (currentFilters.customFilters) {
-      for (const [field, values] of Object.entries(currentFilters.customFilters)) {
-        if (values.length > 0) customSets[field] = new Set(values);
-      }
+    // Check if any filter key has an empty array (= nothing passes)
+    for (const [, values] of Object.entries(currentFilters.filters)) {
+      if (values.length === 0) return [];
     }
 
     return sourceData.filter(token => {
-      // Types (required filter)
-      if (typeSet.size > 0) {
-        if (!typeSet.has(token.canonical_type?.toLowerCase())) return false;
-      } else { return false; }
-      // Vowel categories (only applies to vowels)
-      if (catSet.size > 0 && token.canonical_type?.toLowerCase() === 'vowel') {
-        const isMono = isMonophthong(token.canonical);
-        if (!catSet.has(isMono ? 'monophthong' : 'diphthong')) return false;
-      }
-      // Phonemes (required filter)
-      if (phonemeSet.size > 0) {
-        if (!phonemeSet.has(token.canonical)) return false;
-      } else { return false; }
-      // Optional filters: empty = no restriction
-      if (alignSet.size > 0 && !alignSet.has(token.alignment)) return false;
-      if (producedSet.size > 0 && !producedSet.has(token.produced)) return false;
-      if (wordSet.size > 0 && !wordSet.has(token.word)) return false;
-      if (canStressSet.size > 0 && !canStressSet.has(token.canonical_stress)) return false;
-      if (lexStressSet.size > 0 && !lexStressSet.has(token.lexical_stress)) return false;
-      if (sylMarkSet.size > 0 && !sylMarkSet.has(token.syllable_mark)) return false;
-      if (pitchSet.size > 0 && !pitchSet.has(token.voice_pitch)) return false;
-      if (fileIdSet.size > 0 && !fileIdSet.has(token.file_id)) return false;
-      // Custom filters
-      for (const [field, set] of Object.entries(customSets)) {
-        if (!set.has(token.customFields?.[field] ?? '')) return false;
+      for (const { accessor, set } of filterEntries) {
+        if (!set.has(accessor(token))) return false;
       }
       return true;
     });
@@ -360,7 +314,7 @@ const App: React.FC = () => {
         trajectoryLineOpacity: type === 'trajectory' ? 0.2 : 0.1,
         showArrows: type === 'trajectory',
         showMeanTrajectoryPoints: type === 'trajectory',
-        colorBy: 'phoneme',
+        colorBy: 'none',
       },
       filters: computeSelectAllFilters(data, datasetMeta),
       styleOverrides: { ...INITIAL_STYLE_OVERRIDES }
@@ -442,22 +396,19 @@ const App: React.FC = () => {
     }));
   }, [activeLayerId]);
 
-  // Calculate Global Reference Centroids (for Ref Vowels) — uses background layer config
+  // Calculate Global Reference Centroids (for Ref Vowels) — uses background layer filtered data
   const bgConfig = layers[0].config;
+  const bgFilteredData = layerData['bg'] || [];
   const globalReferences = useMemo(() => {
-    const pitchFilter = bgConfig.referencePitchFilter || [];
+    if (bgFilteredData.length === 0 || bgConfig.colorBy === 'none') return [];
 
-    const monophthongs = data.filter(t =>
-      t.type === 'vowel' &&
-      isMonophthong(t.canonical) &&
-      t.alignment === 'exact' &&
-      (pitchFilter.length === 0 || pitchFilter.includes(t.voice_pitch))
-    );
-
+    // Group by the background layer's colorBy field
     const groups: Record<string, SpeechToken[]> = {};
-    monophthongs.forEach(t => {
-      if (!groups[t.canonical]) groups[t.canonical] = [];
-      groups[t.canonical].push(t);
+    bgFilteredData.forEach(t => {
+      const key = getLabel(t, bgConfig.colorBy);
+      if (!key) return;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t);
     });
 
     const refs: ReferenceCentroid[] = [];
@@ -489,7 +440,7 @@ const App: React.FC = () => {
       const angle = Math.atan2(l1 - sxx, sxy);
 
       refs.push({
-        canonical: key,
+        label: key,
         f1: meanF1,
         f2: meanF2,
         sdX: Math.sqrt(l1),
@@ -497,8 +448,8 @@ const App: React.FC = () => {
         angle
       });
     });
-    return refs.sort((a,b) => a.canonical.localeCompare(b.canonical));
-  }, [data, bgConfig.useSmoothing, bgConfig.referencePitchFilter]);
+    return refs.sort((a, b) => a.label.localeCompare(b.label));
+  }, [bgFilteredData, bgConfig.colorBy, bgConfig.useSmoothing]);
 
   const handleToggleFieldVisibility = useCallback((key: string, visible: boolean) => {
     setDatasetMeta(prev => {
@@ -506,12 +457,12 @@ const App: React.FC = () => {
       return {
         ...prev,
         columnMappings: prev.columnMappings.map(m => {
-          // Match custom fields by customFieldName
-          if (m.role === 'custom' && m.customFieldName === key) {
+          // Match by role for speaker/file_id
+          if ((m.role === 'speaker' && key === 'speaker') || (m.role === 'file_id' && key === 'file_id')) {
             return { ...m, showInSidebar: visible };
           }
-          // Match built-in fields by role
-          if (m.role !== 'custom' && m.role !== 'formant' && m.role !== 'ignore' && m.role === key) {
+          // Match field role by fieldName
+          if (m.role === 'field' && m.fieldName === key) {
             return { ...m, showInSidebar: visible };
           }
           return m;

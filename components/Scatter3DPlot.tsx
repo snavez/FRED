@@ -410,7 +410,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
     const normMethod: NormalizationMethod = config.normalization || 'hz';
     const normF = (pt: TrajectoryPoint, token: SpeechToken, formant: 'f1' | 'f2' | 'f3') => {
       const raw = config.useSmoothing ? ((pt as any)[formant + '_smooth'] ?? (pt as any)[formant]) : (pt as any)[formant];
-      return normalizeFormant(raw, formant, normMethod, speakerStats?.[token.file_id || '__all__']);
+      return normalizeFormant(raw, formant, normMethod, speakerStats?.[token.speaker || '__all__']);
     };
     const toCubeAndProject = (f1: number, f2: number, f3: number) => {
       let nx = (f2 - f2Min) / (f2Max - f2Min) * 2 - 1;
@@ -613,7 +613,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
       const pt = nearestTime !== undefined ? t.trajectory.find(p => p.time === nearestTime) : undefined;
       if (!pt) return;
 
-      const stats = speakerStats?.[t.file_id || '__all__'];
+      const stats = speakerStats?.[t.speaker || '__all__'];
       const f1 = normalizeFormant(config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1, 'f1', normMethod, stats);
       const f2 = normalizeFormant(config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2, 'f2', normMethod, stats);
       const f3 = normalizeFormant(config.useSmoothing ? (pt.f3_smooth ?? pt.f3) : pt.f3, 'f3', normMethod, stats);

@@ -6,7 +6,7 @@ const VOWEL_BASE: Record<string, { f1: number, f2: number, f3: number }> = {
   'u': { f1: 300, f2: 900, f3: 2500 },
   'æ': { f1: 750, f2: 1700, f3: 2600 },
   'ɑ': { f1: 800, f2: 1100, f3: 2800 },
-  'ai': { f1: 600, f2: 1500, f3: 2700 }, 
+  'ai': { f1: 600, f2: 1500, f3: 2700 },
   'ou': { f1: 500, f2: 1000, f3: 2500 },
 };
 
@@ -17,7 +17,7 @@ export const generateSpeechData = (count: number): SpeechToken[] => {
   for (let i = 0; i < count; i++) {
     const canonical = phonemes[Math.floor(Math.random() * phonemes.length)];
     const base = VOWEL_BASE[canonical];
-    
+
     // Random variations for base targets
     const f1_mid = base.f1 + (Math.random() - 0.5) * 100;
     const f2_mid = base.f2 + (Math.random() - 0.5) * 300;
@@ -46,23 +46,24 @@ export const generateSpeechData = (count: number): SpeechToken[] => {
       });
     }
 
+    const speaker = `spk_${Math.floor(Math.random() * 3) + 1}`;
+    const word = ['beat', 'bit', 'bait', 'Maungawhau', 'Ko'][Math.floor(Math.random() * 5)];
+
     data.push({
       id: crypto.randomUUID(),
+      speaker,
       file_id: (10000 + Math.floor(Math.random() * 100)).toString(),
-      word: ['beat', 'bit', 'bait', 'Maungawhau', 'Ko'][Math.floor(Math.random() * 5)],
-      syllable: 'k o',
-      syllable_mark: Math.floor(Math.random() * 3).toString(),
-      canonical_stress: Math.floor(Math.random() * 2).toString(),
-      lexical_stress: Math.floor(Math.random() * 3).toString(),
-      canonical,
-      produced: canonical, // Simplification
-      alignment: ['exact', 'substitution', 'insertion', 'deletion'][Math.floor(Math.random() * 4)],
-      type: 'vowel',
-      canonical_type: 'vowel',
-      voice_pitch: ['high', 'mid', 'low'][Math.floor(Math.random() * 3)],
       xmin: Math.random() * 10,
       duration: 0.1 + Math.random() * 0.3,
-      trajectory
+      trajectory,
+      fields: {
+        phoneme: canonical,
+        word,
+        produced: canonical,
+        alignment: ['exact', 'substitution', 'insertion', 'deletion'][Math.floor(Math.random() * 4)],
+        type: 'vowel',
+        voice_pitch: ['high', 'mid', 'low'][Math.floor(Math.random() * 3)],
+      },
     });
   }
 

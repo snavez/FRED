@@ -11,22 +11,12 @@ export interface TrajectoryPoint {
 
 export interface SpeechToken {
   id: string;
-  file_id: string;
-  word: string;
-  syllable: string;
-  syllable_mark: string;
-  canonical_stress: string;
-  lexical_stress: string;
-  canonical: string;
-  produced: string;
-  alignment: string;
-  type: string;
-  canonical_type: string;
-  voice_pitch: string;
+  speaker: string;                    // For normalization grouping (Lobanov/Nearey)
+  file_id: string;                    // For data provenance / tooltip
   xmin: number;
   duration: number;
-  trajectory: TrajectoryPoint[]; // 0 to 100 in 10% steps
-  customFields?: Record<string, string>;
+  trajectory: TrajectoryPoint[];      // Formant data across time
+  fields: Record<string, string>;     // All other columns (user's headers as keys)
 }
 
 export type VariableType = string;
@@ -142,18 +132,7 @@ export interface PlotConfig {
 }
 
 export interface FilterState {
-  types: string[]; // canonical_type values (e.g. 'vowel', 'consonant')
-  vowelCategories: string[]; // 'monophthong', 'diphthong'
-  phonemes: string[]; // canonical
-  alignments: string[];
-  produced: string[]; // allophones
-  words: string[];
-  canonicalStress: string[];
-  lexicalStress: string[];
-  syllableMark: string[];
-  voicePitch: string[];
-  fileIds: string[];
-  customFilters?: Record<string, string[]>;
+  filters: Record<string, string[]>;  // field name → selected values (empty = nothing passes)
 }
 
 // Multi-Layer System
@@ -182,7 +161,7 @@ export interface LayerLegendConfig {
 }
 
 export interface ReferenceCentroid {
-  canonical: string;
+  label: string;  // grouping field value (e.g. phoneme name)
   f1: number;
   f2: number;
   sdX: number; // F2 SD
@@ -270,21 +249,19 @@ export interface PlotHandle {
 
 // Flexible file parsing types
 export type ColumnRole =
-  | 'file_id' | 'word' | 'syllable' | 'syllable_mark'
-  | 'canonical_stress' | 'lexical_stress' | 'canonical' | 'produced'
-  | 'alignment' | 'type' | 'canonical_type' | 'voice_pitch'
+  | 'speaker' | 'file_id'
   | 'xmin' | 'duration'
   | 'formant'
-  | 'custom' | 'ignore';
+  | 'field' | 'ignore';
 
 export interface ColumnMapping {
   csvHeader: string;
   role: ColumnRole;
+  fieldName?: string;         // Display name for 'field' role columns (defaults to csvHeader)
   timePoint?: number;
   formant?: 'f1' | 'f2' | 'f3';
   isSmooth?: boolean;
   formantLabel?: string;
-  customFieldName?: string;
   showInSidebar?: boolean;
 }
 
@@ -292,7 +269,6 @@ export interface DatasetMeta {
   fileName: string;
   columnMappings: ColumnMapping[];
   timePoints: number[];
-  customColumns: string[];
   rowCount: number;
   formantVariants?: string[];
 }

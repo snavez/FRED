@@ -4,21 +4,19 @@ import { SpeechToken } from '../types';
 
 const makeToken = (overrides: Partial<SpeechToken> = {}): SpeechToken => ({
   id: 'test_1',
-  file_id: 'spk01',
-  word: 'hello',
-  syllable: 'hel',
-  syllable_mark: '1',
-  canonical_stress: 'primary',
-  lexical_stress: 'stressed',
-  canonical: 'ɛ',
-  produced: 'e',
-  alignment: 'correct',
-  type: 'vowel',
-  canonical_type: 'monophthong',
-  voice_pitch: 'high',
+  speaker: 'spk01',
+  file_id: 'file_001',
   xmin: 0.5,
   duration: 0.12,
   trajectory: [],
+  fields: {
+    phoneme: 'ɛ',
+    word: 'hello',
+    produced: 'e',
+    alignment: 'correct',
+    type: 'vowel',
+    voice_pitch: 'high',
+  },
   ...overrides,
 });
 
@@ -31,42 +29,23 @@ describe('getLabel', () => {
     expect(getLabel(makeToken(), '')).toBe('');
   });
 
-  it('returns canonical for key "phoneme"', () => {
-    expect(getLabel(makeToken({ canonical: 'aɪ' }), 'phoneme')).toBe('aɪ');
+  it('returns speaker for key "speaker"', () => {
+    expect(getLabel(makeToken({ speaker: 'spk02' }), 'speaker')).toBe('spk02');
   });
 
-  describe('syllable_mark logic', () => {
-    it('returns "accepted" for positive numeric syllable_mark', () => {
-      expect(getLabel(makeToken({ syllable_mark: '3' }), 'syllable_mark')).toBe('accepted');
-    });
-
-    it('returns "rejected" for zero syllable_mark', () => {
-      expect(getLabel(makeToken({ syllable_mark: '0' }), 'syllable_mark')).toBe('rejected');
-    });
-
-    it('returns "rejected" for negative syllable_mark', () => {
-      expect(getLabel(makeToken({ syllable_mark: '-2' }), 'syllable_mark')).toBe('rejected');
-    });
-
-    it('returns raw string for non-numeric syllable_mark', () => {
-      expect(getLabel(makeToken({ syllable_mark: 'maybe' }), 'syllable_mark')).toBe('maybe');
-    });
+  it('returns file_id for key "file_id"', () => {
+    expect(getLabel(makeToken({ file_id: 'file_xyz' }), 'file_id')).toBe('file_xyz');
   });
 
-  it('returns built-in SpeechToken fields', () => {
-    const t = makeToken({ word: 'cat', alignment: 'substitution' });
+  it('returns fields values for generic field keys', () => {
+    const t = makeToken({ fields: { phoneme: 'aɪ', word: 'cat', alignment: 'substitution', dialect: 'northern' } });
+    expect(getLabel(t, 'phoneme')).toBe('aɪ');
     expect(getLabel(t, 'word')).toBe('cat');
     expect(getLabel(t, 'alignment')).toBe('substitution');
-    expect(getLabel(t, 'file_id')).toBe('spk01');
-  });
-
-  it('falls back to customFields when built-in field is missing', () => {
-    const t = makeToken({ customFields: { dialect: 'northern', age_group: 'young' } });
     expect(getLabel(t, 'dialect')).toBe('northern');
-    expect(getLabel(t, 'age_group')).toBe('young');
   });
 
-  it('returns empty string when neither built-in nor custom matches', () => {
+  it('returns empty string when field does not exist', () => {
     expect(getLabel(makeToken(), 'nonexistent_field')).toBe('');
   });
 });

@@ -104,7 +104,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         let sumF1 = 0, sumF2 = 0, count = 0;
         tks.forEach(token => {
           const pt = token.trajectory.find(p => p.time === t);
-          if (pt) { const normM = (config.normalization || 'hz') as NormalizationMethod; const sts = speakerStats?.[token.file_id || '__all__']; const vF1 = normalizeFormant(config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1, 'f1', normM, sts); const vF2 = normalizeFormant(config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2, 'f2', normM, sts); if (!isNaN(vF1) && !isNaN(vF2)) { sumF1 += vF1; sumF2 += vF2; count++; } }
+          if (pt) { const normM = (config.normalization || 'hz') as NormalizationMethod; const sts = speakerStats?.[token.speaker || '__all__']; const vF1 = normalizeFormant(config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1, 'f1', normM, sts); const vF2 = normalizeFormant(config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2, 'f2', normM, sts); if (!isNaN(vF1) && !isNaN(vF2)) { sumF1 += vF1; sumF2 += vF2; count++; } }
         });
         if (count > 0) path.push({ f1: sumF1 / count, f2: sumF2 / count });
       }
@@ -188,7 +188,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
 
     // 1. Draw Selected Reference Vowels
     const activeRefs = (config.showReferenceVowels && globalReferences.length > 0 && config.selectedReferenceVowels.length > 0) 
-      ? globalReferences.filter(r => config.selectedReferenceVowels.includes(r.canonical)) 
+      ? globalReferences.filter(r => config.selectedReferenceVowels.includes(r.label)) 
       : [];
 
     if (activeRefs.length > 0) {
@@ -199,8 +199,8 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         const cx = mapX(normRefF2);
         const cy = mapY(normRefF1);
         let color = '#94a3b8';
-        if (config.colorBy === 'phoneme' && colorMap[ref.canonical]) {
-            color = colorMap[ref.canonical];
+        if (config.colorBy !== 'none' && colorMap[ref.label]) {
+            color = colorMap[ref.label];
         }
         // For speaker-dependent normalization, skip ellipses (reference stats are aggregate, not per-speaker)
         if (isSpeakerNorm) {
@@ -214,8 +214,8 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
           ctx.fillStyle = color;
           ctx.strokeStyle = 'white';
           ctx.lineWidth = (3 * drawScale) / scale;
-          ctx.strokeText(ref.canonical, cx, cy);
-          ctx.fillText(ref.canonical, cx, cy);
+          ctx.strokeText(ref.label, cx, cy);
+          ctx.fillText(ref.label, cx, cy);
           ctx.restore();
           return;
         }
@@ -276,7 +276,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
           const filteredTrajectory = token.trajectory.filter(pt => pt.time >= (config.trajectoryOnset ?? 0) && pt.time <= (config.trajectoryOffset ?? 100));
 
           filteredTrajectory.forEach((pt) => {
-            const sts = speakerStats?.[token.file_id || '__all__'];
+            const sts = speakerStats?.[token.speaker || '__all__'];
             const f1 = normalizeFormant(config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1, 'f1', normMethod, sts);
             const f2 = normalizeFormant(config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2, 'f2', normMethod, sts);
             if (isNaN(f1) || isNaN(f2)) { hasStarted = false; return; }
@@ -391,9 +391,9 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         ctx.strokeStyle = 'white';
         ctx.lineWidth = (4 * drawScale) / scale;
         ctx.globalAlpha = config.refVowelLabelOpacity; 
-        ctx.strokeText(ref.canonical, cx, cy);
+        ctx.strokeText(ref.label, cx, cy);
         ctx.fillStyle = `rgba(0, 0, 0, ${config.refVowelLabelOpacity})`; 
-        ctx.fillText(ref.canonical, cx, cy);
+        ctx.fillText(ref.label, cx, cy);
       });
     }
 
@@ -710,7 +710,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
     for (const t of data) {
       const last = t.trajectory[t.trajectory.length - 1];
       if (!last) continue;
-      const sts = speakerStats?.[t.file_id || '__all__'];
+      const sts = speakerStats?.[t.speaker || '__all__'];
       const f1 = normalizeFormant(config.useSmoothing ? (last.f1_smooth ?? last.f1) : last.f1, 'f1', normM, sts);
       const f2 = normalizeFormant(config.useSmoothing ? (last.f2_smooth ?? last.f2) : last.f2, 'f2', normM, sts);
       if (isNaN(f1) || isNaN(f2)) continue;
@@ -818,22 +818,18 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
           );
         }
         const getFieldLabel = (key: string): string => {
-          const labels: Record<string, string> = {
-            file_id: 'File ID', word: 'Word', syllable: 'Syllable', syllable_mark: 'Syllable Mark',
-            canonical_stress: 'Expected Stress', lexical_stress: 'Transcribed Stress',
-            canonical: 'Phoneme', produced: 'Allophone', alignment: 'Alignment',
-            type: 'Type', canonical_type: 'Vowel Category', voice_pitch: 'Voice Pitch',
-            xmin: 'Time (xmin)', duration: 'Duration',
-          };
-          return labels[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+          if (key === 'speaker') return 'Speaker';
+          if (key === 'file_id') return 'File ID';
+          if (key === 'xmin') return 'Time (xmin)';
+          if (key === 'duration') return 'Duration';
+          return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
         };
         const getTooltipValue = (token: SpeechToken, field: string): string => {
           if (field === 'xmin') return `${token.xmin.toFixed(3)}s`;
           if (field === 'duration') return `${token.duration.toFixed(3)}s`;
-          if (field in token && field !== 'id' && field !== 'trajectory' && field !== 'customFields') {
-            return String((token as any)[field] ?? '');
-          }
-          return token.customFields?.[field] ?? '';
+          if (field === 'speaker') return token.speaker;
+          if (field === 'file_id') return token.file_id;
+          return token.fields[field] ?? '';
         };
         const [firstField, ...restFields] = fields;
         return (

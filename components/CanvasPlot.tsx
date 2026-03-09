@@ -90,26 +90,22 @@ const LINE_TYPE_PATTERNS: Record<string, number[]> = {
 };
 const DEFAULT_LINE_TYPE_NAMES = ['solid', 'dash', 'dot', 'longdash', 'dotdash'];
 
-// Tooltip field label lookup
-const TOOLTIP_LABELS: Record<string, string> = {
-  file_id: 'File ID', word: 'Word', syllable: 'Syllable', syllable_mark: 'Syllable Mark',
-  canonical_stress: 'Expected Stress', lexical_stress: 'Transcribed Stress',
-  canonical: 'Phoneme', produced: 'Allophone', alignment: 'Alignment',
-  type: 'Type', canonical_type: 'Vowel Category', voice_pitch: 'Voice Pitch',
-  xmin: 'Time (xmin)', duration: 'Duration',
+// Tooltip field label lookup (pretty label for any key)
+const tooltipLabel = (key: string): string => {
+  if (key === 'speaker') return 'Speaker';
+  if (key === 'file_id') return 'File ID';
+  if (key === 'xmin') return 'Time (xmin)';
+  if (key === 'duration') return 'Duration';
+  return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 };
 
 // Get tooltip field value from a token
 const getTooltipValue = (token: SpeechToken, field: string): string => {
-  // Built-in fields with formatting
   if (field === 'xmin') return `${token.xmin.toFixed(3)}s`;
   if (field === 'duration') return `${token.duration.toFixed(3)}s`;
-  // Built-in string fields
-  if (field in token && field !== 'id' && field !== 'trajectory' && field !== 'customFields') {
-    return String((token as any)[field] ?? '');
-  }
-  // Custom fields
-  return token.customFields?.[field] ?? '';
+  if (field === 'speaker') return token.speaker;
+  if (field === 'file_id') return token.file_id;
+  return token.fields[field] ?? '';
 };
 
 // Reusable function to compute mappings for a layer
@@ -307,11 +303,11 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
   // Normalization helpers: apply smoothing + normalization in one step
   const normF1 = (pt: { f1: number; f1_smooth: number }, token: SpeechToken, config: PlotConfig) => {
     const raw = config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1;
-    return normalizeFormant(raw, 'f1', normMethod, speakerStats?.[token.file_id || '__all__']);
+    return normalizeFormant(raw, 'f1', normMethod, speakerStats?.[token.speaker || '__all__']);
   };
   const normF2 = (pt: { f2: number; f2_smooth: number }, token: SpeechToken, config: PlotConfig) => {
     const raw = config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2;
-    return normalizeFormant(raw, 'f2', normMethod, speakerStats?.[token.file_id || '__all__']);
+    return normalizeFormant(raw, 'f2', normMethod, speakerStats?.[token.speaker || '__all__']);
   };
 
   // Cleanup RAF on unmount
@@ -1230,11 +1226,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
             </div>
           );
         }
-        const getFieldLabel = (key: string) => {
-          if (TOOLTIP_LABELS[key]) return TOOLTIP_LABELS[key];
-          // Custom field — title-case the key
-          return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-        };
+        const getFieldLabel = (key: string) => tooltipLabel(key);
         const [firstField, ...restFields] = fields;
         return (
           <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-16 top-16 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]">

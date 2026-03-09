@@ -133,7 +133,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
 
       const normM = (config.normalization || 'hz') as NormalizationMethod;
       tks.forEach(t => {
-         const sts = speakerStats?.[t.file_id || '__all__'];
+         const sts = speakerStats?.[t.speaker || '__all__'];
          if (config.timeNormalized) {
              t.trajectory.forEach(p => {
                  // Map trajectory point time to bin index using sorted time-points
@@ -297,7 +297,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
 
           let hasStarted = false;
           const normM = (config.normalization || 'hz') as NormalizationMethod;
-          const sts = speakerStats?.[token.file_id || '__all__'];
+          const sts = speakerStats?.[token.speaker || '__all__'];
           token.trajectory.forEach((p) => {
               const rawVal = isF1
                   ? (config.useSmoothing ? (p.f1_smooth ?? p.f1) : p.f1)
@@ -745,7 +745,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
        
        if (Math.abs(px - x) < 20) {
            const normMH = (config.normalization || 'hz') as NormalizationMethod;
-           const stsH = speakerStats?.[t.file_id || '__all__'];
+           const stsH = speakerStats?.[t.speaker || '__all__'];
            const f1 = normalizeFormant(config.useSmoothing ? (mid.f1_smooth ?? mid.f1) : mid.f1, 'f1', normMH, stsH);
            const f2 = normalizeFormant(config.useSmoothing ? (mid.f2_smooth ?? mid.f2) : mid.f2, 'f2', normMH, stsH);
            if (isNaN(f1) || isNaN(f2)) continue;
@@ -787,10 +787,14 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
        {/* Tooltip ... */}
        {hoveredToken && (
         <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-16 top-16 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]">
-          <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-sky-400">File ID: {hoveredToken.file_id}</div>
+          {hoveredToken.file_id && <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-sky-400">File ID: {hoveredToken.file_id}</div>}
           <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-             <p><span className="text-slate-400 font-bold uppercase text-[9px]">Word:</span> {hoveredToken.word}</p>
-             <p><span className="text-slate-400 font-bold uppercase text-[9px]">Phoneme:</span> {hoveredToken.canonical}</p>
+             {config.groupBy && config.groupBy !== 'none' && (
+               <p><span className="text-slate-400 font-bold uppercase text-[9px]">{config.groupBy}:</span> {getLabel(hoveredToken, config.groupBy)}</p>
+             )}
+             {config.colorBy && config.colorBy !== 'none' && config.colorBy !== config.groupBy && (
+               <p><span className="text-slate-400 font-bold uppercase text-[9px]">{config.colorBy}:</span> {getLabel(hoveredToken, config.colorBy)}</p>
+             )}
           </div>
         </div>
       )}
