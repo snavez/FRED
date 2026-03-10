@@ -532,7 +532,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             {(activeTab === 'vowel' || activeTab === '3d') && (
               <div className="space-y-2">
                 {/* ── Row 1: Data & Coordinate Space ── */}
-                <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex items-center gap-4 flex-wrap min-h-[40px]">
                   <div className="flex items-center gap-2 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
                     <Settings2 size={14} />
                     <span>Config</span>
@@ -672,7 +672,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 </div>
 
                 {/* ── Row 2: Visual Controls ── */}
-                <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2">
+                <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2 min-h-[40px]">
                   {/* Colour */}
                   {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
 
@@ -866,7 +866,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             {/* ═══ Non-vowel/3d tabs: original flat layout ═══ */}
             {activeTab !== 'vowel' && activeTab !== '3d' && (
               <>
-              <div className="flex flex-wrap items-center gap-4">
+              <div className="flex flex-wrap items-center gap-4 min-h-[40px]">
                 <div className="flex items-center gap-2 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
                   <Settings2 size={14} />
                   <span>Config</span>
@@ -967,15 +967,15 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   )}
                   {activeTab === 'duration' && (
                     <>
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-[9px] font-bold text-slate-500 uppercase">Y-Axis</span>
+                      <div className="flex items-center gap-2">
+                        <label className="font-semibold text-slate-600">Y-Axis:</label>
                         <select className="p-0.5 border rounded text-[10px]" value={currentConfig.durationYField || 'duration'} onChange={e => handleConfig('durationYField', e.target.value)}>
                           {numericVariableOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                         </select>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <span className="text-[9px] font-bold text-slate-500">Max Y</span>
-                        <input type="number" step="0.1" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.durationRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'durationRange', [0, parseFloat(e.target.value)])} />
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[9px] font-bold text-slate-500 uppercase">Max Value</span>
+                        <input type="number" step="0.1" className="w-14 p-0.5 border rounded text-[10px]" value={bgConfig.durationRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'durationRange', [0, parseFloat(e.target.value)])} />
                       </div>
                     </>
                   )}
@@ -987,51 +987,72 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   )}
                 </div>
 
-                {/* General Visualization Controls */}
+                {/* Duration Row 1 continued: Whiskers, Centre, Order */}
                 {activeTab === 'duration' && (
-                  renderVariableSelect('Plot By', currentConfig.durationPlotBy || 'none', v => handleConfig('durationPlotBy', v))
+                  <>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Whiskers</span>
+                      <div className="flex rounded border border-slate-300 overflow-hidden">
+                        <button
+                          className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationWhiskerMode || 'iqr') === 'iqr' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                          onClick={() => handleConfig('durationWhiskerMode', 'iqr')}
+                        >1.5×IQR</button>
+                        <button
+                          className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationWhiskerMode || 'iqr') === 'minmax' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                          onClick={() => handleConfig('durationWhiskerMode', 'minmax')}
+                        >Range</button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Centre</span>
+                      <div className="flex rounded border border-slate-300 overflow-hidden">
+                        <button
+                          className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationCenterLine || 'median') === 'median' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                          onClick={() => handleConfig('durationCenterLine', 'median')}
+                        >Median</button>
+                        <button
+                          className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationCenterLine || 'median') === 'mean' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                          onClick={() => handleConfig('durationCenterLine', 'mean')}
+                        >Mean</button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Order</span>
+                      <div className="flex items-center gap-1">
+                        <div className="flex rounded border border-slate-300 overflow-hidden">
+                          <button
+                            className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationBoxOrder || 'alpha') === 'alpha' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                            onClick={() => handleConfig('durationBoxOrder', 'alpha')}
+                          >Alpha</button>
+                          <button
+                            className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationBoxOrder || 'alpha') === 'central' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                            onClick={() => handleConfig('durationBoxOrder', 'central')}
+                          >Central</button>
+                        </div>
+                        <button
+                          onClick={() => handleConfig('durationBoxDir', currentConfig.durationBoxDir === 'asc' ? 'desc' : 'asc')}
+                          className="p-1 border border-slate-300 rounded bg-white hover:bg-slate-50 text-slate-600"
+                          title={currentConfig.durationBoxDir === 'asc' ? 'Ascending' : 'Descending'}
+                        >
+                          {currentConfig.durationBoxDir === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>}
+                        </button>
+                      </div>
+                    </div>
+                  </>
                 )}
 
-                {activeTab !== 'traj_series' && (
+                {/* General Visualization Controls (non-duration, non-traj_series) */}
+                {activeTab !== 'duration' && activeTab !== 'traj_series' && (
                   renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))
                 )}
 
-                {(activeTab === 'duration' || activeTab === 'dist') && (
+                {activeTab === 'dist' && (
                   renderVariableSelect('Texture By', currentConfig.textureBy, v => handleConfig('textureBy', v))
                 )}
 
-                {activeTab === 'duration' && (() => {
-                  const clusterOpts: { label: string; value: string }[] = [{ label: 'None', value: 'none' }];
-                  const seen = new Set<string>();
-                  for (const vk of [currentConfig.colorBy, currentConfig.textureBy]) {
-                    if (vk && vk !== 'none' && !seen.has(vk)) {
-                      seen.add(vk);
-                      const opt = variableOptions.find(o => o.value === vk);
-                      clusterOpts.push({ label: opt?.label || vk, value: vk });
-                    }
-                  }
-                  if (clusterOpts.length <= 1) return null;
-                  const curCluster = currentConfig.durationClusterBy || 'none';
-                  if (curCluster !== 'none' && !clusterOpts.some(o => o.value === curCluster)) {
-                    setTimeout(() => handleConfig('durationClusterBy', 'none'), 0);
-                  }
-                  return (
-                    <div className="flex items-center gap-2">
-                      <label className="font-semibold text-slate-600">Group By:</label>
-                      <select
-                        className="p-1.5 border border-slate-300 rounded bg-white text-slate-700 max-w-[120px]"
-                        value={curCluster}
-                        onChange={e => handleConfig('durationClusterBy', e.target.value)}
-                      >
-                        {clusterOpts.map(o => (
-                          <option key={o.value} value={o.value}>{o.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                  );
-                })()}
-
-                {activeTab !== 'traj_series' && (
+                {activeTab !== 'traj_series' && activeTab !== 'duration' && (
                   <div className="h-6 w-px bg-slate-300"></div>
                 )}
 
@@ -1246,7 +1267,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
             {/* ── Time Series: Row 2 — Colour, Line Type, Lines / Means / Labels ── */}
             {activeTab === 'traj_series' && (
-              <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2">
+              <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2 min-h-[40px]">
                 {/* Colour */}
                 {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
 
@@ -1324,92 +1345,73 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
               </div>
             )}
 
-            {/* ── Duration: Row 2 — Whisker Mode, Center Line, Show Toggles ── */}
+            {/* ── Duration: Row 2 — Plot By, Colour, Texture, Group By, Show ── */}
             {activeTab === 'duration' && (
-              <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2">
-                {/* Whisker Mode */}
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[9px] font-bold text-slate-500 uppercase">Whiskers</span>
-                  <div className="flex rounded border border-slate-300 overflow-hidden">
-                    <button
-                      className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationWhiskerMode || 'iqr') === 'iqr' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
-                      onClick={() => handleConfig('durationWhiskerMode', 'iqr')}
-                    >1.5×IQR</button>
-                    <button
-                      className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationWhiskerMode || 'iqr') === 'minmax' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
-                      onClick={() => handleConfig('durationWhiskerMode', 'minmax')}
-                    >Range</button>
-                  </div>
-                </div>
+              <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2 min-h-[40px]">
+                {renderVariableSelect('Plot By', currentConfig.durationPlotBy || 'none', v => handleConfig('durationPlotBy', v))}
+                {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
+                {renderVariableSelect('Texture', currentConfig.textureBy, v => handleConfig('textureBy', v))}
 
-                {/* Center Line */}
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[9px] font-bold text-slate-500 uppercase">Center</span>
-                  <div className="flex rounded border border-slate-300 overflow-hidden">
-                    <button
-                      className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationCenterLine || 'median') === 'median' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
-                      onClick={() => handleConfig('durationCenterLine', 'median')}
-                    >Median</button>
-                    <button
-                      className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationCenterLine || 'median') === 'mean' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
-                      onClick={() => handleConfig('durationCenterLine', 'mean')}
-                    >Mean</button>
-                  </div>
-                </div>
-
-                <div className="w-px h-6 bg-slate-200"></div>
-
-                {/* Box Ordering */}
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[9px] font-bold text-slate-500 uppercase">Order</span>
-                  <div className="flex items-center gap-1">
-                    <div className="flex rounded border border-slate-300 overflow-hidden">
-                      <button
-                        className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationBoxOrder || 'alpha') === 'alpha' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
-                        onClick={() => handleConfig('durationBoxOrder', 'alpha')}
-                      >Alpha</button>
-                      <button
-                        className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationBoxOrder || 'alpha') === 'central' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
-                        onClick={() => handleConfig('durationBoxOrder', 'central')}
-                      >Central</button>
+                {(() => {
+                  const clusterOpts: { label: string; value: string }[] = [{ label: 'None', value: 'none' }];
+                  const seen = new Set<string>();
+                  for (const vk of [currentConfig.colorBy, currentConfig.textureBy]) {
+                    if (vk && vk !== 'none' && !seen.has(vk)) {
+                      seen.add(vk);
+                      const opt = variableOptions.find(o => o.value === vk);
+                      clusterOpts.push({ label: opt?.label || vk, value: vk });
+                    }
+                  }
+                  if (clusterOpts.length <= 1) return null;
+                  const curCluster = currentConfig.durationClusterBy || 'none';
+                  if (curCluster !== 'none' && !clusterOpts.some(o => o.value === curCluster)) {
+                    setTimeout(() => handleConfig('durationClusterBy', 'none'), 0);
+                  }
+                  return (
+                    <div className="flex items-center gap-2">
+                      <label className="font-semibold text-slate-600">Group By:</label>
+                      <select
+                        className="p-1.5 border border-slate-300 rounded bg-white text-slate-700 max-w-[120px]"
+                        value={curCluster}
+                        onChange={e => handleConfig('durationClusterBy', e.target.value)}
+                      >
+                        {clusterOpts.map(o => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
                     </div>
-                    <button
-                      onClick={() => handleConfig('durationBoxDir', currentConfig.durationBoxDir === 'asc' ? 'desc' : 'asc')}
-                      className="p-1 border border-slate-300 rounded bg-white hover:bg-slate-50 text-slate-600"
-                      title={currentConfig.durationBoxDir === 'asc' ? 'Ascending' : 'Descending'}
-                    >
-                      {currentConfig.durationBoxDir === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>}
-                    </button>
-                  </div>
-                </div>
+                  );
+                })()}
 
                 <div className="w-px h-6 bg-slate-200"></div>
 
-                {/* Show Toggles */}
-                <div className="flex items-center gap-2">
+                {/* Show Toggles — heading above checkboxes */}
+                <div className="flex flex-col gap-0.5">
                   <span className="text-[9px] font-bold text-slate-500 uppercase">Show</span>
-                  <label className="flex items-center gap-1 cursor-pointer" title="Quartile Boxes">
-                    <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showQuartiles} onChange={e => handleConfig('showQuartiles', e.target.checked)} />
-                    <span className="text-[10px] font-bold text-slate-600">Quartiles</span>
-                  </label>
-                  <label className="flex items-center gap-1 cursor-pointer" title="Outlier points (IQR mode only)">
-                    <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showOutliers} onChange={e => handleConfig('showOutliers', e.target.checked)} />
-                    <span className={`text-[10px] font-bold ${(currentConfig.durationWhiskerMode || 'iqr') === 'iqr' ? 'text-slate-600' : 'text-slate-300'}`}>Outliers</span>
-                  </label>
-                  <label className="flex items-center gap-1 cursor-pointer" title="Show individual data points">
-                    <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showDurationPoints} onChange={e => handleConfig('showDurationPoints', e.target.checked)} />
-                    <span className="text-[10px] font-bold text-slate-600">Points</span>
-                  </label>
-                  {currentConfig.showDurationPoints && (
-                    <input
-                      type="range"
-                      min="0" max="1" step="0.02"
-                      title="Point Opacity"
-                      value={opacityToSlider(currentConfig.pointOpacity)}
-                      onChange={e => handleConfig('pointOpacity', sliderToOpacity(parseFloat(e.target.value)))}
-                      className="w-14 h-1 accent-slate-600"
-                    />
-                  )}
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-1 cursor-pointer" title="Quartile Boxes">
+                      <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showQuartiles} onChange={e => handleConfig('showQuartiles', e.target.checked)} />
+                      <span className="text-[10px] font-bold text-slate-600">Quartiles</span>
+                    </label>
+                    <label className="flex items-center gap-1 cursor-pointer" title="Outlier points (IQR mode only)">
+                      <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showOutliers} onChange={e => handleConfig('showOutliers', e.target.checked)} />
+                      <span className={`text-[10px] font-bold ${(currentConfig.durationWhiskerMode || 'iqr') === 'iqr' ? 'text-slate-600' : 'text-slate-300'}`}>Outliers</span>
+                    </label>
+                    <label className="flex items-center gap-1 cursor-pointer" title="Show individual data points">
+                      <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showDurationPoints} onChange={e => handleConfig('showDurationPoints', e.target.checked)} />
+                      <span className="text-[10px] font-bold text-slate-600">Points</span>
+                    </label>
+                    {currentConfig.showDurationPoints && (
+                      <input
+                        type="range"
+                        min="0" max="1" step="0.02"
+                        title="Point Opacity"
+                        value={opacityToSlider(currentConfig.pointOpacity)}
+                        onChange={e => handleConfig('pointOpacity', sliderToOpacity(parseFloat(e.target.value)))}
+                        className="w-14 h-1 accent-slate-600"
+                      />
+                    )}
+                  </div>
                 </div>
               </div>
             )}
