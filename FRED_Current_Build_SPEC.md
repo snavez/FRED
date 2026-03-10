@@ -16,47 +16,47 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 1. **Read & Detect**: File is read, headers extracted, and column mappings auto-detected via an alias table
 2. **Mapping Dialog**: User reviews/adjusts column assignments in a modal before parsing
 
-### Column Roles
+### Column Roles (`ColumnRole` type)
 | Role | Description | Aliases |
 |------|-------------|---------|
-| `file_id` | Speaker/file identifier | `fileid`, `speaker`, `speaker_id`, `participant`, `subject` |
-| `word` | Word context | `words` |
-| `syllable` | Syllable | `syl` |
-| `syllable_mark` | Syllable mark | `syl_mark` |
-| `canonical_stress` | Expected stress | `can_stress`, `expected_stress` |
-| `lexical_stress` | Transcribed stress | `lex_stress`, `transcribed_stress` |
-| `canonical` | Target phoneme | `phoneme`, `target`, `target_phoneme`, `vowel`, `segment` |
-| `produced` | Actual allophone | `allophone`, `actual`, `realised`, `realized`, `transcribed` |
-| `alignment` | Alignment type | `align`, `align_type` |
-| `type` | Segment type | `segment_type` |
-| `canonical_type` | Vowel category | `can_type`, `vowel_type` |
-| `voice_pitch` | Voice pitch | `pitch` |
-| `xmin` | Onset time | `onset`, `start`, `start_time` |
+| `speaker` | Speaker identifier | `speaker_id`, `participant`, `subject` |
+| `file_id` | File identifier | `fileid`, `filename`, `file` |
 | `duration` | Segment duration | `dur`, `seg_dur` |
-| `formant` | Formant data (auto-detected from pattern `f[1-3]_<time>_<variant>`) | |
-| `custom` | User-defined categorical field | |
+| `formant` | Formant data (auto-detected from pattern `f[1-3]_<time>[_<variant>]`) | |
+| `pitch` | Pitch / F0 data (auto-detected from pattern `f0_<time>[_<variant>]`) | `f0`, `voice_pitch` |
+| `field` | Generic field (categorical or data) | *(any unrecognized column)* |
 | `ignore` | Column is not imported | |
 
-### Formant Column Detection
-- Regex pattern: `f[1-3]_<timepoint>[_<variant>]` (e.g., `f1_50`, `f2_30_smooth`)
+All columns that don't match a built-in role are assigned `field` role. Previous named roles like `word`, `canonical`, `type`, `alignment`, etc. are now detected as `field` role with their original column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`, `start_time`) is also treated as a `field` with `isDataField: true`.
+
+### Formant & Pitch Column Detection
+- **Formant regex**: `f[1-3]_<timepoint>[_<variant>]` (e.g., `f1_50`, `f2_30_smooth`)
+- **Pitch regex**: `f0_<timepoint>[_<variant>]` (e.g., `f0_50`, `f0_80_smooth`)
 - Supports multiple formant variants (e.g., raw + smoothed); select between them via the Data dropdown in the config toolbar
 - Time points are derived from the data (not hardcoded); all plots use `findNearestTimePoint()` for flexible lookup
+- xmin-like columns (`xmin`, `onset`, `start`, `start_time`) are auto-detected as `field` role with `isDataField: true` and used to populate `SpeechToken.xmin`
 
-### Custom Columns
-- Any unrecognized categorical column (<=50 unique values in sample) is assigned `custom` role
-- Custom columns are stored in `SpeechToken.customFields` as `Record<string, string>`
-- Can be used as visual encodings (Color By, Shape By, etc.) and as filter fields in the sidebar
+### Generic Fields
+- All non-built-in columns are assigned `field` role with `fieldName` set to the CSV header
+- Categorical columns (<=50 unique values in sample) default to filter fields (`isDataField: false`)
+- Numeric/high-cardinality columns default to data fields (`isDataField: true`)
+- All field values are stored in `SpeechToken.fields: Record<string, string>` — a single generic dictionary
+- Fields can be used as visual encodings (Color By, Shape By, etc.) and as filter fields in the sidebar
+- The user can toggle any field between Filter and Data mode in the Data Mapping Dialog
 
 ### Data Mapping Dialog
-- Modal UI listing all detected columns with role dropdowns
-- Shows sample data preview for each column
-- User can reassign roles, set custom field names, or ignore columns
+- Modal UI listing all detected columns with role dropdowns and sample data preview
+- User can reassign roles, set field names, or ignore columns
+- **Role options**: Speaker ID, File ID, Formant Value, Duration Value, Pitch Value, Custom Field, Ignore
+- **Filter/Data toggle**: Every non-ignored column gets a Filter/Data toggle
+  - **Filter**: categorical label for sidebar filtering (default for low-cardinality columns)
+  - **Data**: numeric value for plotting, not shown in sidebar (default for high-cardinality columns)
+- **Sidebar checkbox**: shown when Filter is selected; controls sidebar visibility (defaults checked)
+- **Field Name column**: editable name for `field` and `pitch` roles (shown as "Field Name" header)
 - Formant columns show formant/time-point details and auto-detected variant tags (e.g., "smooth")
-- **Sidebar column**: Every non-ignore, non-formant role has a checkbox to control sidebar visibility
-  - Filter-type fields (type, canonical, produced, word, alignment, stresses, etc.) default to **checked**
-  - Data-type fields (file_id, xmin, duration, syllable) default to **unchecked**
-  - Users can toggle any field on/off; settings persist after import
-- Role labels: "Phoneme" (canonical), "Allophone" (produced) — parenthetical suffixes removed for clarity
+- Help text sections with line breaks before "File ID" and "Data fields" explanations
+- **Edit Column Mappings button**: in sidebar below token count, reopens the dialog with current mappings for adjustment after import
+- **Stale file guard**: `dialogKey` embedded atomically in dialog state + `uploadIdRef` race condition guard prevents showing old file data when quickly uploading a new file
 
 ---
 
@@ -141,10 +141,10 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 | **Group By** | Duration | Same as Color By |
 
 ### Encoding Dropdown Filtering
-- Visual encoding dropdowns (Color By, Shape By, Line Type By, Texture By) only list variables whose corresponding field is **active in the sidebar** (`showInSidebar === true` on the column mapping)
-- The mapping from variable names to column roles uses `getLabel` conventions (e.g. `phoneme` → `canonical` role)
-- Custom columns are included only if they are sidebar-active
+- Visual encoding dropdowns (Color By, Shape By, Line Type By, Texture By) list all fields from `datasetMeta.columnMappings` that are sidebar-active
+- Built-in fields (`speaker`, `file_id`) plus all `field` and `pitch` role columns with a `fieldName` are eligible
 - `None` is always available regardless of sidebar state
+- `VariableType` is `string` (not a fixed union) to support dynamic field names as encoding variables
 
 ### Color Palette
 - Default: 15 colors (`#ef4444`, `#3b82f6`, `#10b981`, `#f59e0b`, `#8b5cf6`, `#ec4899`, `#06b6d4`, `#84cc16`, `#64748b`, `#dc2626`, `#2563eb`, `#059669`, `#d97706`, `#7c3aed`, `#db2777`)
@@ -178,38 +178,38 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 ## 5. Filter System
 
 ### Architecture
-- **Flat, independent filters** — no hierarchical dependency between Type, Category, and Phonemes
-- Empty array = nothing selected = nothing passes (for required filters: types, phonemes)
-- Optional filters (alignments, words, stress, etc.): empty array = no restriction
+- **Flat, independent filters** — no hierarchical dependency between fields
+- `FilterState.filters: Record<string, string[]>` — single generic dictionary for all filter state
+- Empty array = nothing selected = nothing passes for that field
+- On import, `computeSelectAllFilters()` populates all filter arrays with all unique values
+- Filter keys match field names from `datasetMeta.columnMappings` (e.g., `'speaker'`, `'file_id'`, `'type'`, `'phoneme'`, `'duration'`)
+- Accessor pattern: `speaker` and `file_id` access dedicated SpeechToken properties; `duration` accesses `t.duration.toString()`; all others access `t.fields[key]`
 
-### Built-in Filter Fields
-| Field | Filter Key | Required? |
-|-------|-----------|-----------|
-| Type | `types` | Yes |
-| Vowel Category | `vowelCategories` | Yes (for vowels) |
-| Phonemes | `phonemes` | Yes |
-| Words | `words` | No |
-| Alignments | `alignments` | No |
-| Allophones | `produced` | No |
-| Expected Stress | `canonicalStress` | No |
-| Transcribed Stress | `lexicalStress` | No |
-| Syllable Mark | `syllableMark` | No |
-| Voice Pitch | `voicePitch` | No |
+### Dynamic Filter Fields
+- Filter sections are generated dynamically from `datasetMeta.columnMappings`
+- Any column with `isDataField !== true` and a valid filter key gets a filter section
+- Supported roles for filtering: `speaker`, `file_id`, `duration` (when set to Filter), `pitch` (when set to Filter), `field`
+- `formant` and `ignore` roles never appear as filters
+- Filter section order mirrors CSV column order
 
-### Custom Filters
-- Dynamic filter sections for each custom column in the dataset
-- Stored in `FilterState.customFilters: Record<string, string[]>`
+### Cross-Filtering (Faceted Search)
+- **Excel-style cross-filtering**: selecting values in one filter constrains available options in all other filters
+- For each visible filter field X, options are computed by applying ALL other active filters to the data, then extracting unique values for X
+- If any other filter has an empty selection (nothing passes), all fields show "No values"
+- Selected values that disappear from cross-filtered options remain in filter state — they reappear when the constraining filter is changed back
+- Performance: O(fields × tokens × active_filters) Set.has() operations; sub-10ms for typical datasets
 
 ### Sidebar Controls
 - Each filter section has **All** / **Clear** buttons
-- Word filter has a search box
-- **Gear icon** (Settings2) opens a popover listing ALL available fields (built-in + custom) with checkboxes to toggle visibility in the sidebar
-- `ColumnMapping.showInSidebar` controls field visibility; set during import via Sidebar column in the Data Mapping Dialog
-- On import, `computeSelectAllFilters()` populates all filter arrays with all unique values
+- Search box appears when a field has >50 unique values
+- **Gear icon** (Settings2) opens a popover listing ALL non-data fields with checkboxes to toggle sidebar visibility
+- `ColumnMapping.showInSidebar` controls field visibility; set during import via the Data Mapping Dialog
+- Pretty labels: underscores replaced with spaces, title-cased (e.g., `syllable_mark` → "Syllable Mark")
 
 ### Per-Layer Filtering
 - Each layer has its own `FilterState`
 - Sidebar edits the active layer's filters
+- New layers get select-all filters via `computeSelectAllFilters(data, datasetMeta)`
 - Token count display shows active layer filtered count vs total
 
 ---
@@ -289,37 +289,17 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 - When hovering a token with no fields selected, a friendly message is shown: *"Select fields from the Tooltip dropdown to see token data here."*
 - Users opt-in to exactly the fields they want to see
 
-### Dropdown Filtering
-- The tooltip dropdown only shows fields that **actually exist in the loaded dataset**
-- Fields are matched against `datasetMeta.columnMappings` — only roles with a mapped CSV column appear
-- Custom columns from the dataset are always shown
-- This prevents stale or unmapped fields (e.g., `xmin` when no onset column was mapped) from cluttering the dropdown
-
-### Built-in Field Options (shown only when mapped)
-| Key | Label |
-|-----|-------|
-| `file_id` | File ID |
-| `word` | Word |
-| `syllable` | Syllable |
-| `syllable_mark` | Syllable Mark |
-| `canonical_stress` | Expected Stress |
-| `lexical_stress` | Transcribed Stress |
-| `canonical` | Phoneme |
-| `produced` | Allophone |
-| `alignment` | Alignment |
-| `type` | Type |
-| `canonical_type` | Vowel Category |
-| `voice_pitch` | Voice Pitch |
-| `xmin` | Time (xmin) |
-| `duration` | Duration |
-
-Plus any custom columns from the dataset.
+### Field Options
+- Tooltip dropdown shows only fields that **actually exist in the loaded dataset**
+- Built-in fields (`speaker`, `file_id`, `duration`) shown when mapped
+- All `field` and `pitch` role columns with a `fieldName` are included
+- Fields are matched against `datasetMeta.columnMappings` — unmapped fields don't appear
 
 ### Rendering
 - First field rendered as header with accent styling
 - Remaining fields in a 2-column grid
 - `xmin` and `duration` formatted as `.toFixed(3)s`
-- Custom fields accessed via `token.customFields`
+- Fields accessed via `token.fields[key]`
 - Tooltip uses the hovered token's layer config for field selection
 - Trajectory F1/F2 chart now also uses the configurable tooltip fields (previously hardcoded)
 
@@ -435,8 +415,9 @@ FRED/
     csvParser.ts                       # CSV/TSV parsing, auto-detection, alias table
     csvParser.test.ts                  # Parser tests
   utils/
-    getLabel.ts                        # Shared label extraction utility
+    getLabel.ts                        # Shared label extraction utility (checks fields dict)
     getLabel.test.ts                   # Label utility tests
+    normalization.ts                   # Speaker stats, normalization (Lobanov, Nearey, etc.)
     textureGenerator.ts                # Texture pattern generation
 ```
 
@@ -445,19 +426,22 @@ FRED/
 ## 14. Key Data Types
 
 ### SpeechToken
-Core data record representing one acoustic token with file_id, word, syllable, stress, phoneme, allophone, alignment, type, pitch, timing, trajectory points, and optional custom fields.
+Core data record: `id`, `speaker`, `file_id`, `xmin` (number), `duration` (number), `trajectory: TrajectoryPoint[]`, `fields: Record<string, string>`. All categorical/text columns are stored generically in `fields` — there are no dedicated properties for word, phoneme, type, etc.
 
 ### PlotConfig
 All visualization settings: axis inversion, visual encoding channels, plot type, point/ellipse/centroid/trajectory options, opacity values, tooltip fields, ranges.
 
 ### FilterState
-All filter arrays (types, vowelCategories, phonemes, alignments, produced, words, stress, syllableMark, voicePitch) plus customFilters record.
+`{ filters: Record<string, string[]> }` — single generic dictionary. Keys are field names (e.g., `'speaker'`, `'type'`, `'phoneme'`), values are arrays of selected values. Empty array = nothing passes.
 
 ### Layer
 Combines id, name, visibility, isBackground flag, PlotConfig, FilterState, and StyleOverrides.
 
+### ColumnMapping
+`{ csvHeader, role: ColumnRole, fieldName?, timePoint?, formant?, isSmooth?, formantLabel?, showInSidebar?, isDataField? }` — maps a CSV column to a role with optional metadata. `isDataField` distinguishes Filter vs Data fields; `showInSidebar` controls sidebar visibility.
+
 ### DatasetMeta
-File metadata: fileName, columnMappings, timePoints, customColumns, rowCount, formantVariants.
+`{ fileName, columnMappings: ColumnMapping[], timePoints: number[], rowCount, formantVariants: string[] }` — file-level metadata derived at import time.
 
 ### ExportConfig
 All export settings: scale, geometry, typography, title, legend position/visibility/titles, canvas dimensions.
