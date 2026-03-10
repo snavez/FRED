@@ -94,6 +94,9 @@ export interface PlotConfig {
   durationBoxOrder: 'alpha' | 'central';   // box ordering within clusters
   durationBoxDir: 'asc' | 'desc';          // ordering direction
   durationTooltipFields: string[];          // configurable tooltip fields
+  durationBoxWidth: number;                 // box width in px (0 = auto)
+  durationGroupGap: number;                 // gap between clusters in slot units (default 1.5)
+  durationBoxGap: number;                   // gap ratio between boxes (0-1, default 0.4 → barWidth = slotWidth * 0.6)
 
   // Distribution Plot Config
   separatePlots: boolean;
@@ -105,6 +108,9 @@ export interface PlotConfig {
   distPrimaryVar: 'color' | 'texture';
   distValueMode: 'count' | 'percentage';
   distNormalize: boolean;
+  distBarWidth: number;                     // bar width in px (0 = auto)
+  distGroupGap: number;                     // gap between groups in px (0 = auto)
+  distBarGap: number;                       // gap between bars within group in px (0 = auto)
 
   // Scatter Plot Visibility
   showPoints: boolean;

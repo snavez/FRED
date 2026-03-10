@@ -452,10 +452,14 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
             ctx.fillText(label, margin.left - (15 * drawScale) + yTickOffsetX, y + (5 * drawScale) + yTickOffsetY);
         }
 
-        const groupW = chartW / groups.length;
-        
+        const cfgGroupGap = (config.distGroupGap || 0) * drawScale;
+        const cfgBarWidth = (config.distBarWidth || 0) * drawScale;
+        const cfgBarGap = (config.distBarGap || 0) * drawScale;
+        const totalGroupGaps = (groups.length > 1 ? (groups.length - 1) * cfgGroupGap : 0);
+        const groupW = (chartW - totalGroupGaps) / groups.length;
+
         groups.forEach((g: string, i: number) => {
-             const cx = margin.left + i * groupW;
+             const cx = margin.left + i * (groupW + cfgGroupGap);
              const total = groupTotals[g];
              
              // Prepare Data
@@ -482,7 +486,8 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
 
                  // Render Logic for Interaction
                  const numPrimary = pKeys.length;
-                 const primaryGroupW = (groupW * 0.9) / numPrimary;
+                 const totalInnerGaps = (numPrimary > 1 ? (numPrimary - 1) * cfgBarGap : 0);
+                 const primaryGroupW = (groupW * 0.9 - totalInnerGaps) / numPrimary;
                  const startX = cx + (groupW * 0.05);
 
                  pKeys.forEach((pk, pi) => {
@@ -492,10 +497,10 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                      const stackTotal = (Object.values(sMap) as number[]).reduce((a, b) => a + b, 0);
                      const referenceTotal = (config.distNormalize && isStacked) ? stackTotal : total;
 
-                     const pBx = startX + pi * primaryGroupW;
-                     
+                     const pBx = startX + pi * (primaryGroupW + cfgBarGap);
+
                      if (isStacked) {
-                         const barW = primaryGroupW * 0.7;
+                         const barW = cfgBarWidth > 0 ? Math.min(cfgBarWidth, primaryGroupW * 0.95) : primaryGroupW * 0.7;
                          const bx = pBx + (primaryGroupW - barW)/2;
                          let currentY = margin.top + chartH;
                          
@@ -522,7 +527,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                          }
 
                      } else {
-                         const barW = (primaryGroupW * 0.9) / sKeys.length;
+                         const barW = cfgBarWidth > 0 ? Math.min(cfgBarWidth, (primaryGroupW * 0.9) / sKeys.length) : (primaryGroupW * 0.9) / sKeys.length;
                          const innerStartX = pBx + (primaryGroupW * 0.05);
                          
                          sKeys.forEach((sk, si) => {
@@ -576,7 +581,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
 
                 if (isStacked) {
                     // STACKED MODE
-                    const barW = groupW * 0.6;
+                    const barW = cfgBarWidth > 0 ? Math.min(cfgBarWidth, groupW * 0.95) : groupW * 0.6;
                     const bx = cx + (groupW - barW)/2;
                     let currentY = margin.top + chartH;
 
@@ -592,7 +597,8 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
 
                 } else {
                     // GROUPED MODE
-                    const barW = (groupW * 0.9) / items.length;
+                    const innerGaps = (items.length > 1 ? (items.length - 1) * cfgBarGap : 0);
+                    const barW = cfgBarWidth > 0 ? Math.min(cfgBarWidth, (groupW * 0.9 - innerGaps) / items.length) : (groupW * 0.9 - innerGaps) / items.length;
                     const startX = cx + (groupW * 0.05);
 
                     items.forEach((item, idx) => {
@@ -601,9 +607,9 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                         const h = (dispVal / maxY) * chartH;
                         const label = isPercentage ? `${dispVal.toFixed(0)}%` : rawVal.toString();
                         
-                        const bx = startX + idx * barW;
+                        const bx = startX + idx * (barW + cfgBarGap);
                         const by = margin.top + chartH - h;
-                        
+
                         drawBar(bx, by, barW, h, item.color, item.tex, dispVal, label);
 
                         // Sub-label for grouped items (only if enough space)

@@ -17,7 +17,7 @@ const COLORS = [
   '#ec4899', '#06b6d4', '#84cc16', '#64748b', '#dc2626'
 ];
 
-const CLUSTER_GAP = 1.5; // gap between clusters in slot units
+const DEFAULT_CLUSTER_GAP = 1.5; // gap between clusters in slot units
 
 // Hex colour → r,g,b string for rgba()
 const hexToRgb = (hex: string): string => {
@@ -374,6 +374,20 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
       return g.key;
     };
 
+    // Configurable box widths and gaps
+    const clusterGap = config.durationGroupGap ?? DEFAULT_CLUSTER_GAP;
+    const boxGapRatio = config.durationBoxGap ?? 0.4; // 0 = boxes fill slot, 1 = zero-width boxes
+    const configBoxWidth = (config.durationBoxWidth ?? 0) * drawScale; // 0 = auto
+
+    // Determine if we should rotate labels (check longest label length)
+    const allValidGroups = facetData.flatMap(f => f.groups.filter(g => g.stats !== null));
+    const allLabels = isHierarchical
+      ? allValidGroups.map(g => getInnerLabel(g))
+      : allValidGroups.map(g => g.key);
+    const maxLabelLen = Math.max(0, ...allLabels.map(l => l.length));
+    const shouldRotateLabels = isExport ? maxLabelLen > 6 : maxLabelLen > 8;
+    const labelRotation = shouldRotateLabels ? -Math.PI / 4 : 0;
+
     // Helper to render one facet's boxes within a given rect
     const renderFacet = (facet: FacetData, fx: number, fy: number, fw: number, fh: number, showYAxis: boolean) => {
       const mapY = (val: number) => fy + fh - ((val - yMin) / (yMax - yMin)) * fh;
@@ -412,6 +426,10 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
       const validGroups = facet.groups.filter(g => g.stats !== null);
       if (validGroups.length === 0) return;
 
+      // Font for box labels (data labels) and group labels (x-axis labels)
+      const dataLabelFont = exportConfig ? exportConfig.dataLabelSize : labelFont;
+      const xAxisFont = exportConfig ? exportConfig.xAxisLabelSize : (labelFont * 1.15);
+
       if (isHierarchical) {
         // === Clustered layout ===
         const clusterMap: Record<string, GroupData[]> = {};
@@ -428,9 +446,9 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         });
 
         const totalBoxes = validGroups.length;
-        const totalSlots = totalBoxes + (clusterKeys.length > 1 ? (clusterKeys.length - 1) * CLUSTER_GAP : 0);
+        const totalSlots = totalBoxes + (clusterKeys.length > 1 ? (clusterKeys.length - 1) * clusterGap : 0);
         const slotWidth = totalSlots > 0 ? fw / totalSlots : fw;
-        const barWidth = Math.min(50 * drawScale, slotWidth * 0.6);
+        const barWidth = configBoxWidth > 0 ? Math.min(configBoxWidth, slotWidth * 0.95) : Math.min(50 * drawScale, slotWidth * (1 - boxGapRatio));
 
         let slotIndex = 0;
         clusterKeys.forEach((ck, ci) => {
@@ -441,27 +459,46 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
             const xCenter = fx + (slotIndex + 0.5) * slotWidth;
             drawBox(ctx, g, xCenter, barWidth, mapY, scale, drawScale);
 
+            // Box label (data label) — inner label
             ctx.fillStyle = '#0f172a';
-            ctx.textAlign = 'center';
-            ctx.font = `${(labelFont * drawScale) / scale}px Inter`;
+            ctx.font = `${(dataLabelFont * drawScale) / scale}px Inter`;
             const xLabelX = xCenter + xTickOffsetX;
             const xLabelY = fy + fh + (20 * drawScale) + xTickOffsetY;
-            ctx.fillText(getInnerLabel(g), xLabelX, xLabelY);
 
-            ctx.fillStyle = '#64748b';
-            ctx.font = `${(metaFont * drawScale) / scale}px Inter`;
-            ctx.fillText(`n=${g.stats!.count}`, xLabelX, xLabelY + (metaFont * 1.5 * drawScale));
+            if (shouldRotateLabels) {
+              ctx.save();
+              ctx.translate(xLabelX, xLabelY);
+              ctx.rotate(labelRotation);
+              ctx.textAlign = 'right';
+              ctx.fillText(getInnerLabel(g), 0, 0);
+              ctx.restore();
+            } else {
+              ctx.textAlign = 'center';
+              ctx.fillText(getInnerLabel(g), xLabelX, xLabelY);
+            }
+
+            // n-count below box label (only on screen, not in export — export puts counts in legend)
+            if (!isExport) {
+              ctx.fillStyle = '#64748b';
+              ctx.textAlign = 'center';
+              ctx.font = `${(metaFont * drawScale) / scale}px Inter`;
+              const countY = shouldRotateLabels
+                ? xLabelY + (dataLabelFont * 2.0 * drawScale)
+                : xLabelY + (metaFont * 1.5 * drawScale);
+              ctx.fillText(`n=${g.stats!.count}`, xLabelX, countY);
+            }
 
             slotIndex++;
           });
 
-          // Outer label with bracket
+          // Outer label (x-axis / group label) with bracket
           if (clusterGroups.length > 0) {
             const clusterEndSlot = slotIndex - 1;
             const clusterCenterX = fx + ((clusterStartSlot + clusterEndSlot + 1) / 2) * slotWidth;
-            const outerLabelY = fy + fh + (20 * drawScale) + xTickOffsetY + (metaFont * 1.5 * drawScale) + (labelFont * 2.0 * drawScale);
+            const bracketGap = shouldRotateLabels ? (dataLabelFont * 3.0 * drawScale) : (metaFont * 1.5 * drawScale) + (dataLabelFont * 1.0 * drawScale);
+            const outerLabelY = fy + fh + (20 * drawScale) + xTickOffsetY + bracketGap + (xAxisFont * 1.0 * drawScale);
 
-            const bracketY = outerLabelY - (labelFont * 1.2 * drawScale);
+            const bracketY = outerLabelY - (xAxisFont * 0.8 * drawScale);
             const leftX = fx + (clusterStartSlot + 0.15) * slotWidth;
             const rightX = fx + (clusterEndSlot + 0.85) * slotWidth;
             ctx.strokeStyle = '#94a3b8';
@@ -473,34 +510,52 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
 
             ctx.fillStyle = '#0f172a';
             ctx.textAlign = 'center';
-            ctx.font = `bold ${(labelFont * 1.15 * drawScale) / scale}px Inter`;
+            ctx.font = `bold ${(xAxisFont * drawScale) / scale}px Inter`;
             ctx.fillText(ck, clusterCenterX, outerLabelY);
           }
 
           if (ci < clusterKeys.length - 1) {
-            slotIndex += CLUSTER_GAP;
+            slotIndex += clusterGap;
           }
         });
       } else {
         // === Flat layout — sort boxes ===
         const sorted = sortGroups(validGroups, config.durationBoxOrder, config.durationBoxDir, config.durationCenterLine);
         const spacing = fw / sorted.length;
-        const barWidth = Math.min(50 * drawScale, spacing * 0.6);
+        const barWidth = configBoxWidth > 0 ? Math.min(configBoxWidth, spacing * 0.95) : Math.min(50 * drawScale, spacing * (1 - boxGapRatio));
 
         sorted.forEach((g, i) => {
           const xCenter = fx + (spacing * i) + spacing / 2;
           drawBox(ctx, g, xCenter, barWidth, mapY, scale, drawScale);
 
+          // Box label (data label)
           ctx.fillStyle = '#0f172a';
-          ctx.textAlign = 'center';
-          ctx.font = `bold ${(labelFont * drawScale) / scale}px Inter`;
+          ctx.font = `bold ${(dataLabelFont * drawScale) / scale}px Inter`;
           const xLabelX = xCenter + xTickOffsetX;
           const xLabelY = fy + fh + (20 * drawScale) + xTickOffsetY;
-          ctx.fillText(g.key, xLabelX, xLabelY);
 
-          ctx.fillStyle = '#64748b';
-          ctx.font = `${(metaFont * drawScale) / scale}px Inter`;
-          ctx.fillText(`n=${g.stats!.count}`, xLabelX, xLabelY + (metaFont * 1.5 * drawScale));
+          if (shouldRotateLabels) {
+            ctx.save();
+            ctx.translate(xLabelX, xLabelY);
+            ctx.rotate(labelRotation);
+            ctx.textAlign = 'right';
+            ctx.fillText(g.key, 0, 0);
+            ctx.restore();
+          } else {
+            ctx.textAlign = 'center';
+            ctx.fillText(g.key, xLabelX, xLabelY);
+          }
+
+          // n-count (only on screen)
+          if (!isExport) {
+            ctx.fillStyle = '#64748b';
+            ctx.textAlign = 'center';
+            ctx.font = `${(metaFont * drawScale) / scale}px Inter`;
+            const countY = shouldRotateLabels
+              ? xLabelY + (dataLabelFont * 2.0 * drawScale)
+              : xLabelY + (metaFont * 1.5 * drawScale);
+            ctx.fillText(`n=${g.stats!.count}`, xLabelX, countY);
+          }
         });
       }
     };
@@ -563,6 +618,89 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     }
   }, [facetData, config, colorMap, textureMap, globalYMax, getValue, yAxisLabel, isHierarchical, clusterBy, drawBox]);
 
+  // Canvas legend for export
+  const drawLegend = useCallback((ctx: CanvasRenderingContext2D, x: number, y: number, drawScale: number, exportConfig?: ExportConfig) => {
+    const hasColor = config.colorBy && config.colorBy !== 'none';
+    const hasTexture = config.textureBy && config.textureBy !== 'none';
+    if (!hasColor && !hasTexture) return;
+
+    let curY = y;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+
+    const titleSize = exportConfig ? exportConfig.legendTitleSize : 36;
+    const itemSize = exportConfig ? exportConfig.legendItemSize : 24;
+    const spacing = (itemSize * 1.6) * drawScale;
+    const boxSize = (itemSize * 0.8) * drawScale;
+
+    // Per-layer legend config support
+    const layerLegendCfg = exportConfig?.layerLegends?.find(ll => ll.layerId === 'bg');
+    const showColor = layerLegendCfg ? layerLegendCfg.show : (exportConfig?.showColorLegend !== false);
+    const colorLegendTitle = (layerLegendCfg?.colorTitle) || (exportConfig?.colorLegendTitle) || (config.colorBy ? config.colorBy.toUpperCase() : 'COLOR');
+    const showTexture = layerLegendCfg ? layerLegendCfg.show : (exportConfig?.showTextureLegend !== false);
+    const textureLegendTitle = (layerLegendCfg?.textureTitle) || (exportConfig?.textureLegendTitle) || (config.textureBy ? config.textureBy.toUpperCase() : 'PATTERN');
+
+    const legendLayerIds = exportConfig?.legendLayers;
+    const isInLegend = !legendLayerIds || legendLayerIds.includes('bg');
+    if (!isInLegend) return;
+
+    // Compute per-group counts (n-counts appear in legend for export)
+    const colorCounts: Record<string, number> = {};
+    const textureCounts: Record<string, number> = {};
+    data.forEach(t => {
+      if (hasColor) {
+        const ck = getLabel(t, config.colorBy) || '(empty)';
+        colorCounts[ck] = (colorCounts[ck] || 0) + 1;
+      }
+      if (hasTexture) {
+        const tk = getLabel(t, config.textureBy!) || '(empty)';
+        textureCounts[tk] = (textureCounts[tk] || 0) + 1;
+      }
+    });
+
+    // 1. Color legend
+    if (showColor && hasColor) {
+      ctx.font = `bold ${titleSize * drawScale}px Inter`;
+      ctx.fillStyle = '#0f172a';
+      ctx.fillText(colorLegendTitle, x, curY);
+      curY += (titleSize * 1.4) * drawScale;
+
+      ctx.font = `${itemSize * drawScale}px Inter`;
+      Object.entries(colorMap).forEach(([key, color]) => {
+        const count = colorCounts[key] || 0;
+        ctx.fillStyle = color as string;
+        ctx.fillRect(x, curY - boxSize / 2, boxSize, boxSize);
+        ctx.fillStyle = '#334155';
+        ctx.fillText(`${key} (n=${count})`, x + boxSize * 1.5, curY);
+        curY += spacing;
+      });
+      curY += titleSize * drawScale;
+    }
+
+    // 2. Texture legend
+    if (showTexture && hasTexture) {
+      ctx.font = `bold ${titleSize * drawScale}px Inter`;
+      ctx.fillStyle = '#0f172a';
+      ctx.fillText(textureLegendTitle, x, curY);
+      curY += (titleSize * 1.4) * drawScale;
+
+      ctx.font = `${itemSize * drawScale}px Inter`;
+      const textureKeys = Object.keys(textureMap).sort();
+      textureKeys.forEach(tk => {
+        const idx = textureMap[tk];
+        const count = textureCounts[tk] || 0;
+        const pat = generateTexture(ctx, idx, '#475569', '#fff');
+        ctx.fillStyle = pat;
+        ctx.fillRect(x, curY - boxSize / 2, boxSize, boxSize);
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.strokeRect(x, curY - boxSize / 2, boxSize, boxSize);
+        ctx.fillStyle = '#334155';
+        ctx.fillText(`${tk} (n=${count})`, x + boxSize * 1.5, curY);
+        curY += spacing;
+      });
+    }
+  }, [config.colorBy, config.textureBy, colorMap, textureMap, data]);
+
   useImperativeHandle(ref, () => {
     const generateImage = (exportConfig: ExportConfig) => {
       const offscreen = document.createElement('canvas');
@@ -576,8 +714,53 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
       const plotWidth = baseWidth * graphScaleX;
       const plotHeight = baseHeight * graphScaleY;
 
-      let canvasWidth = (exportConfig.canvasWidth ? exportConfig.canvasWidth * drawScale : 0) || plotWidth;
-      let canvasHeight = (exportConfig.canvasHeight ? exportConfig.canvasHeight * drawScale : 0) || plotHeight;
+      // Dynamic margins matching renderPlot
+      const bottomMarginBase = Math.max(isHierarchical ? 160 : 100, exportConfig.xAxisLabelSize * (isHierarchical ? 2.2 : 1.2) + 20);
+      const leftMarginBase = Math.max(220, exportConfig.yAxisLabelSize * 1.5 + 100);
+      const topMarginBase = exportConfig.showPlotTitle ? Math.max(120, (exportConfig.plotTitleSize || 128) + 40) : 80;
+      const margin = {
+        top: (topMarginBase * drawScale) + ((exportConfig.graphY || 0) * drawScale),
+        right: 60 * drawScale,
+        bottom: bottomMarginBase * drawScale,
+        left: (leftMarginBase * drawScale) + ((exportConfig.graphX || 0) * drawScale),
+      };
+
+      // Legend positioning
+      const hasLegendContent = (config.colorBy && config.colorBy !== 'none') || (config.textureBy && config.textureBy !== 'none');
+      let legendW = 0;
+      let lx = 0;
+      let ly = 0;
+
+      if (exportConfig.showLegend && hasLegendContent) {
+        const legendSpace = Math.max(800, exportConfig.legendItemSize * 15, exportConfig.legendTitleSize * 10);
+        if (exportConfig.legendPosition === 'right') {
+          legendW = legendSpace * drawScale;
+          lx = margin.left + plotWidth + (80 * drawScale);
+          ly = margin.top + (50 * drawScale);
+        } else if (exportConfig.legendPosition === 'bottom') {
+          lx = margin.left;
+          ly = margin.top + plotHeight + (100 * drawScale);
+        } else if (exportConfig.legendPosition === 'inside-top-right') {
+          lx = margin.left + plotWidth - (300 * drawScale);
+          ly = margin.top + (40 * drawScale);
+        } else if (exportConfig.legendPosition === 'inside-top-left') {
+          lx = margin.left + (40 * drawScale);
+          ly = margin.top + (40 * drawScale);
+        } else if (exportConfig.legendPosition === 'custom') {
+          lx = (Number(exportConfig.legendX) || 0) * drawScale;
+          ly = (Number(exportConfig.legendY) || 0) * drawScale;
+        }
+      }
+
+      let canvasWidth = (exportConfig.canvasWidth ? exportConfig.canvasWidth * drawScale : 0) || (margin.left + plotWidth + margin.right);
+      let canvasHeight = (exportConfig.canvasHeight ? exportConfig.canvasHeight * drawScale : 0) || (margin.top + plotHeight + margin.bottom);
+
+      // Always extend canvas for right-positioned legend (ExportDialog canvasWidth doesn't include legend space)
+      if (exportConfig.showLegend && hasLegendContent && exportConfig.legendPosition === 'right') {
+        canvasWidth += legendW;
+        // Adjust legend position to be relative to actual plot area
+        lx = canvasWidth - legendW + (40 * drawScale);
+      }
 
       offscreen.width = canvasWidth;
       offscreen.height = canvasHeight;
@@ -590,6 +773,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
 
       renderPlot(ctx, plotWidth, plotHeight, 1, drawScale, exportConfig);
 
+      // Plot title
       if (exportConfig.showPlotTitle) {
         ctx.font = `bold ${exportConfig.plotTitleSize * drawScale}px Inter`;
         ctx.fillStyle = '#0f172a';
@@ -604,6 +788,25 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         ctx.fillText(exportConfig.plotTitle || defaultTitle, titleX, titleY);
       }
 
+      // Legend
+      if (exportConfig.showLegend && hasLegendContent) {
+        ctx.save();
+
+        if (exportConfig.legendPosition === 'right') {
+          // Divider line
+          ctx.beginPath();
+          ctx.moveTo(margin.left + plotWidth + (40 * drawScale), margin.top);
+          ctx.lineTo(margin.left + plotWidth + (40 * drawScale), margin.top + plotHeight);
+          ctx.strokeStyle = '#e2e8f0';
+          ctx.lineWidth = 2 * drawScale;
+          ctx.stroke();
+        }
+
+        ctx.translate(lx, ly);
+        drawLegend(ctx, 0, 0, drawScale, exportConfig);
+        ctx.restore();
+      }
+
       return offscreen.toDataURL('image/png');
     };
 
@@ -611,10 +814,10 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
       exportImage: () => {
         const defaultExportConfig: ExportConfig = {
           scale: 3, xAxisLabelSize: 96, yAxisLabelSize: 96, tickLabelSize: 64, dataLabelSize: 64,
-          showLegend: true, legendTitleSize: 96, legendItemSize: 64,
-          showColorLegend: true, colorLegendTitle: 'COLOR',
+          showLegend: true, legendTitleSize: 96, legendItemSize: 64, legendPosition: 'right',
+          showColorLegend: true, colorLegendTitle: config.colorBy?.toUpperCase() || 'COLOR',
           showShapeLegend: true, shapeLegendTitle: 'SHAPE',
-          showTextureLegend: true, textureLegendTitle: 'TEXTURE',
+          showTextureLegend: true, textureLegendTitle: config.textureBy?.toUpperCase() || 'TEXTURE',
           showLineTypeLegend: true, lineTypeLegendTitle: 'LINE TYPE',
           showOverlayColorLegend: true, overlayColorLegendTitle: '',
           showOverlayShapeLegend: true, overlayShapeLegendTitle: '',
@@ -790,10 +993,13 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         clusterKeysSorted.forEach(ck => {
           clusterMap[ck] = sortGroups(clusterMap[ck], config.durationBoxOrder, config.durationBoxDir, config.durationCenterLine);
         });
+        const hitClusterGap = config.durationGroupGap ?? DEFAULT_CLUSTER_GAP;
+        const hitBoxGapRatio = config.durationBoxGap ?? 0.4;
+        const hitConfigBoxWidth = config.durationBoxWidth ?? 0;
         const totalBoxes = validGroups.length;
-        const totalSlots = totalBoxes + (clusterKeysSorted.length > 1 ? (clusterKeysSorted.length - 1) * CLUSTER_GAP : 0);
+        const totalSlots = totalBoxes + (clusterKeysSorted.length > 1 ? (clusterKeysSorted.length - 1) * hitClusterGap : 0);
         const slotWidth = totalSlots > 0 ? fw / totalSlots : fw;
-        const barWidth = Math.min(50, slotWidth * 0.6);
+        const barWidth = hitConfigBoxWidth > 0 ? Math.min(hitConfigBoxWidth, slotWidth * 0.95) : Math.min(50, slotWidth * (1 - hitBoxGapRatio));
 
         let slotIndex = 0;
         clusterKeysSorted.forEach((ck, ci) => {
@@ -802,12 +1008,14 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
             checkGroup(g, xCenter, barWidth, mapY);
             slotIndex++;
           });
-          if (ci < clusterKeysSorted.length - 1) slotIndex += CLUSTER_GAP;
+          if (ci < clusterKeysSorted.length - 1) slotIndex += hitClusterGap;
         });
       } else {
         const sorted = sortGroups(validGroups, config.durationBoxOrder, config.durationBoxDir, config.durationCenterLine);
         const spacing = fw / sorted.length;
-        const barWidth = Math.min(50, spacing * 0.6);
+        const hitBoxGapR = config.durationBoxGap ?? 0.4;
+        const hitCfgBoxW = config.durationBoxWidth ?? 0;
+        const barWidth = hitCfgBoxW > 0 ? Math.min(hitCfgBoxW, spacing * 0.95) : Math.min(50, spacing * (1 - hitBoxGapR));
 
         sorted.forEach((g, i) => {
           const xCenter = fx + (spacing * i) + spacing / 2;

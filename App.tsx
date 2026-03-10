@@ -67,6 +67,9 @@ const INITIAL_CONFIG: PlotConfig = {
   durationBoxOrder: 'alpha',
   durationBoxDir: 'asc',
   durationTooltipFields: ['file_id', 'duration'],
+  durationBoxWidth: 0,
+  durationGroupGap: 1.5,
+  durationBoxGap: 0.4,
 
   // Distribution defaults
   separatePlots: false,
@@ -78,6 +81,9 @@ const INITIAL_CONFIG: PlotConfig = {
   distPrimaryVar: 'color',
   distValueMode: 'count',
   distNormalize: false,
+  distBarWidth: 0,
+  distGroupGap: 0,
+  distBarGap: 0,
 
   showPoints: true,
   showEllipses: false,

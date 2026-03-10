@@ -973,7 +973,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                           {numericVariableOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                         </select>
                       </div>
-                      <div className="flex flex-col gap-0.5">
+                      <div className="flex flex-col gap-0.5 justify-center">
                         <span className="text-[9px] font-bold text-slate-500 uppercase">Max Value</span>
                         <input type="number" step="0.1" className="w-14 p-0.5 border rounded text-[10px]" value={bgConfig.durationRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'durationRange', [0, parseFloat(e.target.value)])} />
                       </div>
@@ -990,7 +990,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 {/* Duration Row 1 continued: Whiskers, Centre, Order */}
                 {activeTab === 'duration' && (
                   <>
-                    <div className="flex flex-col gap-0.5">
+                    <div className="flex flex-col gap-0.5 justify-center">
                       <span className="text-[9px] font-bold text-slate-500 uppercase">Whiskers</span>
                       <div className="flex rounded border border-slate-300 overflow-hidden">
                         <button
@@ -1004,7 +1004,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-0.5">
+                    <div className="flex flex-col gap-0.5 justify-center">
                       <span className="text-[9px] font-bold text-slate-500 uppercase">Centre</span>
                       <div className="flex rounded border border-slate-300 overflow-hidden">
                         <button
@@ -1018,7 +1018,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-0.5">
+                    <div className="flex flex-col gap-0.5 justify-center">
                       <span className="text-[9px] font-bold text-slate-500 uppercase">Order</span>
                       <div className="flex items-center gap-1">
                         <div className="flex rounded border border-slate-300 overflow-hidden">
@@ -1156,6 +1156,25 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     </div>
 
                     <div className="h-6 w-px bg-slate-300"></div>
+
+                    {/* Bar Width & Gap Controls */}
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Layout</span>
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1" title="Bar Width (0 = auto)">
+                          <span className="text-[9px] text-slate-500">W</span>
+                          <input type="number" min="0" max="100" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distBarWidth || 0} onChange={e => handleConfig('distBarWidth', parseFloat(e.target.value) || 0)} />
+                        </div>
+                        <div className="flex items-center gap-1" title="Group Gap">
+                          <span className="text-[9px] text-slate-500">GG</span>
+                          <input type="number" min="0" max="50" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distGroupGap || 0} onChange={e => handleConfig('distGroupGap', parseFloat(e.target.value) || 0)} />
+                        </div>
+                        <div className="flex items-center gap-1" title="Bar Gap">
+                          <span className="text-[9px] text-slate-500">BG</span>
+                          <input type="number" min="0" max="20" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distBarGap || 0} onChange={e => handleConfig('distBarGap', parseFloat(e.target.value) || 0)} />
+                        </div>
+                      </div>
+                    </div>
                 </div>
             )}
 
@@ -1411,6 +1430,27 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         className="w-14 h-1 accent-slate-600"
                       />
                     )}
+                  </div>
+                </div>
+
+                <div className="w-px h-6 bg-slate-200"></div>
+
+                {/* Box Width & Gap Controls */}
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase">Layout</span>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1" title="Box Width (0 = auto)">
+                      <span className="text-[9px] text-slate-500">W</span>
+                      <input type="number" min="0" max="100" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.durationBoxWidth || 0} onChange={e => handleConfig('durationBoxWidth', parseFloat(e.target.value) || 0)} />
+                    </div>
+                    <div className="flex items-center gap-1" title="Group Gap (cluster spacing)">
+                      <span className="text-[9px] text-slate-500">GG</span>
+                      <input type="number" min="0" max="5" step="0.1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.durationGroupGap ?? 1.5} onChange={e => handleConfig('durationGroupGap', parseFloat(e.target.value) || 0)} />
+                    </div>
+                    <div className="flex items-center gap-1" title="Box Gap (space between boxes)">
+                      <span className="text-[9px] text-slate-500">BG</span>
+                      <input type="number" min="0" max="0.9" step="0.05" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.durationBoxGap ?? 0.4} onChange={e => handleConfig('durationBoxGap', parseFloat(e.target.value) || 0)} />
+                    </div>
                   </div>
                 </div>
               </div>
