@@ -64,6 +64,9 @@ const INITIAL_CONFIG: PlotConfig = {
   durationClusterBy: 'none',
   durationWhiskerMode: 'iqr',
   durationCenterLine: 'median',
+  durationBoxOrder: 'alpha',
+  durationBoxDir: 'asc',
+  durationTooltipFields: ['file_id', 'duration'],
 
   // Distribution defaults
   separatePlots: false,

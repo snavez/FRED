@@ -17,6 +17,34 @@ const COLORS = [
 
 const CLUSTER_GAP = 1.5; // gap between clusters in slot units
 
+// Hex colour → r,g,b string for rgba()
+const hexToRgb = (hex: string): string => {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  return `${r},${g},${b}`;
+};
+
+// Tooltip field labels
+const DURATION_TOOLTIP_LABELS: Record<string, string> = {
+  file_id: 'File ID', duration: 'Duration', speaker: 'Speaker', word: 'Word',
+  canonical: 'Canonical', produced: 'Produced', xmin: 'Time (xmin)',
+  phoneme: 'Phoneme', type: 'Type', alignment: 'Alignment',
+  vowel_category: 'Vowel Category', stress: 'Stress',
+};
+
+const getTooltipValue = (token: SpeechToken, field: string, getValue: (t: SpeechToken) => number): string => {
+  if (field === 'duration') return `${getValue(token).toFixed(3)}s`;
+  if (field === 'xmin') return token.xmin ? `${token.xmin.toFixed(3)}s` : '';
+  if (field === 'file_id') return token.file_id || '';
+  if (field === 'speaker') return token.speaker || '';
+  // Check built-in fields object
+  if (token.fields[field] !== undefined) return token.fields[field];
+  // Fallback to getLabel
+  return getLabel(token, field) || '';
+};
+
 interface Stats {
   min: number; max: number; q1: number; median: number; q3: number;
   mean: number; sd: number; count: number; values: number[]; tokens: SpeechToken[];
@@ -48,6 +76,21 @@ const calculateStats = (tokens: SpeechToken[], getValue: (t: SpeechToken) => num
   const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length;
   const sd = Math.sqrt(variance);
   return { min, max, q1, median, q3, mean, sd, count: values.length, values, tokens };
+};
+
+// Box sorting helper
+const sortGroups = (groups: GroupData[], order: string, dir: string, centerLine: string) => {
+  const sorted = [...groups];
+  if (order === 'central') {
+    sorted.sort((a, b) => {
+      const aVal = centerLine === 'mean' ? a.stats!.mean : a.stats!.median;
+      const bVal = centerLine === 'mean' ? b.stats!.mean : b.stats!.median;
+      return dir === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+  } else {
+    sorted.sort((a, b) => dir === 'asc' ? a.key.localeCompare(b.key) : b.key.localeCompare(a.key));
+  }
+  return sorted;
 };
 
 const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, datasetMeta }, ref) => {
@@ -118,49 +161,27 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
       const groups: GroupData[] = [];
 
       if (hasColor && hasTexture) {
-        // Cross-product of color × texture
         allColorValues.forEach(cv => {
           allTextureValues.forEach(tv => {
             const subset = tokens.filter(t =>
               (getLabel(t, config.colorBy) || '(empty)') === cv &&
               (getLabel(t, config.textureBy!) || '(empty)') === tv
             );
-            groups.push({
-              key: `${cv} / ${tv}`,
-              colorKey: cv,
-              textureKey: tv,
-              stats: calculateStats(subset, getValue),
-            });
+            groups.push({ key: `${cv} / ${tv}`, colorKey: cv, textureKey: tv, stats: calculateStats(subset, getValue) });
           });
         });
       } else if (hasColor) {
         allColorValues.forEach(cv => {
           const subset = tokens.filter(t => (getLabel(t, config.colorBy) || '(empty)') === cv);
-          groups.push({
-            key: cv,
-            colorKey: cv,
-            textureKey: '',
-            stats: calculateStats(subset, getValue),
-          });
+          groups.push({ key: cv, colorKey: cv, textureKey: '', stats: calculateStats(subset, getValue) });
         });
       } else if (hasTexture) {
         allTextureValues.forEach(tv => {
           const subset = tokens.filter(t => (getLabel(t, config.textureBy!) || '(empty)') === tv);
-          groups.push({
-            key: tv,
-            colorKey: '',
-            textureKey: tv,
-            stats: calculateStats(subset, getValue),
-          });
+          groups.push({ key: tv, colorKey: '', textureKey: tv, stats: calculateStats(subset, getValue) });
         });
       } else {
-        // No color/texture splitting — one box per facet
-        groups.push({
-          key: fKey === 'All' ? 'All' : fKey,
-          colorKey: '',
-          textureKey: '',
-          stats: calculateStats(tokens, getValue),
-        });
+        groups.push({ key: fKey === 'All' ? 'All' : fKey, colorKey: '', textureKey: '', stats: calculateStats(tokens, getValue) });
       }
 
       return { facetKey: fKey, groups };
@@ -177,7 +198,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     return { facetData: facets, colorMap: cMap, textureMap: tMap, globalYMax: yMax };
   }, [data, config.durationPlotBy, config.colorBy, config.textureBy, config.bwMode, config.durationRange, getValue]);
 
-  // Helper: draw a single box (whiskers, quartile box, mean marker, outliers, jitter points)
+  // Helper: draw a single box (whiskers, quartile box, center diamond, outliers, jitter points)
   const drawBox = useCallback((
     ctx: CanvasRenderingContext2D, g: GroupData, xCenter: number, barWidth: number,
     mapY: (v: number) => number, scale: number, drawScale: number
@@ -247,21 +268,20 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
       ctx.stroke();
     }
 
-    // Mean marker (diamond)
-    if (config.showMeanMarker) {
-      const yMean = mapY(s.mean);
-      ctx.fillStyle = 'white';
-      ctx.strokeStyle = '#000';
-      ctx.lineWidth = (1 * drawScale) / scale;
-      ctx.beginPath();
-      ctx.moveTo(xCenter, yMean - (4 * drawScale));
-      ctx.lineTo(xCenter + (4 * drawScale), yMean);
-      ctx.lineTo(xCenter, yMean + (4 * drawScale));
-      ctx.lineTo(xCenter - (4 * drawScale), yMean);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-    }
+    // Center diamond — always shown, tracks whichever center line is selected
+    const centerDiamondVal = config.durationCenterLine === 'mean' ? s.mean : s.median;
+    const yDiamond = mapY(centerDiamondVal);
+    ctx.fillStyle = 'white';
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = (1 * drawScale) / scale;
+    ctx.beginPath();
+    ctx.moveTo(xCenter, yDiamond - (4 * drawScale));
+    ctx.lineTo(xCenter + (4 * drawScale), yDiamond);
+    ctx.lineTo(xCenter, yDiamond + (4 * drawScale));
+    ctx.lineTo(xCenter - (4 * drawScale), yDiamond);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
 
     // Outliers (only in IQR mode when showOutliers is on)
     if (config.showOutliers && config.durationWhiskerMode !== 'minmax') {
@@ -276,8 +296,10 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
       });
     }
 
-    // Jitter points
+    // Jitter points — coloured to match box
     if (config.showDurationPoints) {
+      const ptColor = color;
+      const opacity = config.pointOpacity ?? 0.5;
       s.tokens.forEach(t => {
         const hash = t.id.split('').reduce((a, b) => a + b.charCodeAt(0), 0);
         const jitter = ((hash % 100) / 100 - 0.5) * barWidth * 0.8;
@@ -285,7 +307,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         const py = mapY(getValue(t));
         ctx.beginPath();
         ctx.arc(px, py, 2 * drawScale, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.fillStyle = `rgba(${hexToRgb(ptColor)},${opacity})`;
         ctx.fill();
       });
     }
@@ -382,7 +404,6 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
 
       if (isHierarchical) {
         // === Clustered layout ===
-        // Group validGroups into clusters
         const clusterMap: Record<string, GroupData[]> = {};
         validGroups.forEach(g => {
           const ck = getClusterKey(g);
@@ -390,6 +411,12 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
           clusterMap[ck].push(g);
         });
         const clusterKeys = Object.keys(clusterMap).sort();
+
+        // Sort boxes WITHIN each cluster (not the clusters themselves)
+        clusterKeys.forEach(ck => {
+          clusterMap[ck] = sortGroups(clusterMap[ck], config.durationBoxOrder, config.durationBoxDir, config.durationCenterLine);
+        });
+
         const totalBoxes = validGroups.length;
         const totalSlots = totalBoxes + (clusterKeys.length > 1 ? (clusterKeys.length - 1) * CLUSTER_GAP : 0);
         const slotWidth = totalSlots > 0 ? fw / totalSlots : fw;
@@ -402,11 +429,8 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
 
           clusterGroups.forEach(g => {
             const xCenter = fx + (slotIndex + 0.5) * slotWidth;
-
-            // Draw the box
             drawBox(ctx, g, xCenter, barWidth, mapY, scale, drawScale);
 
-            // Inner label (non-cluster part of the key)
             ctx.fillStyle = '#0f172a';
             ctx.textAlign = 'center';
             ctx.font = `${(labelFont * drawScale) / scale}px Inter`;
@@ -414,7 +438,6 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
             const xLabelY = fy + fh + (20 * drawScale) + xTickOffsetY;
             ctx.fillText(getInnerLabel(g), xLabelX, xLabelY);
 
-            // Count label
             ctx.fillStyle = '#64748b';
             ctx.font = `${(metaFont * drawScale) / scale}px Inter`;
             ctx.fillText(`n=${g.stats!.count}`, xLabelX, xLabelY + (metaFont * 1.5 * drawScale));
@@ -422,13 +445,12 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
             slotIndex++;
           });
 
-          // Outer label (cluster key) with bracket line
+          // Outer label with bracket
           if (clusterGroups.length > 0) {
             const clusterEndSlot = slotIndex - 1;
             const clusterCenterX = fx + ((clusterStartSlot + clusterEndSlot + 1) / 2) * slotWidth;
             const outerLabelY = fy + fh + (20 * drawScale) + xTickOffsetY + (metaFont * 1.5 * drawScale) + (labelFont * 2.0 * drawScale);
 
-            // Bracket line
             const bracketY = outerLabelY - (labelFont * 1.2 * drawScale);
             const leftX = fx + (clusterStartSlot + 0.15) * slotWidth;
             const rightX = fx + (clusterEndSlot + 0.85) * slotWidth;
@@ -439,30 +461,26 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
             ctx.lineTo(rightX, bracketY);
             ctx.stroke();
 
-            // Outer label — bold, slightly larger
             ctx.fillStyle = '#0f172a';
             ctx.textAlign = 'center';
             ctx.font = `bold ${(labelFont * 1.15 * drawScale) / scale}px Inter`;
             ctx.fillText(ck, clusterCenterX, outerLabelY);
           }
 
-          // Gap between clusters
           if (ci < clusterKeys.length - 1) {
             slotIndex += CLUSTER_GAP;
           }
         });
       } else {
-        // === Flat layout (existing behavior) ===
-        const spacing = fw / validGroups.length;
+        // === Flat layout — sort boxes ===
+        const sorted = sortGroups(validGroups, config.durationBoxOrder, config.durationBoxDir, config.durationCenterLine);
+        const spacing = fw / sorted.length;
         const barWidth = Math.min(50 * drawScale, spacing * 0.6);
 
-        validGroups.forEach((g, i) => {
+        sorted.forEach((g, i) => {
           const xCenter = fx + (spacing * i) + spacing / 2;
-
-          // Draw the box
           drawBox(ctx, g, xCenter, barWidth, mapY, scale, drawScale);
 
-          // X-axis label
           ctx.fillStyle = '#0f172a';
           ctx.textAlign = 'center';
           ctx.font = `bold ${(labelFont * drawScale) / scale}px Inter`;
@@ -481,7 +499,6 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     if (isSingleFacet) {
       renderFacet(facetData[0], margin.left, margin.top, chartW, chartH, true);
 
-      // Y-axis title (export only)
       if (exportConfig) {
         ctx.save();
         const yTitleSize = exportConfig.yAxisLabelSize * drawScale;
@@ -496,7 +513,6 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         ctx.restore();
       }
     } else {
-      // Multi-facet grid layout
       const cols = Math.ceil(Math.sqrt(facetData.length));
       const rows = Math.ceil(facetData.length / cols);
       const cellW = chartW / cols;
@@ -513,7 +529,6 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         const cw = cellW - (isLeftCol ? pad * 3 : pad * 2);
         const ch = cellH - pad * 2 - (35 * drawScale);
 
-        // Facet title
         ctx.fillStyle = '#0f172a';
         ctx.font = `bold ${(13 * drawScale) / scale}px Inter`;
         ctx.textAlign = 'center';
@@ -522,7 +537,6 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         renderFacet(facet, cx, cy, cw, ch, isLeftCol);
       });
 
-      // Y-axis title (export only)
       if (exportConfig) {
         ctx.save();
         const yTitleSize = exportConfig.yAxisLabelSize * drawScale;
@@ -566,7 +580,6 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
 
       renderPlot(ctx, plotWidth, plotHeight, 1, drawScale, exportConfig);
 
-      // Title
       if (exportConfig.showPlotTitle) {
         ctx.font = `bold ${exportConfig.plotTitleSize * drawScale}px Inter`;
         ctx.fillStyle = '#0f172a';
@@ -576,9 +589,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         const titleY = (100 * drawScale) + ((exportConfig.plotTitleY || 0) * drawScale);
 
         let defaultTitle = `${yAxisLabel} Analysis`;
-        if (isHierarchical) {
-          defaultTitle += ` (grouped by ${clusterBy})`;
-        }
+        if (isHierarchical) defaultTitle += ` (grouped by ${clusterBy})`;
 
         ctx.fillText(exportConfig.plotTitle || defaultTitle, titleX, titleY);
       }
@@ -631,9 +642,12 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     }
   }, [data, config, renderPlot]);
 
-  // Hit test for tooltips
+  // Hit test for tooltips — works on both jitter points AND outliers
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (!config.showDurationPoints) return;
+    const hasPoints = config.showDurationPoints;
+    const hasOutliers = config.showOutliers && config.durationWhiskerMode !== 'minmax';
+    if (!hasPoints && !hasOutliers) return;
+
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -657,25 +671,65 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     const yMin = 0;
     const yMax = globalYMax;
 
+    // Helper: check a single group's hittable points
+    const checkGroup = (g: GroupData, xCenter: number, barWidth: number, mapY: (v: number) => number) => {
+      if (!g.stats) return;
+      const s = g.stats;
+
+      // Check jitter points
+      if (hasPoints) {
+        s.tokens.forEach(t => {
+          const hash = t.id.split('').reduce((a, b) => a + b.charCodeAt(0), 0);
+          const jitter = ((hash % 100) / 100 - 0.5) * barWidth * 0.8;
+          const px = xCenter + jitter;
+          const py = mapY(getValue(t));
+          const dist = Math.sqrt((px - mouseX) ** 2 + (py - mouseY) ** 2);
+          if (dist < minDist) { minDist = dist; closest = t; }
+        });
+      }
+
+      // Check outlier circles
+      if (hasOutliers) {
+        const iqr = s.q3 - s.q1;
+        const wLow = s.values.find(v => v >= s.q1 - 1.5 * iqr) ?? s.min;
+        const wHigh = [...s.values].reverse().find(v => v <= s.q3 + 1.5 * iqr) ?? s.max;
+        s.values.forEach(v => {
+          if (v < wLow || v > wHigh) {
+            const py = mapY(v);
+            const dist = Math.sqrt((xCenter - mouseX) ** 2 + (py - mouseY) ** 2);
+            if (dist < minDist) {
+              minDist = dist;
+              // Find the token with this value
+              const match = s.tokens.find(t => Math.abs(getValue(t) - v) < 0.0001);
+              if (match) closest = match;
+            }
+          }
+        });
+      }
+    };
+
     if (isSingleFacet) {
       const facet = facetData[0];
       const validGroups = facet.groups.filter(g => g.stats !== null);
 
-      const getClusterKey = (g: GroupData): string => {
+      const getClusterKeyHit = (g: GroupData): string => {
         if (clusterBy === config.colorBy) return g.colorKey || '(empty)';
         if (clusterBy === config.textureBy) return g.textureKey || '(empty)';
         return '';
       };
 
       if (isHierarchical) {
-        // Slot-based hit detection matching clustered render layout
         const clusterMap: Record<string, GroupData[]> = {};
         validGroups.forEach(g => {
-          const ck = getClusterKey(g);
+          const ck = getClusterKeyHit(g);
           if (!clusterMap[ck]) clusterMap[ck] = [];
           clusterMap[ck].push(g);
         });
         const clusterKeysSorted = Object.keys(clusterMap).sort();
+        // Sort within clusters to match rendering
+        clusterKeysSorted.forEach(ck => {
+          clusterMap[ck] = sortGroups(clusterMap[ck], config.durationBoxOrder, config.durationBoxDir, config.durationCenterLine);
+        });
         const totalBoxes = validGroups.length;
         const totalSlots = totalBoxes + (clusterKeysSorted.length > 1 ? (clusterKeysSorted.length - 1) * CLUSTER_GAP : 0);
         const slotWidth = totalSlots > 0 ? chartW / totalSlots : chartW;
@@ -685,45 +739,21 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         let slotIndex = 0;
         clusterKeysSorted.forEach((ck, ci) => {
           clusterMap[ck].forEach(g => {
-            if (!g.stats) { slotIndex++; return; }
             const xCenter = margin.left + (slotIndex + 0.5) * slotWidth;
-            g.stats.tokens.forEach(t => {
-              const hash = t.id.split('').reduce((a, b) => a + b.charCodeAt(0), 0);
-              const jitter = ((hash % 100) / 100 - 0.5) * barWidth * 0.8;
-              const px = xCenter + jitter;
-              const py = mapY(getValue(t));
-              const dist = Math.sqrt((px - mouseX) ** 2 + (py - mouseY) ** 2);
-              if (dist < minDist) {
-                minDist = dist;
-                closest = t;
-              }
-            });
+            checkGroup(g, xCenter, barWidth, mapY);
             slotIndex++;
           });
-          if (ci < clusterKeysSorted.length - 1) {
-            slotIndex += CLUSTER_GAP;
-          }
+          if (ci < clusterKeysSorted.length - 1) slotIndex += CLUSTER_GAP;
         });
       } else {
-        // Flat hit detection
-        const spacing = chartW / validGroups.length;
+        const sorted = sortGroups(validGroups, config.durationBoxOrder, config.durationBoxDir, config.durationCenterLine);
+        const spacing = chartW / sorted.length;
         const barWidth = Math.min(50, spacing * 0.6);
         const mapY = (val: number) => margin.top + chartH - ((val - yMin) / (yMax - yMin)) * chartH;
 
-        validGroups.forEach((g, i) => {
-          if (!g.stats) return;
+        sorted.forEach((g, i) => {
           const xCenter = margin.left + (spacing * i) + spacing / 2;
-          g.stats.tokens.forEach(t => {
-            const hash = t.id.split('').reduce((a, b) => a + b.charCodeAt(0), 0);
-            const jitter = ((hash % 100) / 100 - 0.5) * barWidth * 0.8;
-            const px = xCenter + jitter;
-            const py = mapY(getValue(t));
-            const dist = Math.sqrt((px - mouseX) ** 2 + (py - mouseY) ** 2);
-            if (dist < minDist) {
-              minDist = dist;
-              closest = t;
-            }
-          });
+          checkGroup(g, xCenter, barWidth, mapY);
         });
       }
     }
@@ -731,9 +761,49 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     setHoveredToken(closest);
   };
 
+  // Legend counts
+  const colorCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    if (config.colorBy && config.colorBy !== 'none') {
+      data.forEach(t => {
+        const k = getLabel(t, config.colorBy) || '(empty)';
+        counts[k] = (counts[k] || 0) + 1;
+      });
+    }
+    return counts;
+  }, [data, config.colorBy]);
+
+  const textureCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    if (config.textureBy && config.textureBy !== 'none') {
+      data.forEach(t => {
+        const k = getLabel(t, config.textureBy!) || '(empty)';
+        counts[k] = (counts[k] || 0) + 1;
+      });
+    }
+    return counts;
+  }, [data, config.textureBy]);
+
+  const hasColor = config.colorBy && config.colorBy !== 'none';
+  const hasTexture = config.textureBy && config.textureBy !== 'none';
+  const textureList = useMemo(() => Object.keys(textureMap).sort(), [textureMap]);
+
+  // Tooltip field labels
+  const getFieldLabel = (field: string): string => {
+    if (DURATION_TOOLTIP_LABELS[field]) return DURATION_TOOLTIP_LABELS[field];
+    // Check custom field from datasetMeta
+    if (datasetMeta) {
+      const cm = datasetMeta.columnMappings.find(m => m.fieldName === field);
+      if (cm) return cm.originalHeader;
+    }
+    return field.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  };
+
   // Tooltip value display
   const tooltipYLabel = (!config.durationYField || config.durationYField === 'duration') ? 'Duration' : config.durationYField.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   const tooltipYSuffix = (!config.durationYField || config.durationYField === 'duration') ? 's' : '';
+
+  const tooltipFields = config.durationTooltipFields || ['file_id', 'duration'];
 
   return (
     <div ref={containerRef} className="w-full h-full relative p-4 bg-white">
@@ -743,28 +813,85 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         onMouseMove={handleMouseMove}
         onMouseLeave={() => setHoveredToken(null)}
       />
+
+      {/* Screen Legend */}
+      {(hasColor || hasTexture) && (
+        <div className="absolute top-4 right-4 bg-white/95 backdrop-blur p-3 rounded-xl border border-slate-200 text-xs shadow-xl flex flex-col space-y-3 max-h-[85%] overflow-y-auto w-48 pointer-events-auto">
+          {hasColor && (
+            <div className="space-y-1">
+              <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1">{config.colorBy}</h4>
+              {Object.entries(colorMap).map(([k, c]) => (
+                <div key={k} className="flex items-center gap-2 justify-between p-1 rounded">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: c }}></div>
+                    <span>{k}</span>
+                  </div>
+                  <span className="text-slate-400 text-[10px] font-mono">({colorCounts[k] || 0})</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {hasTexture && (
+            <div className="space-y-1">
+              <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1">{config.textureBy}</h4>
+              {textureList.map(t => {
+                const idx = textureMap[t];
+                return (
+                  <div key={t} className="flex items-center gap-2 justify-between p-1 rounded">
+                    <div className="flex items-center gap-2">
+                      <PatternPreview index={idx} color="#475569" />
+                      <span>{t}</span>
+                    </div>
+                    <span className="text-slate-400 text-[10px] font-mono">({textureCounts[t] || 0})</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Configurable Tooltip */}
       {hoveredToken && (
         <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-16 top-16 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]">
-          {hoveredToken.file_id && <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-sky-400">File ID: {hoveredToken.file_id}</div>}
+          {tooltipFields.length > 0 && (() => {
+            const firstField = tooltipFields[0];
+            const firstVal = getTooltipValue(hoveredToken, firstField, getValue);
+            return firstVal ? (
+              <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-sky-400">{getFieldLabel(firstField)}: {firstVal}</div>
+            ) : null;
+          })()}
           <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-            {config.durationPlotBy && config.durationPlotBy !== 'none' && (
-              <p><span className="text-slate-400 font-bold uppercase text-[9px]">{config.durationPlotBy}:</span> {getLabel(hoveredToken, config.durationPlotBy)}</p>
-            )}
-            {isHierarchical && (
-              <p><span className="text-slate-400 font-bold uppercase text-[9px]">{clusterBy}:</span> {getLabel(hoveredToken, clusterBy!)}</p>
-            )}
-            {config.colorBy && config.colorBy !== 'none' && (
-              <p><span className="text-slate-400 font-bold uppercase text-[9px]">{config.colorBy}:</span> {getLabel(hoveredToken, config.colorBy)}</p>
-            )}
-            {config.textureBy && config.textureBy !== 'none' && (
-              <p><span className="text-slate-400 font-bold uppercase text-[9px]">{config.textureBy}:</span> {getLabel(hoveredToken, config.textureBy)}</p>
-            )}
-            <p className="col-span-2"><span className="text-slate-400 font-bold uppercase text-[9px]">{tooltipYLabel}:</span> {getValue(hoveredToken).toFixed(3)}{tooltipYSuffix}</p>
+            {tooltipFields.slice(1).map(field => {
+              const val = getTooltipValue(hoveredToken, field, getValue);
+              if (!val) return null;
+              return (
+                <p key={field}><span className="text-slate-400 font-bold uppercase text-[9px]">{getFieldLabel(field)}:</span> {val}</p>
+              );
+            })}
           </div>
         </div>
       )}
     </div>
   );
 });
+
+// Texture pattern preview (tiny canvas swatch for legend)
+const PatternPreview = ({ index, color }: { index: number; color: string }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      if (ctx) {
+        const pat = generateTexture(ctx, index, color, '#fff') as string | CanvasPattern;
+        ctx.fillStyle = pat;
+        ctx.fillRect(0, 0, 12, 12);
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.strokeRect(0, 0, 12, 12);
+      }
+    }
+  }, [index, color]);
+  return <canvas ref={canvasRef} width={12} height={12} className="rounded-sm" />;
+};
 
 export default DurationPlot;

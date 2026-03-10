@@ -91,6 +91,9 @@ export interface PlotConfig {
   durationClusterBy: string;               // 'none' or field key — hierarchical x-axis grouping
   durationWhiskerMode: 'iqr' | 'minmax';  // 1.5×IQR vs min/max whiskers
   durationCenterLine: 'median' | 'mean';   // what the thick center line represents
+  durationBoxOrder: 'alpha' | 'central';   // box ordering within clusters
+  durationBoxDir: 'asc' | 'desc';          // ordering direction
+  durationTooltipFields: string[];          // configurable tooltip fields
 
   // Distribution Plot Config
   separatePlots: boolean;

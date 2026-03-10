@@ -58,6 +58,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   const [editingNameValue, setEditingNameValue] = useState('');
   const [layerPanelOpen, setLayerPanelOpen] = useState(false);
   const [showTooltipSettings, setShowTooltipSettings] = useState(false);
+  const [showDurationTooltipSettings, setShowDurationTooltipSettings] = useState(false);
 
   // Dynamic variable options: built from datasetMeta column mappings
   const variableOptions = useMemo(() => {
@@ -366,7 +367,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                  </div>
                )}
 
-               {/* Tooltip Field Selector */}
+               {/* Tooltip Field Selector (F1/F2 & 3D) */}
                {(activeTab === 'vowel' || activeTab === '3d') && (
                  <div className="relative">
                    <button
@@ -387,7 +388,6 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                        </div>
                        <div className="max-h-[300px] overflow-y-auto space-y-1">
                          {(() => {
-                           // Build tooltip field options dynamically from datasetMeta
                            const allFields: { key: string; label: string }[] = [];
                            const seen = new Set<string>();
                            if (datasetMeta) {
@@ -430,6 +430,76 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                          })()}
                        </div>
                        {(currentConfig.tooltipFields || []).length >= 10 && (
+                         <div className="mt-2 pt-2 border-t border-slate-100 text-[10px] text-slate-400 italic">Max 10 fields</div>
+                       )}
+                     </div>
+                   )}
+                 </div>
+               )}
+
+               {/* Tooltip Field Selector (Duration) */}
+               {activeTab === 'duration' && (
+                 <div className="relative">
+                   <button
+                     onClick={() => setShowDurationTooltipSettings(!showDurationTooltipSettings)}
+                     className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${showDurationTooltipSettings ? 'bg-sky-50 text-sky-800 border-sky-200 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                     title="Configure duration tooltip fields"
+                   >
+                     <MessageSquare size={14} />
+                     <span>Tooltip</span>
+                   </button>
+                   {showDurationTooltipSettings && (
+                     <div className="absolute top-full mt-1 right-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 min-w-[220px] p-3">
+                       <div className="flex items-center justify-between mb-2 pb-2 border-b border-slate-100">
+                         <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Duration Tooltip Fields</span>
+                         <button onClick={() => setShowDurationTooltipSettings(false)} className="p-0.5 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600">
+                           <X size={12} />
+                         </button>
+                       </div>
+                       <div className="max-h-[300px] overflow-y-auto space-y-1">
+                         {(() => {
+                           const allFields: { key: string; label: string }[] = [];
+                           const seen = new Set<string>();
+                           if (datasetMeta) {
+                             for (const m of datasetMeta.columnMappings) {
+                               let key: string | null = null;
+                               if (m.role === 'speaker') key = 'speaker';
+                               else if (m.role === 'file_id') key = 'file_id';
+                               else if (m.role === 'duration') key = 'duration';
+                               else if ((m.role === 'field' || m.role === 'pitch') && m.fieldName) key = m.fieldName;
+                               if (!key || seen.has(key)) continue;
+                               seen.add(key);
+                               allFields.push({ key, label: prettyLabel(key) });
+                             }
+                           }
+                           const selected = currentConfig.durationTooltipFields || ['file_id', 'duration'];
+                           const atMax = selected.length >= 10;
+                           return allFields.map(field => {
+                             const isChecked = selected.includes(field.key);
+                             return (
+                               <label
+                                 key={field.key}
+                                 className={`flex items-center gap-2 text-[11px] cursor-pointer hover:bg-slate-50 p-1 rounded ${!isChecked && atMax ? 'opacity-40 cursor-not-allowed' : ''}`}
+                               >
+                                 <input
+                                   type="checkbox"
+                                   className="rounded text-sky-700"
+                                   checked={isChecked}
+                                   disabled={!isChecked && atMax}
+                                   onChange={() => {
+                                     const newFields = isChecked
+                                       ? selected.filter(k => k !== field.key)
+                                       : [...selected, field.key];
+                                     handleConfig('durationTooltipFields', newFields);
+                                   }}
+                                 />
+                                 <span className="text-slate-700 font-medium">{field.label}</span>
+                               </label>
+                             );
+                           });
+                         })()}
+                       </div>
+                       {(currentConfig.durationTooltipFields || []).length >= 10 && (
                          <div className="mt-2 pt-2 border-t border-slate-100 text-[10px] text-slate-400 italic">Max 10 fields</div>
                        )}
                      </div>
@@ -1278,16 +1348,38 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
                 <div className="w-px h-6 bg-slate-200"></div>
 
+                {/* Box Ordering */}
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase">Order</span>
+                  <div className="flex items-center gap-1">
+                    <div className="flex rounded border border-slate-300 overflow-hidden">
+                      <button
+                        className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationBoxOrder || 'alpha') === 'alpha' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                        onClick={() => handleConfig('durationBoxOrder', 'alpha')}
+                      >Alpha</button>
+                      <button
+                        className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationBoxOrder || 'alpha') === 'central' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                        onClick={() => handleConfig('durationBoxOrder', 'central')}
+                      >Central</button>
+                    </div>
+                    <button
+                      onClick={() => handleConfig('durationBoxDir', currentConfig.durationBoxDir === 'asc' ? 'desc' : 'asc')}
+                      className="p-1 border border-slate-300 rounded bg-white hover:bg-slate-50 text-slate-600"
+                      title={currentConfig.durationBoxDir === 'asc' ? 'Ascending' : 'Descending'}
+                    >
+                      {currentConfig.durationBoxDir === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="w-px h-6 bg-slate-200"></div>
+
                 {/* Show Toggles */}
                 <div className="flex items-center gap-2">
                   <span className="text-[9px] font-bold text-slate-500 uppercase">Show</span>
                   <label className="flex items-center gap-1 cursor-pointer" title="Quartile Boxes">
                     <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showQuartiles} onChange={e => handleConfig('showQuartiles', e.target.checked)} />
                     <span className="text-[10px] font-bold text-slate-600">Quartiles</span>
-                  </label>
-                  <label className="flex items-center gap-1 cursor-pointer" title="Mean Marker (diamond)">
-                    <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showMeanMarker} onChange={e => handleConfig('showMeanMarker', e.target.checked)} />
-                    <span className="text-[10px] font-bold text-slate-600">Mean ◇</span>
                   </label>
                   <label className="flex items-center gap-1 cursor-pointer" title="Outlier points (IQR mode only)">
                     <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showOutliers} onChange={e => handleConfig('showOutliers', e.target.checked)} />
@@ -1297,6 +1389,16 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showDurationPoints} onChange={e => handleConfig('showDurationPoints', e.target.checked)} />
                     <span className="text-[10px] font-bold text-slate-600">Points</span>
                   </label>
+                  {currentConfig.showDurationPoints && (
+                    <input
+                      type="range"
+                      min="0" max="1" step="0.02"
+                      title="Point Opacity"
+                      value={opacityToSlider(currentConfig.pointOpacity)}
+                      onChange={e => handleConfig('pointOpacity', sliderToOpacity(parseFloat(e.target.value)))}
+                      className="w-14 h-1 accent-slate-600"
+                    />
+                  )}
                 </div>
               </div>
             )}
@@ -1453,8 +1555,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
       />
 
       {/* Close dropdowns on click outside */}
-      {(showAddMenu || layerPanelOpen || showTooltipSettings) && (
-        <div className="fixed inset-0 z-40" onClick={() => { setShowAddMenu(false); setLayerPanelOpen(false); setShowTooltipSettings(false); }}></div>
+      {(showAddMenu || layerPanelOpen || showTooltipSettings || showDurationTooltipSettings) && (
+        <div className="fixed inset-0 z-40" onClick={() => { setShowAddMenu(false); setLayerPanelOpen(false); setShowTooltipSettings(false); setShowDurationTooltipSettings(false); }}></div>
       )}
     </div>
   );
