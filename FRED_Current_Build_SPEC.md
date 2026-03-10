@@ -90,9 +90,19 @@ All columns that don't match a built-in role are assigned `field` role. Previous
 - **Mean trajectory labels** at line endpoints with anti-overlap displacement. Label source selectable (Color Key, Line Key, Both, Auto). Adjustable label size (8–72px)
 
 ### Duration Plot
-- Box-and-whisker plots per phoneme group
-- Configurable: quartiles, mean marker, outliers, individual data points
-- Adjustable max duration range
+- Box-and-whisker plots per phoneme/category group
+- **Flexible Y-axis**: select any numeric field (Duration, xmin, pitch columns, data fields) via dropdown
+- **Faceted subplots** (`durationPlotBy` / Plot By): splits data into a grid of sub-plots by any categorical variable
+- **Hierarchical clustering** (`durationClusterBy` / Group By): groups boxes into clusters with bracket labels on a two-tier x-axis. Clusters are always sorted alphabetically; individual boxes within clusters are sorted independently
+- **Box ordering** (`durationBoxOrder` / `durationBoxDir`): Alpha or Central tendency (mean/median), ascending or descending. Only affects individual box order within each cluster — cluster group order is always alphabetical
+- **Whisker modes**: 1.5×IQR (with outlier circles) or Min-Max (whiskers extend to data extremes)
+- **Center line**: Median or Mean toggle; center diamond marker always shown, tracks the selected center line
+- **Show toggles**: Quartiles (box vs bar), Outliers, individual data Points
+- **Coloured jitter points**: when Points is enabled, dots are coloured to match their box's colour variable with configurable opacity (`pointOpacity`)
+- **Max Y override**: manual Y-axis maximum; 0 = auto-fit to 110% of data max
+- **Interactive legend**: HTML overlay with colour swatches + texture pattern previews. Click any item to open the StyleEditor for manual colour/texture customisation. Style overrides persist via `layer.styleOverrides`
+- **Configurable tooltip**: hover over outlier circles or jitter points to see token details. Field selector popover (max 10 fields) with `durationTooltipFields` stored in PlotConfig
+- **Zoom & Pan**: scroll wheel zooms towards cursor, click-drag to pan. +/−/RESET VIEW buttons at bottom-left. Canvas transform applied to rendering; hit-detection inverse-transforms mouse coordinates
 
 ### Phoneme Distribution
 - Bar chart showing phoneme counts/percentages
@@ -138,7 +148,8 @@ All columns that don't match a built-in role are assigned `field` role. Previous
 | **Shape By** | F1/F2 (point mode), 3D | Same as Color By |
 | **Line Type By** | F1/F2 (trajectory mode), Traj F1/F2, Time Series | Same as Color By |
 | **Texture By** | Duration, Distribution | Same as Color By |
-| **Group By** | Duration | Same as Color By |
+| **Plot By** | Duration | Same as Color By (faceted sub-plots) |
+| **Group By** | Duration | Same as Color By (hierarchical clustering) |
 
 ### Encoding Dropdown Filtering
 - Visual encoding dropdowns (Color By, Shape By, Line Type By, Texture By) list all fields from `datasetMeta.columnMappings` that are sidebar-active
@@ -161,6 +172,7 @@ All columns that don't match a built-in role are assigned `field` role. Previous
 - Click any legend item to open a floating style editor
 - Edit color (palette grid), shape (icon grid), line type (dropdown), or texture (pattern selector)
 - Per-layer overrides stored in `layer.styleOverrides`
+- Supported in: F1/F2 (CanvasPlot), Trajectory F1/F2, Trajectory Time Series, Duration Plot, Phoneme Distribution
 
 ### Legend Deduplication & Mode Awareness
 - When the same variable is assigned to multiple channels (e.g. Color By = Shape By = Phoneme), the legend combines them into a single section with merged icons
@@ -259,18 +271,19 @@ All columns that don't match a built-in role are assigned `field` role. Previous
 - ~75% of slider travel covers the 0-0.5 opacity range
 - Step size: 0.02 (fine granularity at the compressed high end)
 
-### Affected Sliders (11 total)
+### Affected Sliders (12 total)
 1. `trajectoryLineOpacity` (config bar, trajectory mode)
 2. `trajectoryLineOpacity` (traj_f1f2 / traj_series section)
-3. `pointOpacity`
-4. `ellipseLineOpacity`
-5. `ellipseFillOpacity`
-6. `meanTrajectoryOpacity` (config bar, trajectory mode)
-7. `meanTrajectoryOpacity` (traj_f1f2 / traj_series section)
-8. `centroidOpacity`
-9. `refVowelLabelOpacity`
-10. `refVowelEllipseLineOpacity`
-11. `refVowelEllipseFillOpacity`
+3. `pointOpacity` (F1/F2 point mode)
+4. `pointOpacity` (Duration plot, jitter points — shown when Points checkbox is on)
+5. `ellipseLineOpacity`
+6. `ellipseFillOpacity`
+7. `meanTrajectoryOpacity` (config bar, trajectory mode)
+8. `meanTrajectoryOpacity` (traj_f1f2 / traj_series section)
+9. `centroidOpacity`
+10. `refVowelLabelOpacity`
+11. `refVowelEllipseLineOpacity`
+12. `refVowelEllipseFillOpacity`
 
 ### Stored Values
 - Config values remain linear 0-1 floats; only slider display/input is non-linear
@@ -283,6 +296,7 @@ All columns that don't match a built-in role are assigned `field` role. Previous
 - **Tooltip button** in the toolbar (F1/F2 and 3D tabs) opens a popover with checkboxes
 - Select up to **10 fields** from all available built-in + custom columns
 - Stored in `PlotConfig.tooltipFields: string[]`
+- **Duration plot**: separate tooltip field selector (`durationTooltipFields`, default: `['file_id', 'duration']`); works on outlier circles and jitter points
 
 ### Default State
 - Tooltip starts **empty** (no fields selected)
@@ -429,7 +443,7 @@ FRED/
 Core data record: `id`, `speaker`, `file_id`, `xmin` (number), `duration` (number), `trajectory: TrajectoryPoint[]`, `fields: Record<string, string>`. All categorical/text columns are stored generically in `fields` — there are no dedicated properties for word, phoneme, type, etc.
 
 ### PlotConfig
-All visualization settings: axis inversion, visual encoding channels, plot type, point/ellipse/centroid/trajectory options, opacity values, tooltip fields, ranges.
+All visualization settings: axis inversion, visual encoding channels, plot type, point/ellipse/centroid/trajectory options, opacity values, tooltip fields, ranges. Duration-specific fields: `durationPlotBy`, `durationClusterBy`, `durationYField`, `durationBoxOrder` (`'alpha'|'central'`), `durationBoxDir` (`'asc'|'desc'`), `durationCenterLine` (`'median'|'mean'`), `durationWhiskerMode` (`'iqr'|'minmax'`), `durationRange`, `durationTooltipFields`, `showQuartiles`, `showOutliers`, `showDurationPoints`.
 
 ### FilterState
 `{ filters: Record<string, string[]> }` — single generic dictionary. Keys are field names (e.g., `'speaker'`, `'type'`, `'phoneme'`), values are arrays of selected values. Empty array = nothing passes.
