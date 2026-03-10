@@ -79,6 +79,20 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     return options;
   }, [datasetMeta]);
 
+  // Numeric variable options (for Duration Y-axis selector)
+  const numericVariableOptions = useMemo(() => {
+    const options: { label: string; value: string }[] = [{ label: 'Duration', value: 'duration' }];
+    if (!datasetMeta) return options;
+    const seen = new Set<string>();
+    for (const m of datasetMeta.columnMappings) {
+      if (m.role === 'pitch' && m.fieldName && !seen.has(m.fieldName)) {
+        seen.add(m.fieldName);
+        options.push({ label: prettyLabel(m.fieldName), value: m.fieldName });
+      }
+    }
+    return options;
+  }, [datasetMeta]);
+
   // Dynamic time-points (from dataset or default 0-100 by 10)
   const availableTimePoints = useMemo(() => {
     if (datasetMeta?.timePoints.length) return datasetMeta.timePoints;
@@ -770,6 +784,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
             {/* ═══ Non-vowel/3d tabs: original flat layout ═══ */}
             {activeTab !== 'vowel' && activeTab !== '3d' && (
+              <>
               <div className="flex flex-wrap items-center gap-4">
                 <div className="flex items-center gap-2 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
                   <Settings2 size={14} />
@@ -844,6 +859,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     </>
                   )}
                   {activeTab === 'traj_series' && (
+                    <>
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-1">
                         <span className="text-[9px] font-bold text-slate-500 w-8">Freq Min</span>
@@ -854,12 +870,33 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         <input type="number" step="100" className="w-16 p-0.5 border rounded text-[10px]" value={bgConfig.timeSeriesFrequencyRange ? bgConfig.timeSeriesFrequencyRange[1] : 4000} onChange={e => updateLayerConfig(layers[0].id, 'timeSeriesFrequencyRange', [bgConfig.timeSeriesFrequencyRange[0], parseInt(e.target.value)])} />
                       </div>
                     </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Range</span>
+                      <div className="flex items-center gap-1">
+                        <select className="p-0.5 border rounded text-[10px] w-12" value={currentConfig.trajectoryOnset ?? 0} onChange={e => handleConfig('trajectoryOnset', parseInt(e.target.value))}>
+                          {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                        </select>
+                        <span className="text-slate-400">-</span>
+                        <select className="p-0.5 border rounded text-[10px] w-12" value={currentConfig.trajectoryOffset ?? 100} onChange={e => handleConfig('trajectoryOffset', parseInt(e.target.value))}>
+                          {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    </>
                   )}
                   {activeTab === 'duration' && (
-                    <div className="flex items-center gap-1">
-                      <span className="text-[9px] font-bold text-slate-500">Max Duration (s)</span>
-                      <input type="number" step="0.1" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.durationRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'durationRange', [0, parseFloat(e.target.value)])} />
-                    </div>
+                    <>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[9px] font-bold text-slate-500 uppercase">Y-Axis</span>
+                        <select className="p-0.5 border rounded text-[10px]" value={currentConfig.durationYField || 'duration'} onChange={e => handleConfig('durationYField', e.target.value)}>
+                          {numericVariableOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                        </select>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] font-bold text-slate-500">Max Y</span>
+                        <input type="number" step="0.1" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.durationRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'durationRange', [0, parseFloat(e.target.value)])} />
+                      </div>
+                    </>
                   )}
                   {activeTab === 'dist' && (
                     <div className="flex items-center gap-1">
@@ -871,16 +908,51 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
                 {/* General Visualization Controls */}
                 {activeTab === 'duration' && (
-                  renderVariableSelect('Group By', currentConfig.groupBy, v => handleConfig('groupBy', v))
+                  renderVariableSelect('Plot By', currentConfig.durationPlotBy || 'none', v => handleConfig('durationPlotBy', v))
                 )}
 
-                {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
+                {activeTab !== 'traj_series' && (
+                  renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))
+                )}
 
                 {(activeTab === 'duration' || activeTab === 'dist') && (
                   renderVariableSelect('Texture By', currentConfig.textureBy, v => handleConfig('textureBy', v))
                 )}
 
-                <div className="h-6 w-px bg-slate-300"></div>
+                {activeTab === 'duration' && (() => {
+                  const clusterOpts: { label: string; value: string }[] = [{ label: 'None', value: 'none' }];
+                  const seen = new Set<string>();
+                  for (const vk of [currentConfig.colorBy, currentConfig.textureBy]) {
+                    if (vk && vk !== 'none' && !seen.has(vk)) {
+                      seen.add(vk);
+                      const opt = variableOptions.find(o => o.value === vk);
+                      clusterOpts.push({ label: opt?.label || vk, value: vk });
+                    }
+                  }
+                  if (clusterOpts.length <= 1) return null;
+                  const curCluster = currentConfig.durationClusterBy || 'none';
+                  if (curCluster !== 'none' && !clusterOpts.some(o => o.value === curCluster)) {
+                    setTimeout(() => handleConfig('durationClusterBy', 'none'), 0);
+                  }
+                  return (
+                    <div className="flex items-center gap-2">
+                      <label className="font-semibold text-slate-600">Group By:</label>
+                      <select
+                        className="p-1.5 border border-slate-300 rounded bg-white text-slate-700 max-w-[120px]"
+                        value={curCluster}
+                        onChange={e => handleConfig('durationClusterBy', e.target.value)}
+                      >
+                        {clusterOpts.map(o => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })()}
+
+                {activeTab !== 'traj_series' && (
+                  <div className="h-6 w-px bg-slate-300"></div>
+                )}
 
             {/* Distribution Specific Ordering Controls */}
             {activeTab === 'dist' && (
@@ -987,7 +1059,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
 
             {/* ... Rest of Toggles ... */}
-            {(activeTab === 'traj_f1f2' || activeTab === 'traj_series') && (
+            {activeTab === 'traj_f1f2' && (
                <>
                   {renderVariableSelect('Line Type', currentConfig.lineTypeBy, v => handleConfig('lineTypeBy', v))}
 
@@ -1030,8 +1102,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                      </select>
                    )}
 
-                   {activeTab === 'traj_f1f2' && (
-                       <div className="relative ml-2">
+                   {/* traj_f1f2 reference vowels */}
+                   <div className="relative ml-2">
                         <button
                             onClick={() => {
                             handleConfig('showReferenceVowels', !currentConfig.showReferenceVowels);
@@ -1086,11 +1158,150 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                             </div>
                         )}
                         </div>
-                   )}
                </>
             )}
 
               </div>
+
+            {/* ── Time Series: Row 2 — Colour, Line Type, Lines / Means / Labels ── */}
+            {activeTab === 'traj_series' && (
+              <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2">
+                {/* Colour */}
+                {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
+
+                {/* Line Type */}
+                {renderVariableSelect('Line Type', currentConfig.lineTypeBy, v => handleConfig('lineTypeBy', v))}
+
+                <div className="w-px h-6 bg-slate-200"></div>
+
+                {/* Lines */}
+                <div className="flex items-center gap-1.5">
+                  <span className="font-bold">Lines</span>
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                      <span>Width</span>
+                      <input type="range" min="0.5" max="5" step="0.5" title="Individual Line Width" value={currentConfig.trajectoryLineWidth ?? 1} onChange={e => handleConfig('trajectoryLineWidth', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
+                    </div>
+                    <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                      <span>Opacity</span>
+                      <input type="range" min="0" max="1" step="0.02" title="Individual Line Opacity (0 = hidden)" value={opacityToSlider(currentConfig.trajectoryLineOpacity ?? 0.5)} onChange={e => handleConfig('trajectoryLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="w-px h-6 bg-slate-200"></div>
+
+                {/* Means */}
+                <div className="flex items-center gap-1.5">
+                  <label className="flex items-center gap-1 cursor-pointer" title="Show Mean Trajectories">
+                    <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showMeanTrajectories} onChange={e => handleConfig('showMeanTrajectories', e.target.checked)} />
+                    <span className="font-bold">Means</span>
+                  </label>
+                  {currentConfig.showMeanTrajectories && (
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                        <span>Width</span>
+                        <input type="range" min="1" max="10" step="0.5" title="Mean Line Width" value={currentConfig.meanTrajectoryWidth ?? 3} onChange={e => handleConfig('meanTrajectoryWidth', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
+                      </div>
+                      <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                        <span>Opacity</span>
+                        <input type="range" min="0" max="1" step="0.02" title="Mean Line Opacity" value={opacityToSlider(currentConfig.meanTrajectoryOpacity ?? 1)} onChange={e => handleConfig('meanTrajectoryOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
+                      </div>
+                      <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                        <span>Pts</span>
+                        <input type="range" min="0" max="10" step="0.5" title="Mean Point Size (0 = hidden)" value={currentConfig.meanTrajectoryPointSize ?? 4} onChange={e => handleConfig('meanTrajectoryPointSize', parseFloat(e.target.value))} className="w-12 h-1 accent-slate-600" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="w-px h-6 bg-slate-200"></div>
+
+                {/* Labels */}
+                <div className="flex items-center gap-1.5">
+                  <label className="flex items-center gap-1 cursor-pointer" title="Show Trajectory Labels">
+                    <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showTrajectoryLabels} onChange={e => handleConfig('showTrajectoryLabels', e.target.checked)} />
+                    <span className="font-bold">Labels</span>
+                  </label>
+                  {currentConfig.showTrajectoryLabels && (
+                    <>
+                      <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                        <span>Size</span>
+                        <input type="range" min="8" max="72" step="1" title="Label Size" value={currentConfig.meanTrajectoryLabelSize || 12} onChange={e => handleConfig('meanTrajectoryLabelSize', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
+                      </div>
+                      {(currentConfig.colorBy !== 'none' || currentConfig.lineTypeBy !== 'none') && (
+                        <select className="text-[9px] p-0.5 border rounded" title="Label Source" value={currentConfig.meanLabelType} onChange={e => handleConfig('meanLabelType', e.target.value)}>
+                          <option value="auto">Auto</option>
+                          <option value="color">Color Key</option>
+                          <option value="shape">Line Key</option>
+                          <option value="both">Both</option>
+                        </select>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Duration: Row 2 — Whisker Mode, Center Line, Show Toggles ── */}
+            {activeTab === 'duration' && (
+              <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2">
+                {/* Whisker Mode */}
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase">Whiskers</span>
+                  <div className="flex rounded border border-slate-300 overflow-hidden">
+                    <button
+                      className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationWhiskerMode || 'iqr') === 'iqr' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                      onClick={() => handleConfig('durationWhiskerMode', 'iqr')}
+                    >1.5×IQR</button>
+                    <button
+                      className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationWhiskerMode || 'iqr') === 'minmax' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                      onClick={() => handleConfig('durationWhiskerMode', 'minmax')}
+                    >Range</button>
+                  </div>
+                </div>
+
+                {/* Center Line */}
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase">Center</span>
+                  <div className="flex rounded border border-slate-300 overflow-hidden">
+                    <button
+                      className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationCenterLine || 'median') === 'median' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                      onClick={() => handleConfig('durationCenterLine', 'median')}
+                    >Median</button>
+                    <button
+                      className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationCenterLine || 'median') === 'mean' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                      onClick={() => handleConfig('durationCenterLine', 'mean')}
+                    >Mean</button>
+                  </div>
+                </div>
+
+                <div className="w-px h-6 bg-slate-200"></div>
+
+                {/* Show Toggles */}
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase">Show</span>
+                  <label className="flex items-center gap-1 cursor-pointer" title="Quartile Boxes">
+                    <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showQuartiles} onChange={e => handleConfig('showQuartiles', e.target.checked)} />
+                    <span className="text-[10px] font-bold text-slate-600">Quartiles</span>
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer" title="Mean Marker (diamond)">
+                    <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showMeanMarker} onChange={e => handleConfig('showMeanMarker', e.target.checked)} />
+                    <span className="text-[10px] font-bold text-slate-600">Mean ◇</span>
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer" title="Outlier points (IQR mode only)">
+                    <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showOutliers} onChange={e => handleConfig('showOutliers', e.target.checked)} />
+                    <span className={`text-[10px] font-bold ${(currentConfig.durationWhiskerMode || 'iqr') === 'iqr' ? 'text-slate-600' : 'text-slate-300'}`}>Outliers</span>
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer" title="Show individual data points">
+                    <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showDurationPoints} onChange={e => handleConfig('showDurationPoints', e.target.checked)} />
+                    <span className="text-[10px] font-bold text-slate-600">Points</span>
+                  </label>
+                </div>
+              </div>
+            )}
+
+              </>
             )}
 
           </div>
@@ -1145,6 +1356,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             ref={plotRef}
             data={activeData}
             config={currentConfig}
+            datasetMeta={datasetMeta}
           />
         )}
         {activeTab === 'dist' && (

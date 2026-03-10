@@ -59,6 +59,11 @@ const INITIAL_CONFIG: PlotConfig = {
   showMeanMarker: true,
   showOutliers: true,
   showDurationPoints: false,
+  durationYField: 'duration',
+  durationPlotBy: 'none',
+  durationClusterBy: 'none',
+  durationWhiskerMode: 'iqr',
+  durationCenterLine: 'median',
 
   // Distribution defaults
   separatePlots: false,

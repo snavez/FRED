@@ -115,12 +115,15 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     if (!config.showMeanTrajectories) return null;
     const result: Record<string, { f1: {x:number, y:number}[], f2: {x:number, y:number}[] }> = {};
 
+    const onset = config.trajectoryOnset ?? 0;
+    const offset = config.trajectoryOffset ?? 100;
+
     Object.entries(combinedGroups).forEach(([compKey, tokens]) => {
       const tks = tokens as SpeechToken[];
 
-      // Derive actual time-points from data for normalized mode
+      // Derive actual time-points from data for normalized mode (filtered by onset/offset)
       const allNormTimes = new Set<number>();
-      tks.forEach(tk => tk.trajectory.forEach(p => allNormTimes.add(p.time)));
+      tks.forEach(tk => tk.trajectory.filter(p => p.time >= onset && p.time <= offset).forEach(p => allNormTimes.add(p.time)));
       const sortedNormTimes = Array.from(allNormTimes).sort((a, b) => a - b);
       const normBinCount = sortedNormTimes.length || 11;
 
@@ -135,7 +138,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
       tks.forEach(t => {
          const sts = speakerStats?.[t.speaker || '__all__'];
          if (config.timeNormalized) {
-             t.trajectory.forEach(p => {
+             t.trajectory.filter(p => p.time >= onset && p.time <= offset).forEach(p => {
                  // Map trajectory point time to bin index using sorted time-points
                  const idx = sortedNormTimes.indexOf(p.time);
                  const f1 = normalizeFormant(config.useSmoothing ? (p.f1_smooth ?? p.f1) : p.f1, 'f1', normM, sts);
@@ -150,6 +153,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
                  const time = i * binSize;
                  if(time > t.duration) continue;
                  const normTime = (time/t.duration)*100;
+                 if (normTime < onset || normTime > offset) continue;
                  // Find bracketing trajectory points
                  let p0Idx = -1, p1Idx = -1;
                  for (let j = 0; j < t.trajectory.length - 1; j++) {
@@ -186,7 +190,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
       result[compKey] = { f1: mapPoints(f1Sums, counts), f2: mapPoints(f2Sums, counts) };
     });
     return result;
-  }, [combinedGroups, config.timeNormalized, config.showMeanTrajectories, config.useSmoothing]);
+  }, [combinedGroups, config.timeNormalized, config.showMeanTrajectories, config.useSmoothing, config.trajectoryOnset, config.trajectoryOffset]);
 
   // drawScale parameter added
   const renderPlot = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number, scale: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
@@ -201,7 +205,19 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     // Use specific frequency range for time series
     const [yMin, yMax] = config.timeSeriesFrequencyRange || [0, 4000];
 
-    const mapX = (val: number) => (val / xMax) * width;
+    // Reserve right margin for labels when enabled (screen only; export handles its own margins)
+    let labelMargin = 0;
+    if (!exportConfig && config.showTrajectoryLabels && config.showMeanTrajectories) {
+      // Estimate widest label using character count × font size (robust — avoids measureText font-loading issues)
+      const lblFontSize = (config.meanTrajectoryLabelSize || 12) * drawScale / scale;
+      const charW = lblFontSize * 0.62; // approximate average character width for bold Inter
+      const keys = config.colorBy !== 'none' ? sortedKeys : ['All'];
+      const maxChars = Math.max(...keys.map(k => k.length), 1);
+      const labelPadX = (8 * drawScale) / scale;
+      labelMargin = charW * maxChars + labelPadX + 8; // text + gap + breathing room
+    }
+    const plotWidth = width - labelMargin;
+    const mapX = (val: number) => (val / xMax) * plotWidth;
     const mapY = (val: number) => height - ((val - yMin) / (yMax - yMin)) * height;
 
     // Grid & Ticks
@@ -261,7 +277,8 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
 
     // Draw Lines
     const dynamicOpacity = Math.max(0.01, config.trajectoryLineOpacity);
-    ctx.lineWidth = (config.lineWidth * drawScale) / scale;
+    const individualLineWidth = config.trajectoryLineWidth ?? config.lineWidth ?? 1;
+    ctx.lineWidth = (individualLineWidth * drawScale) / scale;
 
     data.forEach(token => {
       let color = '#64748b';
@@ -280,25 +297,30 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
       }
 
       ctx.strokeStyle = color;
-      const lw = config.lineWidth;
+      const lw = individualLineWidth;
       const scaledPattern = dashPattern.map(d => (d * lw * drawScale) / scale);
       const defaultF2Pattern = [(5*lw*drawScale)/scale, (5*lw*drawScale)/scale];
+
+      // Filter trajectory by onset/offset range
+      const onset = config.trajectoryOnset ?? 0;
+      const offset = config.trajectoryOffset ?? 100;
+      const filteredTraj = token.trajectory.filter(p => p.time >= onset && p.time <= offset);
 
       // Helper to draw a single channel (F1 or F2) handling NaNs
       const drawChannel = (isF1: boolean) => {
           ctx.beginPath();
           if (isF1) {
-              ctx.globalAlpha = dynamicOpacity; 
+              ctx.globalAlpha = dynamicOpacity;
               ctx.setLineDash(isF1Solid ? [] : scaledPattern);
           } else {
-              ctx.globalAlpha = dynamicOpacity * (isF1Solid ? 1 : 0.4); 
+              ctx.globalAlpha = dynamicOpacity * (isF1Solid ? 1 : 0.4);
               ctx.setLineDash(isF1Solid ? defaultF2Pattern : scaledPattern);
           }
 
           let hasStarted = false;
           const normM = (config.normalization || 'hz') as NormalizationMethod;
           const sts = speakerStats?.[token.speaker || '__all__'];
-          token.trajectory.forEach((p) => {
+          filteredTraj.forEach((p) => {
               const rawVal = isF1
                   ? (config.useSmoothing ? (p.f1_smooth ?? p.f1) : p.f1)
                   : (config.useSmoothing ? (p.f2_smooth ?? p.f2) : p.f2);
@@ -375,6 +397,23 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
         drawMean(lines.f1, false);
         drawMean(lines.f2, true);
         ctx.setLineDash([]);
+
+        // Draw points on mean trajectory if enabled
+        if ((config.meanTrajectoryPointSize ?? 4) > 0) {
+            const ptSize = ((config.meanTrajectoryPointSize || 4) * drawScale) / scale;
+            ctx.fillStyle = color;
+            ctx.globalAlpha = config.meanTrajectoryOpacity;
+            const drawPts = (pts: {x:number,y:number}[]) => {
+                pts.forEach(p => {
+                    ctx.beginPath();
+                    ctx.arc(mapX(p.x), mapY(p.y), ptSize, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            };
+            drawPts(lines.f1);
+            drawPts(lines.f2);
+            ctx.globalAlpha = 1;
+        }
       });
 
       // Draw mean trajectory labels with anti-overlap
@@ -408,20 +447,34 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
           labelEntries.push({ x: mapX(lastPt.x), y: mapY(lastPt.y), label: labelText, color });
         });
 
-        // Anti-overlap: sort by Y, push apart if too close
-        const minSpacing = labelSize * 1.3;
+        // Bounded anti-overlap: push labels apart while keeping them within canvas
+        const halfLbl = labelSize * 0.6;
+        const yTop = halfLbl;
+        const yBot = height - halfLbl;
+        const availableH = yBot - yTop;
+        const idealSpacing = labelSize * 1.3;
+        // If labels can't all fit at ideal spacing, reduce spacing to fit
+        const neededH = (labelEntries.length - 1) * idealSpacing;
+        const spacing = neededH > availableH
+          ? availableH / Math.max(labelEntries.length - 1, 1)
+          : idealSpacing;
+
         labelEntries.sort((a, b) => a.y - b.y);
-        for (let iter = 0; iter < 10; iter++) {
+        for (let iter = 0; iter < 20; iter++) {
           let moved = false;
           for (let i = 1; i < labelEntries.length; i++) {
             const gap = labelEntries[i].y - labelEntries[i - 1].y;
-            if (gap < minSpacing) {
-              const push = (minSpacing - gap) / 2;
+            if (gap < spacing) {
+              const push = (spacing - gap) / 2;
               labelEntries[i - 1].y -= push;
               labelEntries[i].y += push;
               moved = true;
             }
           }
+          // Clamp to canvas bounds each iteration
+          labelEntries.forEach(entry => {
+            entry.y = Math.max(yTop, Math.min(yBot, entry.y));
+          });
           if (!moved) break;
         }
 
@@ -703,13 +756,17 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !containerRef.current) return;
-    
-    const { width, height } = containerRef.current.getBoundingClientRect();
+
+    // Clear any previous inline sizing so CSS w-full h-full takes effect
+    canvas.style.width = '';
+    canvas.style.height = '';
+    // Use the canvas's own CSS-resolved size (respects parent padding via w-full h-full)
+    const rect = canvas.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
     canvas.width = width * window.devicePixelRatio;
     canvas.height = height * window.devicePixelRatio;
-    canvas.style.width = `${width}px`;
-    canvas.style.height = `${height}px`;
-    
+
     const ctx = canvas.getContext('2d');
     if (ctx) {
         ctx.save();

@@ -86,6 +86,11 @@ export interface PlotConfig {
   showMeanMarker: boolean;
   showOutliers: boolean;
   showDurationPoints: boolean;
+  durationYField: string;                  // 'duration' (default) or any field key
+  durationPlotBy: string;                  // 'none' or field key — faceting variable
+  durationClusterBy: string;               // 'none' or field key — hierarchical x-axis grouping
+  durationWhiskerMode: 'iqr' | 'minmax';  // 1.5×IQR vs min/max whiskers
+  durationCenterLine: 'median' | 'mean';   // what the thick center line represents
 
   // Distribution Plot Config
   separatePlots: boolean;
