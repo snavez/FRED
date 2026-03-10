@@ -101,6 +101,11 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
   const [hoveredToken, setHoveredToken] = useState<SpeechToken | null>(null);
   const [mousePos, setMousePos] = useState<{ x: number, y: number }>({ x: 0, y: 0 });
 
+  // Zoom/pan transform state
+  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+  const isDragging = useRef(false);
+  const lastMousePos = useRef({ x: 0, y: 0 });
+
   // Generalized Y-axis value extractor
   const getValue = useCallback((t: SpeechToken): number => {
     if (!config.durationYField || config.durationYField === 'duration') return t.duration;
@@ -627,7 +632,27 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     };
   });
 
-  // Canvas sizing
+  // Attach non-passive wheel listener for zoom (React onWheel is passive)
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const factor = e.deltaY > 0 ? 0.92 : 1.08;
+      setTransform(t => {
+        const newScale = Math.max(0.1, Math.min(50, t.scale * factor));
+        const ratio = newScale / t.scale;
+        return { x: mx - ratio * (mx - t.x), y: my - ratio * (my - t.y), scale: newScale };
+      });
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, []);
+
+  // Canvas sizing + zoom/pan rendering
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !containerRef.current) return;
@@ -636,19 +661,47 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     const rect = canvas.getBoundingClientRect();
     const width = rect.width;
     const height = rect.height;
-    canvas.width = width * window.devicePixelRatio;
-    canvas.height = height * window.devicePixelRatio;
+    const dpr = window.devicePixelRatio;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.save();
-      ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+      ctx.scale(dpr, dpr);
+      ctx.translate(transform.x, transform.y);
+      ctx.scale(transform.scale, transform.scale);
       renderPlot(ctx, width, height, 1, 1);
       ctx.restore();
     }
-  }, [data, config, renderPlot]);
+  }, [data, config, renderPlot, transform]);
 
-  // Hit test for tooltips — works on both jitter points AND outliers
+  // Mouse handlers for drag (pan) and tooltip hit-testing
+  const handleMouseDown = (e: React.MouseEvent) => {
+    isDragging.current = true;
+    lastMousePos.current = { x: e.clientX, y: e.clientY };
+  };
+
+  const handleMouseUp = () => { isDragging.current = false; };
+
   const handleMouseMove = (e: React.MouseEvent) => {
+    // Track mouse position relative to container for tooltip placement
+    const container = containerRef.current;
+    if (container) {
+      const cr = container.getBoundingClientRect();
+      setMousePos({ x: e.clientX - cr.left, y: e.clientY - cr.top });
+    }
+
+    // Drag → pan
+    if (isDragging.current) {
+      const dx = e.clientX - lastMousePos.current.x;
+      const dy = e.clientY - lastMousePos.current.y;
+      lastMousePos.current = { x: e.clientX, y: e.clientY };
+      setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
+      setHoveredToken(null);
+      return;
+    }
+
+    // Hit-test for tooltips
     const hasPoints = config.showDurationPoints;
     const hasOutliers = config.showOutliers && config.durationWhiskerMode !== 'minmax';
     if (!hasPoints && !hasOutliers) return;
@@ -657,18 +710,12 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    // Track mouse position relative to container for tooltip placement
-    const container = containerRef.current;
-    if (container) {
-      const cr = container.getBoundingClientRect();
-      setMousePos({ x: e.clientX - cr.left, y: e.clientY - cr.top });
-    }
+    // Inverse-transform mouse coordinates to match canvas render space
+    const mouseX = (e.clientX - rect.left - transform.x) / transform.scale;
+    const mouseY = (e.clientY - rect.top - transform.y) / transform.scale;
 
     let closest: SpeechToken | null = null;
-    let minDist = 10;
+    let minDist = 10 / transform.scale; // Scale hit-test radius with zoom
 
     const width = rect.width;
     const height = rect.height;
@@ -856,10 +903,25 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     <div ref={containerRef} className="w-full h-full relative p-4 bg-white">
       <canvas
         ref={canvasRef}
-        className="w-full h-full"
+        className="w-full h-full cursor-grab active:cursor-grabbing"
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
         onMouseMove={handleMouseMove}
-        onMouseLeave={() => setHoveredToken(null)}
+        onMouseLeave={() => { isDragging.current = false; setHoveredToken(null); }}
       />
+
+      {/* Zoom/Pan Controls */}
+      <div className="absolute bottom-4 left-4 flex items-center gap-1 z-10">
+        <button onClick={() => setTransform(t => {
+          const newScale = Math.min(50, t.scale * 1.2);
+          return { ...t, scale: newScale };
+        })} className="w-8 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 font-bold text-slate-600">+</button>
+        <button onClick={() => setTransform(t => {
+          const newScale = Math.max(0.1, t.scale * 0.8);
+          return { ...t, scale: newScale };
+        })} className="w-8 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 font-bold text-slate-600">−</button>
+        <button onClick={() => setTransform({ x: 0, y: 0, scale: 1 })} className="px-3 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 text-[10px] font-bold text-slate-600 uppercase tracking-wider">Reset View</button>
+      </div>
 
       {/* Screen Legend */}
       {(hasColor || hasTexture) && (

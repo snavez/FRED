@@ -84,11 +84,22 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   const numericVariableOptions = useMemo(() => {
     const options: { label: string; value: string }[] = [{ label: 'Duration', value: 'duration' }];
     if (!datasetMeta) return options;
-    const seen = new Set<string>();
+    const seen = new Set<string>(['duration']);
+    // Add xmin (always numeric)
+    options.push({ label: 'Time (xmin)', value: 'xmin' });
+    seen.add('xmin');
     for (const m of datasetMeta.columnMappings) {
-      if (m.role === 'pitch' && m.fieldName && !seen.has(m.fieldName)) {
-        seen.add(m.fieldName);
-        options.push({ label: prettyLabel(m.fieldName), value: m.fieldName });
+      const key = m.fieldName || m.csvHeader;
+      if (seen.has(key)) continue;
+      // Include pitch-role columns
+      if (m.role === 'pitch' && key) {
+        seen.add(key);
+        options.push({ label: prettyLabel(key), value: key });
+      }
+      // Include data fields (isDataField: true) — these are numeric plot values
+      if (m.role === 'field' && m.isDataField && key) {
+        seen.add(key);
+        options.push({ label: prettyLabel(key), value: key });
       }
     }
     return options;
