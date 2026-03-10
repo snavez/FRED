@@ -1,6 +1,6 @@
 
 import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
-import { SpeechToken, PlotConfig, PlotHandle, ExportConfig, DatasetMeta } from '../types';
+import { SpeechToken, PlotConfig, PlotHandle, ExportConfig, DatasetMeta, StyleOverrides } from '../types';
 import { generateTexture } from '../utils/textureGenerator';
 import { getLabel } from '../utils/getLabel';
 
@@ -8,6 +8,8 @@ interface DurationPlotProps {
   data: SpeechToken[];
   config: PlotConfig;
   datasetMeta: DatasetMeta | null;
+  styleOverrides?: StyleOverrides;
+  onLegendClick?: (category: string, currentStyles: { color: string, shape: string, texture: number, lineType: string }, event: React.MouseEvent) => void;
 }
 
 const COLORS = [
@@ -93,10 +95,11 @@ const sortGroups = (groups: GroupData[], order: string, dir: string, centerLine:
   return sorted;
 };
 
-const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, datasetMeta }, ref) => {
+const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, datasetMeta, styleOverrides, onLegendClick }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hoveredToken, setHoveredToken] = useState<SpeechToken | null>(null);
+  const [mousePos, setMousePos] = useState<{ x: number, y: number }>({ x: 0, y: 0 });
 
   // Generalized Y-axis value extractor
   const getValue = useCallback((t: SpeechToken): number => {
@@ -143,16 +146,18 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
       ? Array.from(new Set<string>(data.map(t => getLabel(t, config.textureBy!) || '(empty)'))).sort()
       : [];
 
-    // Build color map
+    // Build color map (with styleOverride support)
     const cMap: Record<string, string> = {};
     if (hasColor) {
-      allColorValues.forEach((v, i) => cMap[v] = palette[i % palette.length]);
+      allColorValues.forEach((v, i) => cMap[v] = styleOverrides?.colors[v] || palette[i % palette.length]);
     }
 
-    // Build texture map (index-based)
+    // Build texture map (index-based, with styleOverride support)
     const tMap: Record<string, number> = {};
     if (hasTexture) {
-      allTextureValues.forEach((v, i) => tMap[v] = i);
+      allTextureValues.forEach((v, i) => {
+        tMap[v] = styleOverrides?.textures[v] !== undefined ? styleOverrides.textures[v] : i;
+      });
     }
 
     // 3. For each facet, split into sub-groups
@@ -196,7 +201,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         : 1;
 
     return { facetData: facets, colorMap: cMap, textureMap: tMap, globalYMax: yMax };
-  }, [data, config.durationPlotBy, config.colorBy, config.textureBy, config.bwMode, config.durationRange, getValue]);
+  }, [data, config.durationPlotBy, config.colorBy, config.textureBy, config.bwMode, config.durationRange, getValue, styleOverrides]);
 
   // Helper: draw a single box (whiskers, quartile box, center diamond, outliers, jitter points)
   const drawBox = useCallback((
@@ -655,6 +660,13 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
+    // Track mouse position relative to container for tooltip placement
+    const container = containerRef.current;
+    if (container) {
+      const cr = container.getBoundingClientRect();
+      setMousePos({ x: e.clientX - cr.left, y: e.clientY - cr.top });
+    }
+
     let closest: SpeechToken | null = null;
     let minDist = 10;
 
@@ -708,15 +720,17 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
       }
     };
 
-    if (isSingleFacet) {
-      const facet = facetData[0];
-      const validGroups = facet.groups.filter(g => g.stats !== null);
+    const getClusterKeyHit = (g: GroupData): string => {
+      if (clusterBy === config.colorBy) return g.colorKey || '(empty)';
+      if (clusterBy === config.textureBy) return g.textureKey || '(empty)';
+      return '';
+    };
 
-      const getClusterKeyHit = (g: GroupData): string => {
-        if (clusterBy === config.colorBy) return g.colorKey || '(empty)';
-        if (clusterBy === config.textureBy) return g.textureKey || '(empty)';
-        return '';
-      };
+    // Helper: hit-test one facet's groups within its rect
+    const hitTestFacet = (facet: FacetData, fx: number, fy: number, fw: number, fh: number) => {
+      const validGroups = facet.groups.filter(g => g.stats !== null);
+      if (validGroups.length === 0) return;
+      const mapY = (val: number) => fy + fh - ((val - yMin) / (yMax - yMin)) * fh;
 
       if (isHierarchical) {
         const clusterMap: Record<string, GroupData[]> = {};
@@ -726,20 +740,18 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
           clusterMap[ck].push(g);
         });
         const clusterKeysSorted = Object.keys(clusterMap).sort();
-        // Sort within clusters to match rendering
         clusterKeysSorted.forEach(ck => {
           clusterMap[ck] = sortGroups(clusterMap[ck], config.durationBoxOrder, config.durationBoxDir, config.durationCenterLine);
         });
         const totalBoxes = validGroups.length;
         const totalSlots = totalBoxes + (clusterKeysSorted.length > 1 ? (clusterKeysSorted.length - 1) * CLUSTER_GAP : 0);
-        const slotWidth = totalSlots > 0 ? chartW / totalSlots : chartW;
+        const slotWidth = totalSlots > 0 ? fw / totalSlots : fw;
         const barWidth = Math.min(50, slotWidth * 0.6);
-        const mapY = (val: number) => margin.top + chartH - ((val - yMin) / (yMax - yMin)) * chartH;
 
         let slotIndex = 0;
         clusterKeysSorted.forEach((ck, ci) => {
           clusterMap[ck].forEach(g => {
-            const xCenter = margin.left + (slotIndex + 0.5) * slotWidth;
+            const xCenter = fx + (slotIndex + 0.5) * slotWidth;
             checkGroup(g, xCenter, barWidth, mapY);
             slotIndex++;
           });
@@ -747,15 +759,38 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         });
       } else {
         const sorted = sortGroups(validGroups, config.durationBoxOrder, config.durationBoxDir, config.durationCenterLine);
-        const spacing = chartW / sorted.length;
+        const spacing = fw / sorted.length;
         const barWidth = Math.min(50, spacing * 0.6);
-        const mapY = (val: number) => margin.top + chartH - ((val - yMin) / (yMax - yMin)) * chartH;
 
         sorted.forEach((g, i) => {
-          const xCenter = margin.left + (spacing * i) + spacing / 2;
+          const xCenter = fx + (spacing * i) + spacing / 2;
           checkGroup(g, xCenter, barWidth, mapY);
         });
       }
+    };
+
+    if (isSingleFacet) {
+      hitTestFacet(facetData[0], margin.left, margin.top, chartW, chartH);
+    } else {
+      // Multi-facet grid — replicate layout from renderPlot
+      const cols = Math.ceil(Math.sqrt(facetData.length));
+      const rows = Math.ceil(facetData.length / cols);
+      const cellW = chartW / cols;
+      const cellH = chartH / rows;
+
+      facetData.forEach((facet, i) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const pad = 15;
+        const isLeftCol = col === 0;
+
+        const cx = margin.left + col * cellW + (isLeftCol ? pad * 2 : pad);
+        const cy = margin.top + row * cellH + pad + 15;
+        const cw = cellW - (isLeftCol ? pad * 3 : pad * 2);
+        const ch = cellH - pad * 2 - 35;
+
+        hitTestFacet(facet, cx, cy, cw, ch);
+      });
     }
 
     setHoveredToken(closest);
@@ -787,6 +822,18 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
   const hasColor = config.colorBy && config.colorBy !== 'none';
   const hasTexture = config.textureBy && config.textureBy !== 'none';
   const textureList = useMemo(() => Object.keys(textureMap).sort(), [textureMap]);
+
+  const handleLegendClickWrapper = (category: string, type: 'color' | 'texture', event: React.MouseEvent) => {
+    if (onLegendClick) {
+      const currentStyles = {
+        color: type === 'color' ? (colorMap[category] || '#000') : '#000',
+        shape: 'circle',
+        texture: type === 'texture' ? (textureMap[category] ?? 0) : 0,
+        lineType: 'solid'
+      };
+      onLegendClick(category, currentStyles, event);
+    }
+  };
 
   // Tooltip field labels
   const getFieldLabel = (field: string): string => {
@@ -821,7 +868,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
             <div className="space-y-1">
               <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1">{config.colorBy}</h4>
               {Object.entries(colorMap).map(([k, c]) => (
-                <div key={k} className="flex items-center gap-2 justify-between p-1 rounded">
+                <div key={k} className="flex items-center gap-2 justify-between cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(k, 'color', e)}>
                   <div className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: c }}></div>
                     <span>{k}</span>
@@ -837,7 +884,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
               {textureList.map(t => {
                 const idx = textureMap[t];
                 return (
-                  <div key={t} className="flex items-center gap-2 justify-between p-1 rounded">
+                  <div key={t} className="flex items-center gap-2 justify-between cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(t, 'texture', e)}>
                     <div className="flex items-center gap-2">
                       <PatternPreview index={idx} color="#475569" />
                       <span>{t}</span>
@@ -853,7 +900,8 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
 
       {/* Configurable Tooltip */}
       {hoveredToken && (
-        <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-16 top-16 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]">
+        <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]"
+          style={{ left: mousePos.x + 16, top: mousePos.y - 16 }}>
           {tooltipFields.length > 0 && (() => {
             const firstField = tooltipFields[0];
             const firstVal = getTooltipValue(hoveredToken, firstField, getValue);

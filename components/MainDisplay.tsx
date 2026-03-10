@@ -1459,6 +1459,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             data={activeData}
             config={currentConfig}
             datasetMeta={datasetMeta}
+            styleOverrides={styleOverrides}
+            onLegendClick={handleLegendClick}
           />
         )}
         {activeTab === 'dist' && (
