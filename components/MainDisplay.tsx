@@ -381,9 +381,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                let key: string | null = null;
                                if (m.role === 'speaker') key = 'speaker';
                                else if (m.role === 'file_id') key = 'file_id';
-                               else if (m.role === 'xmin') key = 'xmin';
                                else if (m.role === 'duration') key = 'duration';
-                               else if (m.role === 'field' && m.fieldName) key = m.fieldName;
+                               else if ((m.role === 'field' || m.role === 'pitch') && m.fieldName) key = m.fieldName;
                                if (!key || seen.has(key)) continue;
                                seen.add(key);
                                allFields.push({ key, label: prettyLabel(key) });

@@ -250,8 +250,7 @@ export interface PlotHandle {
 // Flexible file parsing types
 export type ColumnRole =
   | 'speaker' | 'file_id'
-  | 'xmin' | 'duration'
-  | 'formant'
+  | 'duration' | 'formant' | 'pitch'
   | 'field' | 'ignore';
 
 export interface ColumnMapping {
@@ -263,6 +262,7 @@ export interface ColumnMapping {
   isSmooth?: boolean;
   formantLabel?: string;
   showInSidebar?: boolean;
+  isDataField?: boolean;      // true = data/plot value (no sidebar), false/undefined = filter/label
 }
 
 export interface DatasetMeta {

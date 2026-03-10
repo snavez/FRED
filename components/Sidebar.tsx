@@ -15,13 +15,16 @@ interface SidebarProps {
   activeLayerName?: string;
   datasetMeta?: DatasetMeta | null;
   onToggleFieldVisibility?: (key: string, visible: boolean) => void;
+  onReopenMappingDialog?: () => void;
 }
 
 /** Get the filter key for a column mapping */
 const getFilterKey = (m: { role: string; fieldName?: string }): string | null => {
   if (m.role === 'speaker') return 'speaker';
   if (m.role === 'file_id') return 'file_id';
-  if (m.role === 'field' && m.fieldName) return m.fieldName;
+  if (m.role === 'duration') return 'duration';
+  if (m.role === 'ignore' || m.role === 'formant') return null;
+  if (m.fieldName) return m.fieldName; // handles 'field' and 'pitch'
   return null;
 };
 
@@ -29,6 +32,7 @@ const getFilterKey = (m: { role: string; fieldName?: string }): string | null =>
 const getTokenValue = (t: SpeechToken, key: string): string => {
   if (key === 'speaker') return t.speaker;
   if (key === 'file_id') return t.file_id;
+  if (key === 'duration') return t.duration.toString();
   return t.fields[key] ?? '';
 };
 
@@ -40,7 +44,7 @@ const prettyLabel = (key: string): string => {
 };
 
 const Sidebar: React.FC<SidebarProps> = ({
-  filters, setFilters, data, tokenCount, totalCount, handleFileUpload, activeLayerName, datasetMeta, onToggleFieldVisibility
+  filters, setFilters, data, tokenCount, totalCount, handleFileUpload, activeLayerName, datasetMeta, onToggleFieldVisibility, onReopenMappingDialog
 }) => {
   const [searchTerms, setSearchTerms] = useState<Record<string, string>>({});
   const [showFieldSettings, setShowFieldSettings] = useState(false);
@@ -75,23 +79,51 @@ const Sidebar: React.FC<SidebarProps> = ({
     return fields;
   }, [datasetMeta]);
 
-  // --- Compute options per field dynamically (all from full data) ---
+  // --- Cross-filtered options: for each field, apply all OTHER active filters ---
   const fieldOptions = useMemo(() => {
     const result: Record<string, string[]> = {};
+
+    // Pre-build filter entries from current filter state
+    const filterRecord = filters.filters as Record<string, string[]>;
+    const allFilterEntries: { key: string; set: Set<string> }[] = [];
+    for (const [key, values] of Object.entries(filterRecord)) {
+      if (values && values.length > 0) {
+        allFilterEntries.push({ key, set: new Set(values) });
+      }
+    }
+
+    // Check if any filter has empty array (= nothing passes for that field)
+    const emptyFilterKeys = new Set(
+      Object.entries(filterRecord).filter(([, v]) => v && v.length === 0).map(([k]) => k)
+    );
+
     for (const { key } of visibleFilterFields) {
-      const values = data.map(t => getTokenValue(t, key)).filter(v => v !== '');
+      // If some OTHER filter is empty, no data passes → no options
+      const otherEmpty = [...emptyFilterKeys].some(k => k !== key);
+      if (otherEmpty) { result[key] = []; continue; }
+
+      // Apply all filters EXCEPT this field's own
+      let subset = data;
+      for (const entry of allFilterEntries) {
+        if (entry.key === key) continue;
+        subset = subset.filter(t => entry.set.has(getTokenValue(t, entry.key)));
+      }
+
+      const values = subset.map(t => getTokenValue(t, key)).filter(v => v !== '');
       result[key] = Array.from(new Set<string>(values)).sort();
     }
-    return result;
-  }, [data, visibleFilterFields]);
 
-  // --- Popover entries: all filterable fields in the dataset ---
+    return result;
+  }, [data, visibleFilterFields, filters]);
+
+  // --- Popover entries: all filterable fields in the dataset (exclude data fields) ---
   const popoverEntries = useMemo(() => {
     if (!datasetMeta) return [];
     const entries: { key: string; label: string; visible: boolean }[] = [];
     const seen = new Set<string>();
 
     for (const m of datasetMeta.columnMappings) {
+      if (m.isDataField) continue; // Data fields don't appear as sidebar filter options
       const key = getFilterKey(m);
       if (!key || seen.has(key)) continue;
       seen.add(key);
@@ -214,10 +246,22 @@ const Sidebar: React.FC<SidebarProps> = ({
             <input type="file" className="hidden" accept=".csv,.tsv,.txt" onChange={handleFileUpload} />
           </label>
           {hasData && (
-            <div className="text-[10px] text-slate-500 font-bold uppercase flex justify-between items-center">
-              <span>Tokens: {tokenCount.toLocaleString()} / {totalCount.toLocaleString()}</span>
-              <span className="text-sky-700">{Math.round((tokenCount / totalCount) * 100 || 0)}%</span>
-            </div>
+            <>
+              <div className="text-[10px] text-slate-500 font-bold uppercase flex justify-between items-center">
+                <span>Tokens: {tokenCount.toLocaleString()} / {totalCount.toLocaleString()}</span>
+                <span className="text-sky-700">{Math.round((tokenCount / totalCount) * 100 || 0)}%</span>
+              </div>
+              {onReopenMappingDialog && (
+                <button
+                  onClick={onReopenMappingDialog}
+                  className="w-full mt-2 px-3 py-1.5 text-[10px] font-bold text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-100 transition-colors flex items-center justify-center gap-1.5"
+                  title="Re-open column mapping dialog to adjust field configuration"
+                >
+                  <Settings2 size={12} />
+                  Edit Column Mappings
+                </button>
+              )}
+            </>
           )}
         </section>
 

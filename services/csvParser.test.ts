@@ -66,7 +66,9 @@ describe('autoDetectMappings', () => {
     expect(mappings.find(m => m.csvHeader === 'speaker')?.role).toBe('speaker');
     expect(mappings.find(m => m.csvHeader === 'file_id')?.role).toBe('file_id');
     expect(mappings.find(m => m.csvHeader === 'dur')?.role).toBe('duration');
-    expect(mappings.find(m => m.csvHeader === 'onset')?.role).toBe('xmin');
+    // xmin-like columns are now detected as regular data fields
+    expect(mappings.find(m => m.csvHeader === 'onset')?.role).toBe('field');
+    expect(mappings.find(m => m.csvHeader === 'onset')?.isDataField).toBe(true);
   });
 
   it('detects formant columns via regex', () => {

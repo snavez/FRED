@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { ColumnMapping, ColumnRole } from '../types';
-import { X, Upload, FileText } from 'lucide-react';
+import { X, Upload, FileText, RefreshCw } from 'lucide-react';
 
 interface DataMappingDialogProps {
   isOpen: boolean;
@@ -11,20 +11,21 @@ interface DataMappingDialogProps {
   sampleData: string[][];
   detectedMappings: ColumnMapping[];
   fileName: string;
+  isEditMode?: boolean;
 }
 
 const ROLE_OPTIONS: { value: ColumnRole, label: string }[] = [
-  { value: 'ignore', label: 'Ignore' },
   { value: 'speaker', label: 'Speaker ID' },
   { value: 'file_id', label: 'File ID' },
-  { value: 'xmin', label: 'Onset (xmin)' },
-  { value: 'duration', label: 'Duration' },
   { value: 'formant', label: 'Formant Value' },
-  { value: 'field', label: 'Field' },
+  { value: 'duration', label: 'Duration Value' },
+  { value: 'pitch', label: 'Pitch Value' },
+  { value: 'field', label: 'Custom Field' },
+  { value: 'ignore', label: 'Ignore' },
 ];
 
 const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
-  isOpen, onClose, onConfirm, headers, sampleData, detectedMappings, fileName
+  isOpen, onClose, onConfirm, headers, sampleData, detectedMappings, fileName, isEditMode
 }) => {
   const [mappings, setMappings] = useState<ColumnMapping[]>(detectedMappings);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -42,18 +43,31 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
   };
 
   // Quick-assign helper for Speaker/File ID dropdowns
+  // Allows the same column to be assigned to both roles (separate mappings)
   const assignSpecialRole = (role: 'speaker' | 'file_id', csvHeader: string) => {
-    setMappings(prev => prev.map(m => {
-      // Clear the role from any previous column
-      if (m.role === role) {
-        return { ...m, role: 'field' as ColumnRole, fieldName: m.csvHeader, showInSidebar: true };
+    const otherRole = role === 'speaker' ? 'file_id' : 'speaker';
+    setMappings(prev => {
+      // Remove previous mapping for this role
+      let next = prev.filter(m => m.role !== role);
+      // If the chosen column already exists as a non-special mapping, keep it but
+      // also insert a new mapping for the special role pointing to the same column
+      const existing = next.find(m => m.csvHeader === csvHeader && m.role !== otherRole);
+      if (existing) {
+        // Repurpose it to this role
+        next = next.map(m => {
+          if (m === existing) return { ...m, role, showInSidebar: true, isDataField: false, fieldName: undefined };
+          return m;
+        });
+      } else if (!next.find(m => m.csvHeader === csvHeader && m.role === otherRole)) {
+        // Column not in mappings at all (shouldn't happen), add it
+        next.push({ csvHeader, role, showInSidebar: true, isDataField: false });
+      } else {
+        // Column is already used by the other special role — insert a duplicate mapping
+        const otherIdx = next.findIndex(m => m.csvHeader === csvHeader && m.role === otherRole);
+        next.splice(otherIdx + 1, 0, { csvHeader, role, showInSidebar: true, isDataField: false });
       }
-      // Assign to the chosen column
-      if (m.csvHeader === csvHeader) {
-        return { ...m, role, showInSidebar: true, fieldName: undefined };
-      }
-      return m;
-    }));
+      return next;
+    });
     setValidationError(null);
   };
 
@@ -86,7 +100,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-[900px] max-h-[85vh] flex flex-col border border-slate-200">
+      <div className="bg-white rounded-2xl shadow-2xl w-[940px] max-h-[85vh] flex flex-col border border-slate-200">
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-slate-200 shrink-0">
           <div>
@@ -95,7 +109,10 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
               Data Mapping
             </h2>
             <p className="text-xs text-slate-500 mt-1">
-              {fileName} — {summary.totalCols} columns, {summary.rows} sample rows — {summary.assignedCount} mapped, {summary.timePointCount} time points, {summary.fieldCount} fields
+              {isEditMode
+                ? `Reviewing column mappings for ${fileName}`
+                : `${fileName} — ${summary.totalCols} columns, ${summary.rows} sample rows — ${summary.assignedCount} mapped, ${summary.timePointCount} time points, ${summary.fieldCount} fields`
+              }
             </p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg transition-colors">
@@ -104,7 +121,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
         </div>
 
         {/* Quick-assign: Speaker & File ID */}
-        <div className="px-5 pt-4 pb-2 border-b border-slate-100 bg-slate-50/50 shrink-0">
+        <div className="px-5 pt-4 pb-3 border-b border-slate-100 bg-slate-50/50 shrink-0">
           <div className="flex gap-6">
             <div className="flex items-center gap-2">
               <label className="text-[11px] font-bold text-slate-600 whitespace-nowrap">Speaker ID:</label>
@@ -113,10 +130,13 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                 value={speakerCol}
                 onChange={e => {
                   if (e.target.value === '') {
-                    // Clear speaker assignment
-                    setMappings(prev => prev.map(m =>
-                      m.role === 'speaker' ? { ...m, role: 'field' as ColumnRole, fieldName: m.csvHeader, showInSidebar: true } : m
-                    ));
+                    setMappings(prev => {
+                      const speakerMapping = prev.find(m => m.role === 'speaker');
+                      if (!speakerMapping) return prev;
+                      const hasDuplicate = prev.some(m => m.csvHeader === speakerMapping.csvHeader && m.role !== 'speaker');
+                      if (hasDuplicate) return prev.filter(m => m.role !== 'speaker');
+                      return prev.map(m => m.role === 'speaker' ? { ...m, role: 'field' as ColumnRole, fieldName: m.csvHeader, showInSidebar: true, isDataField: false } : m);
+                    });
                   } else {
                     assignSpecialRole('speaker', e.target.value);
                   }
@@ -127,7 +147,6 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                   <option key={h} value={h}>{h}</option>
                 ))}
               </select>
-              <span className="text-[9px] text-slate-400 italic">for normalization</span>
             </div>
             <div className="flex items-center gap-2">
               <label className="text-[11px] font-bold text-slate-600 whitespace-nowrap">File ID:</label>
@@ -136,9 +155,13 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                 value={fileIdCol}
                 onChange={e => {
                   if (e.target.value === '') {
-                    setMappings(prev => prev.map(m =>
-                      m.role === 'file_id' ? { ...m, role: 'field' as ColumnRole, fieldName: m.csvHeader, showInSidebar: true } : m
-                    ));
+                    setMappings(prev => {
+                      const fileIdMapping = prev.find(m => m.role === 'file_id');
+                      if (!fileIdMapping) return prev;
+                      const hasDuplicate = prev.some(m => m.csvHeader === fileIdMapping.csvHeader && m.role !== 'file_id');
+                      if (hasDuplicate) return prev.filter(m => m.role !== 'file_id');
+                      return prev.map(m => m.role === 'file_id' ? { ...m, role: 'field' as ColumnRole, fieldName: m.csvHeader, showInSidebar: true, isDataField: false } : m);
+                    });
                   } else {
                     assignSpecialRole('file_id', e.target.value);
                   }
@@ -149,20 +172,39 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                   <option key={h} value={h}>{h}</option>
                 ))}
               </select>
-              <span className="text-[9px] text-slate-400 italic">for data provenance</span>
             </div>
           </div>
+          <p className="text-[10px] text-slate-500 mt-2 leading-relaxed">
+            <span className="font-semibold">Speaker ID</span> is used for speaker normalisation (Lobanov, Nearey).
+            <br />
+            <span className="font-semibold">File ID</span> helps you identify and track down outlying tokens.
+            <br />
+            You can set either to &ldquo;None&rdquo;, but you will miss out on this functionality.
+          </p>
+        </div>
+
+        {/* Filter vs Data explanation */}
+        <div className="mx-5 mt-3 mb-1 p-3 bg-amber-50/60 border border-amber-100 rounded-lg shrink-0">
+          <p className="text-[10px] text-amber-900 leading-relaxed">
+            <span className="font-bold">Filter fields</span> contain categorical labels for filtering your data (e.g. phoneme, stress, gender, speaker). They can appear in the sidebar for interactive filtering.
+            <br />
+            <span className="font-bold">Data fields</span> contain values to be plotted (e.g. formant measurements, duration). Data fields are not available as sidebar filters.
+          </p>
+          <p className="text-[10px] text-amber-800/70 mt-1 italic">
+            Toggle any field between filter and data below. Sidebar visibility can also be changed after import.
+          </p>
         </div>
 
         {/* Scrollable table */}
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className="flex-1 overflow-y-auto p-5 pt-3">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-white z-10">
               <tr className="border-b border-slate-200">
                 <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2 w-36">CSV Column</th>
-                <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2 w-48">Sample Values</th>
-                <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2 w-40">Map To</th>
-                <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2">Details</th>
+                <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2 w-40">Sample Values</th>
+                <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2 w-36">Map To</th>
+                <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2">Field Name</th>
+                <th className="text-center text-[10px] font-bold text-slate-400 uppercase py-2 w-24">Type</th>
                 <th className="text-center text-[10px] font-bold text-slate-400 uppercase py-2 w-16">
                   <span
                     className="cursor-help border-b border-dashed border-slate-300"
@@ -177,16 +219,17 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                 const colIdx = headers.indexOf(m.csvHeader);
                 const samples = sampleData.map(row => row[colIdx] || '').filter(v => v !== '').slice(0, 4);
                 const isIgnored = m.role === 'ignore';
+                const isData = m.isDataField === true;
 
                 return (
-                  <tr key={m.csvHeader} className={`border-b border-slate-100 ${isIgnored ? 'opacity-50' : ''}`}>
+                  <tr key={`${m.csvHeader}_${idx}`} className={`border-b border-slate-100 ${isIgnored ? 'opacity-50' : ''}`}>
                     <td className="py-2 pr-2">
                       <span className="font-mono text-xs font-bold text-slate-700">{m.csvHeader}</span>
                     </td>
                     <td className="py-2 pr-2">
                       <div className="flex flex-wrap gap-1">
                         {samples.map((s, i) => (
-                          <span key={i} className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 truncate max-w-[80px]">{s}</span>
+                          <span key={i} className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 truncate max-w-[70px]">{s}</span>
                         ))}
                       </div>
                     </td>
@@ -196,10 +239,33 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                         value={m.role}
                         onChange={e => {
                           const role = e.target.value as ColumnRole;
+                          const oldRole = m.role;
                           const updates: Partial<ColumnMapping> = { role };
-                          if (role === 'field') {
-                            updates.fieldName = m.fieldName || m.csvHeader;
+
+                          // If this row was a duplicate (shared column for speaker+file_id)
+                          // and we're changing it away from its special role, remove the row entirely
+                          if ((oldRole === 'speaker' || oldRole === 'file_id') && role !== oldRole) {
+                            const isDuplicate = mappings.some((pm, pi) => pi !== idx && pm.csvHeader === m.csvHeader);
+                            if (isDuplicate) {
+                              setMappings(prev => prev.filter((_, pi) => pi !== idx));
+                              return;
+                            }
+                          }
+
+                          // Set isDataField + showInSidebar defaults based on role
+                          if (role === 'formant' || role === 'duration' || role === 'pitch') {
+                            updates.isDataField = true;
+                            updates.showInSidebar = false;
+                          } else if (role === 'ignore') {
+                            updates.isDataField = undefined;
+                            updates.showInSidebar = false;
+                          } else {
+                            updates.isDataField = false;
                             updates.showInSidebar = true;
+                          }
+
+                          if (role === 'field' || role === 'pitch') {
+                            updates.fieldName = m.fieldName || m.csvHeader;
                           }
                           if (role === 'formant') {
                             updates.formant = m.formant || 'f1';
@@ -207,16 +273,13 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                             updates.isSmooth = m.isSmooth || false;
                           }
                           if (role === 'speaker' || role === 'file_id') {
-                            // Clear any other column with this role
+                            // Clear any other column with this role (but not same column with other special role)
                             setMappings(prev => prev.map((pm, pi) => {
-                              if (pi === idx) return { ...pm, ...updates, showInSidebar: true };
-                              if (pm.role === role) return { ...pm, role: 'field' as ColumnRole, fieldName: pm.csvHeader, showInSidebar: true };
+                              if (pi === idx) return { ...pm, ...updates };
+                              if (pm.role === role) return { ...pm, role: 'field' as ColumnRole, fieldName: pm.csvHeader, showInSidebar: true, isDataField: false };
                               return pm;
                             }));
                             return;
-                          }
-                          if (role !== 'ignore' && role !== 'formant') {
-                            updates.showInSidebar = true;
                           }
                           updateMapping(idx, updates);
                         }}
@@ -226,7 +289,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                         ))}
                       </select>
                     </td>
-                    <td className="py-2">
+                    <td className="py-2 pr-2">
                       {m.role === 'formant' && (
                         <div className="flex items-center gap-2">
                           <select
@@ -253,23 +316,45 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                           )}
                         </div>
                       )}
-                      {m.role === 'field' && (
+                      {(m.role === 'field' || m.role === 'pitch') && (
                         <div className="flex items-center gap-2">
                           <input
                             type="text"
-                            className="text-xs p-1 border border-slate-200 rounded w-40"
+                            className="text-xs p-1 border border-slate-200 rounded w-36"
                             value={m.fieldName ?? m.csvHeader}
                             onChange={e => updateMapping(idx, { fieldName: e.target.value })}
                             placeholder="Display name"
                           />
                         </div>
                       )}
-                      {(m.role === 'speaker' || m.role === 'file_id' || m.role === 'xmin' || m.role === 'duration') && (
+                      {(m.role === 'speaker' || m.role === 'file_id' || m.role === 'duration') && (
                         <span className="text-[10px] text-slate-400 italic">auto-detected</span>
                       )}
                     </td>
+                    {/* Type: Filter / Data toggle */}
                     <td className="py-2 text-center">
-                      {(m.role === 'field' || m.role === 'speaker' || m.role === 'file_id') && (
+                      {!isIgnored && (
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => updateMapping(idx, { isDataField: false, showInSidebar: true })}
+                            className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${!isData ? 'bg-sky-100 border-sky-300 text-sky-700 font-bold' : 'border-slate-200 text-slate-400 hover:border-slate-300'}`}
+                            title="Filter field: categorical labels for filtering data"
+                          >
+                            Filter
+                          </button>
+                          <button
+                            onClick={() => updateMapping(idx, { isDataField: true, showInSidebar: false })}
+                            className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${isData ? 'bg-amber-100 border-amber-300 text-amber-700 font-bold' : 'border-slate-200 text-slate-400 hover:border-slate-300'}`}
+                            title="Data field: numeric values to be plotted"
+                          >
+                            Data
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                    {/* Sidebar checkbox — visible for any non-ignored Filter field */}
+                    <td className="py-2 text-center">
+                      {!isIgnored && !isData && (
                         <input
                           type="checkbox"
                           checked={m.showInSidebar === true}
@@ -310,8 +395,8 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
             }}
             className="px-6 py-2 text-xs font-bold text-white bg-slate-600 rounded-lg hover:bg-slate-700 transition-colors flex items-center gap-2 shadow-sm"
           >
-            <Upload size={14} />
-            Import Data
+            {isEditMode ? <RefreshCw size={14} /> : <Upload size={14} />}
+            {isEditMode ? 'Apply Changes' : 'Import Data'}
           </button>
         </div>
 

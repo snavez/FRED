@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import MainDisplay from './components/MainDisplay';
 import Header from './components/Header';
@@ -114,6 +114,11 @@ const computeSelectAllFilters = (tokens: SpeechToken[], meta: DatasetMeta | null
       filters['speaker'] = Array.from(new Set(tokens.map(t => t.speaker).filter(Boolean)));
     } else if (m.role === 'file_id') {
       filters['file_id'] = Array.from(new Set(tokens.map(t => t.file_id).filter(Boolean)));
+    } else if (m.role === 'duration' && m.isDataField !== true) {
+      filters['duration'] = Array.from(new Set(tokens.map(t => t.duration.toString()).filter(v => v !== 'NaN')));
+    } else if (m.role === 'pitch' && m.fieldName && m.isDataField !== true) {
+      const key = m.fieldName;
+      if (!filters[key]) filters[key] = Array.from(new Set(tokens.map(t => t.fields[key] ?? '').filter(v => v !== '')));
     } else if (m.role === 'field' && m.fieldName) {
       const key = m.fieldName;
       filters[key] = Array.from(new Set(tokens.map(t => t.fields[key] ?? '').filter(v => v !== '')));
@@ -151,6 +156,10 @@ const App: React.FC = () => {
 
   // Flexible parsing state
   const [datasetMeta, setDatasetMeta] = useState<DatasetMeta | null>(null);
+  const [storedFileData, setStoredFileData] = useState<{
+    rawText: string; headers: string[]; sampleData: string[][]; fileName: string;
+  } | null>(null);
+  const uploadIdRef = useRef(0); // guards against FileReader race conditions
   const [mappingDialog, setMappingDialog] = useState<{
     isOpen: boolean;
     rawText: string;
@@ -158,13 +167,18 @@ const App: React.FC = () => {
     sampleData: string[][];
     detectedMappings: ColumnMapping[];
     fileName: string;
+    isEditMode: boolean;
+    dialogKey: number; // embedded key — always in sync with dialog data
   } | null>(null);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const thisUpload = ++uploadIdRef.current;
     const reader = new FileReader();
     reader.onload = (event) => {
+      // Discard stale reads if user uploaded another file before this one finished
+      if (uploadIdRef.current !== thisUpload) return;
       const text = event.target?.result as string;
       const delimiter = detectDelimiter(text);
       const lines = text.split(/\r?\n/).filter(l => l.trim());
@@ -174,19 +188,31 @@ const App: React.FC = () => {
       const sampleRows = lines.slice(1, 6).map(l => splitRow(l, delimiter));
       const detected = autoDetectMappings(headers, sampleRows);
 
+      const fileData = { rawText: text, headers, sampleData: sampleRows, fileName: file.name };
+      setStoredFileData(fileData);
       setMappingDialog({
         isOpen: true,
-        rawText: text,
-        headers,
-        sampleData: sampleRows,
+        ...fileData,
         detectedMappings: detected,
-        fileName: file.name
+        isEditMode: false,
+        dialogKey: Date.now(), // unique key, atomic with dialog data
       });
     };
     reader.readAsText(file);
     // Reset the input so the same file can be re-uploaded
     e.target.value = '';
   };
+
+  const handleReopenMappingDialog = useCallback(() => {
+    if (!storedFileData || !datasetMeta) return;
+    setMappingDialog({
+      isOpen: true,
+      ...storedFileData,
+      detectedMappings: datasetMeta.columnMappings,
+      isEditMode: true,
+      dialogKey: Date.now(),
+    });
+  }, [storedFileData, datasetMeta]);
 
   const handleMappingConfirm = useCallback((mappings: ColumnMapping[]) => {
     if (!mappingDialog) return;
@@ -225,6 +251,7 @@ const App: React.FC = () => {
       let accessor: (t: SpeechToken) => string;
       if (key === 'speaker') accessor = t => t.speaker;
       else if (key === 'file_id') accessor = t => t.file_id;
+      else if (key === 'duration') accessor = t => t.duration.toString();
       else accessor = t => t.fields[key] ?? '';
       filterEntries.push({ accessor, set });
     }
@@ -487,6 +514,7 @@ const App: React.FC = () => {
         activeLayerName={activeLayer.isBackground ? undefined : activeLayer.name}
         datasetMeta={datasetMeta}
         onToggleFieldVisibility={handleToggleFieldVisibility}
+        onReopenMappingDialog={storedFileData ? handleReopenMappingDialog : undefined}
       />
 
       <div className="flex-1 flex flex-col min-w-0">
@@ -527,6 +555,7 @@ const App: React.FC = () => {
       {/* Data Mapping Dialog */}
       {mappingDialog && (
         <DataMappingDialog
+          key={mappingDialog.dialogKey}
           isOpen={mappingDialog.isOpen}
           onClose={() => setMappingDialog(null)}
           onConfirm={handleMappingConfirm}
@@ -534,6 +563,7 @@ const App: React.FC = () => {
           sampleData={mappingDialog.sampleData}
           detectedMappings={mappingDialog.detectedMappings}
           fileName={mappingDialog.fileName}
+          isEditMode={mappingDialog.isEditMode}
         />
       )}
     </div>

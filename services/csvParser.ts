@@ -43,15 +43,21 @@ const addAliases = (aliases: string[], role: ColumnRole) => {
 };
 addAliases(['speaker', 'speaker_id', 'participant', 'subject'], 'speaker');
 addAliases(['file_id', 'fileid', 'filename', 'file'], 'file_id');
-addAliases(['xmin', 'onset', 'start', 'start_time'], 'xmin');
 addAliases(['duration', 'dur', 'seg_dur'], 'duration');
+addAliases(['pitch', 'f0', 'voice_pitch'], 'pitch');
 
 const FORMANT_REGEX = /^(f[123])_(\d+)(?:_(.+))?$/i;
+const PITCH_REGEX = /^f0_(\d+)(?:_(.+))?$/i;
+
+/** Names that should populate SpeechToken.xmin (now detected as regular fields) */
+const XMIN_NAMES = new Set(['xmin', 'onset', 'start', 'start_time']);
 
 /**
  * Auto-detect column mappings from CSV headers + sample data.
- * Special roles (speaker, file_id, xmin, duration) detected via alias table.
+ * Special roles (speaker, file_id, duration, pitch) detected via alias table.
  * Formant columns detected via regex (f1_50, f2_75_smooth, etc.).
+ * Pitch time-point columns detected via regex (f0_50, f0_80_smooth, etc.).
+ * xmin-like columns detected as regular data fields.
  * Everything else: categorical (≤50 unique, not mostly numeric) → field; else → ignore.
  */
 export const autoDetectMappings = (headers: string[], sampleRows: string[][]): ColumnMapping[] => {
@@ -61,10 +67,24 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
     // 1. Check alias table for special roles
     if (ALIAS_TABLE[lower]) {
       const role = ALIAS_TABLE[lower];
+      const isData = role === 'duration' || role === 'pitch';
       return {
         csvHeader: header,
         role,
-        showInSidebar: role === 'speaker' || role === 'file_id',
+        fieldName: role === 'pitch' ? header : undefined,
+        showInSidebar: !isData && (role === 'speaker' || role === 'file_id'),
+        isDataField: isData,
+      };
+    }
+
+    // 1b. xmin-like columns → regular data field
+    if (XMIN_NAMES.has(lower)) {
+      return {
+        csvHeader: header,
+        role: 'field' as ColumnRole,
+        fieldName: header,
+        showInSidebar: false,
+        isDataField: true,
       };
     }
 
@@ -76,7 +96,18 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
       const suffix = formantMatch[3];
       const isSmooth = !!suffix;
       const formantLabel = suffix || undefined;
-      return { csvHeader: header, role: 'formant' as ColumnRole, formant, timePoint, isSmooth, formantLabel };
+      return { csvHeader: header, role: 'formant' as ColumnRole, formant, timePoint, isSmooth, formantLabel, isDataField: true };
+    }
+
+    // 2b. Check pitch time-point pattern (f0_50, f0_80_smooth, etc.)
+    const pitchMatch = lower.match(PITCH_REGEX);
+    if (pitchMatch) {
+      return {
+        csvHeader: header,
+        role: 'pitch' as ColumnRole,
+        fieldName: header,
+        isDataField: true,
+      };
     }
 
     // 3. Remaining: check if categorical (≤50 unique values) or numeric
@@ -95,6 +126,7 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
         role: 'field' as ColumnRole,
         fieldName: header,
         showInSidebar: !mostlyNumeric,
+        isDataField: mostlyNumeric,
       };
     }
 
@@ -124,7 +156,6 @@ export const parseWithMappings = (
   // Organize mappings by type
   let speakerIdx: number | undefined;
   let fileIdIdx: number | undefined;
-  let xminIdx: number | undefined;
   let durationIdx: number | undefined;
   const formantMappings: { colIdx: number, formant: 'f1' | 'f2' | 'f3', timePoint: number, isSmooth: boolean }[] = [];
   const fieldMappings: { colIdx: number, fieldName: string }[] = [];
@@ -136,13 +167,13 @@ export const parseWithMappings = (
     switch (m.role) {
       case 'speaker': speakerIdx = colIdx; break;
       case 'file_id': fileIdIdx = colIdx; break;
-      case 'xmin': xminIdx = colIdx; break;
       case 'duration': durationIdx = colIdx; break;
       case 'formant':
         if (m.formant !== undefined && m.timePoint !== undefined) {
           formantMappings.push({ colIdx, formant: m.formant, timePoint: m.timePoint, isSmooth: m.isSmooth || false });
         }
         break;
+      case 'pitch':
       case 'field':
         if (m.fieldName) {
           fieldMappings.push({ colIdx, fieldName: m.fieldName });
@@ -151,6 +182,9 @@ export const parseWithMappings = (
       // 'ignore' — skip
     }
   });
+
+  // Find xmin-like field for SpeechToken.xmin population
+  const xminFieldMapping = fieldMappings.find(fm => XMIN_NAMES.has(fm.fieldName.toLowerCase()));
 
   // Collect unique time points from formant mappings
   const timePointSet = new Set<number>();
@@ -215,7 +249,7 @@ export const parseWithMappings = (
       id: speaker ? `${speaker}_row_${i}` : (fileId ? `${fileId}_row_${i}` : `row_${i}`),
       speaker,
       file_id: fileId,
-      xmin: xminIdx !== undefined ? (parseFloat(row[xminIdx]) || 0) : 0,
+      xmin: xminFieldMapping ? (parseFloat(row[xminFieldMapping.colIdx]) || 0) : 0,
       duration: durationIdx !== undefined ? (parseFloat(row[durationIdx]) || 0) : 0,
       trajectory,
       fields,

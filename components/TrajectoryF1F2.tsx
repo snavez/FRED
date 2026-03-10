@@ -825,7 +825,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
           return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
         };
         const getTooltipValue = (token: SpeechToken, field: string): string => {
-          if (field === 'xmin') return `${token.xmin.toFixed(3)}s`;
+          if (field === 'xmin') return token.xmin ? `${token.xmin.toFixed(3)}s` : (token.fields['xmin'] || '');
           if (field === 'duration') return `${token.duration.toFixed(3)}s`;
           if (field === 'speaker') return token.speaker;
           if (field === 'file_id') return token.file_id;

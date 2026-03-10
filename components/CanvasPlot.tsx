@@ -101,7 +101,7 @@ const tooltipLabel = (key: string): string => {
 
 // Get tooltip field value from a token
 const getTooltipValue = (token: SpeechToken, field: string): string => {
-  if (field === 'xmin') return `${token.xmin.toFixed(3)}s`;
+  if (field === 'xmin') return token.xmin ? `${token.xmin.toFixed(3)}s` : (token.fields['xmin'] || '');
   if (field === 'duration') return `${token.duration.toFixed(3)}s`;
   if (field === 'speaker') return token.speaker;
   if (field === 'file_id') return token.file_id;
