@@ -128,4 +128,4 @@ FRED will load with some demo data so you can explore right away. Upload your ow
 
 ---
 
-*Built by Zoe. Powered by React, Vite, and Canvas 2D.*
+*Powered by React, Vite, and Canvas 2D.*
