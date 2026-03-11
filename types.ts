@@ -96,7 +96,7 @@ export interface PlotConfig {
   durationTooltipFields: string[];          // configurable tooltip fields
   durationBoxWidth: number;                 // box width in px (0 = auto)
   durationGroupGap: number;                 // gap between clusters in slot units (default 1.5)
-  durationBoxGap: number;                   // gap ratio between boxes (0-1, default 0.4 → barWidth = slotWidth * 0.6)
+  durationBoxGap: number;                   // additional slot units between boxes (0 = no gap, default 0.4)
 
   // Distribution Plot Config
   separatePlots: boolean;
@@ -111,6 +111,14 @@ export interface PlotConfig {
   distBarWidth: number;                     // bar width in px (0 = auto)
   distGroupGap: number;                     // gap between groups in px (0 = auto)
   distBarGap: number;                       // gap between bars within group in px (0 = auto)
+  distMode: 'counts' | 'histogram';         // sub-mode: categorical counts vs continuous histogram
+  distHistXVar: string;                      // numeric field for histogram x-axis (default: 'duration')
+  distHistTimePoint: number;                 // timepoint for formant extraction (default: 50)
+  distHistBinCount: number;                  // number of histogram bins (default: 30)
+  distHistColorBy: string;                   // categorical split variable (default: 'none')
+  distHistYMode: 'count' | 'density';        // y-axis mode (default: 'count')
+  distHistOverlap: 'stacked' | 'overlaid';   // multi-color bar mode (default: 'stacked')
+  distHistOpacity: number;                   // bar opacity for overlaid mode (default: 0.6)
 
   // Scatter Plot Visibility
   showPoints: boolean;

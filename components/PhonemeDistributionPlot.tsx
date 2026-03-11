@@ -1,5 +1,5 @@
 
-import React, { useRef, useEffect, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
+import React, { useRef, useEffect, useMemo, useCallback, forwardRef, useImperativeHandle, useState } from 'react';
 import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig } from '../types';
 import { generateTexture } from '../utils/textureGenerator';
 
@@ -9,6 +9,59 @@ interface DistributionPlotProps {
   styleOverrides?: StyleOverrides;
   onLegendClick?: (category: string, currentStyles: any, event: React.MouseEvent) => void;
 }
+
+interface HistBin {
+  x0: number;
+  x1: number;
+  counts: Record<string, number>;
+  total: number;
+}
+
+interface HistogramData {
+  bins: HistBin[];
+  min: number;
+  max: number;
+  maxY: number;
+  binWidth: number;
+  categories: string[];
+  colors: Record<string, string>;
+  totalCount: number;
+}
+
+const findNearestTimePoint = (trajectory: { time: number }[], target: number): number | undefined => {
+  if (trajectory.length === 0) return undefined;
+  const exact = trajectory.find(p => p.time === target);
+  if (exact) return target;
+  let best = trajectory[0].time;
+  let bestDist = Math.abs(best - target);
+  for (const p of trajectory) {
+    const d = Math.abs(p.time - target);
+    if (d < bestDist) { best = p.time; bestDist = d; }
+  }
+  return best;
+};
+
+const FORMANT_VARS = new Set(['f1', 'f2', 'f3', 'f1_smooth', 'f2_smooth', 'f3_smooth']);
+
+/** Returns true if a hex colour is achromatic (R≈G≈B within tolerance 8) */
+const isGreyHex = (hex: string): boolean => {
+  const m = hex.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  if (!m) return false;
+  const [r, g, b] = [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+  return Math.abs(r - g) <= 8 && Math.abs(r - b) <= 8 && Math.abs(g - b) <= 8;
+};
+
+const prettyLabel = (key: string): string => {
+  if (key === 'duration') return 'Duration (s)';
+  if (key === 'xmin') return 'Time (s)';
+  if (key === 'f1') return 'F1 (Hz)';
+  if (key === 'f2') return 'F2 (Hz)';
+  if (key === 'f3') return 'F3 (Hz)';
+  if (key === 'f1_smooth') return 'F1 smooth (Hz)';
+  if (key === 'f2_smooth') return 'F2 smooth (Hz)';
+  if (key === 'f3_smooth') return 'F3 smooth (Hz)';
+  return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+};
 
 const COLORS = [
   '#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', 
@@ -21,6 +74,10 @@ import { getLabel } from '../utils/getLabel';
 const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({ data, config, styleOverrides, onLegendClick }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Histogram hover state
+  const [hoveredBin, setHoveredBin] = useState<HistBin | null>(null);
+  const [mousePos, setMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const plotData = useMemo(() => {
     // 1. Group by Top Level (Group By)
@@ -107,7 +164,8 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
     const palette = config.bwMode ? ['#333', '#666', '#999'] : COLORS;
     const colorList = Array.from(colorDomain).sort();
     colorList.forEach((c, i) => {
-        globalColors[c] = styleOverrides?.colors[c] || palette[i % palette.length];
+        const ov = styleOverrides?.colors[c];
+        globalColors[c] = (ov && (!config.bwMode || isGreyHex(ov))) ? ov : palette[i % palette.length];
     });
 
     const textureMap: Record<string, number> = {};
@@ -123,14 +181,342 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
     return { groups: sortedGroups, data: processedGroups, colors: globalColors, colorCounts, textureCounts, textureMap, textureList, isInteraction, colorKey, textureKey };
   }, [data, config, styleOverrides]);
 
+  // ── Histogram data pipeline ──
+  const getHistValue = useCallback((t: SpeechToken): number => {
+    const field = config.distHistXVar || 'duration';
+    if (field === 'duration') return t.duration;
+    if (field === 'xmin') return t.xmin;
+    // Formant variables — extract from trajectory at target timepoint
+    if (FORMANT_VARS.has(field)) {
+      if (!t.trajectory || t.trajectory.length === 0) return NaN;
+      const targetTime = config.distHistTimePoint ?? 50;
+      const nearestTime = findNearestTimePoint(t.trajectory, targetTime);
+      if (nearestTime === undefined) return NaN;
+      const point = t.trajectory.find(p => p.time === nearestTime);
+      if (!point) return NaN;
+      return (point as any)[field] ?? NaN;
+    }
+    // Custom fields (stored in token.fields)
+    const raw = t.fields?.[field];
+    if (raw !== undefined) {
+      const num = parseFloat(raw);
+      return isNaN(num) ? NaN : num;
+    }
+    return NaN;
+  }, [config.distHistXVar, config.distHistTimePoint]);
+
+  const histogramData = useMemo((): HistogramData | null => {
+    if (config.distMode !== 'histogram') return null;
+
+    // 1. Extract numeric values, filter NaN
+    const values: { val: number; token: SpeechToken }[] = [];
+    data.forEach(t => {
+      const val = getHistValue(t);
+      if (!isNaN(val) && isFinite(val)) values.push({ val, token: t });
+    });
+
+    if (values.length === 0) {
+      return { bins: [], min: 0, max: 0, maxY: 0, binWidth: 1, categories: [], colors: {}, totalCount: 0 };
+    }
+
+    // 2. Compute range
+    let dataMin = Infinity, dataMax = -Infinity;
+    values.forEach(v => { if (v.val < dataMin) dataMin = v.val; if (v.val > dataMax) dataMax = v.val; });
+
+    // Single-value edge case
+    const min = dataMax === dataMin ? dataMin - 0.5 : dataMin;
+    const max = dataMax === dataMin ? dataMax + 0.5 : dataMax;
+
+    const binCount = Math.max(1, config.distHistBinCount || 30);
+    const binWidth = (max - min) / binCount;
+
+    // 3. Color categories
+    const colorByKey = (config.distHistColorBy && config.distHistColorBy !== 'none') ? config.distHistColorBy : null;
+    const categorySet = new Set<string>();
+
+    // 4. Create bins
+    const bins: HistBin[] = Array.from({ length: binCount }, (_, i) => ({
+      x0: min + i * binWidth,
+      x1: min + (i + 1) * binWidth,
+      counts: {},
+      total: 0,
+    }));
+
+    // 5. Assign tokens to bins
+    values.forEach(({ val, token }) => {
+      let binIdx = Math.floor((val - min) / binWidth);
+      if (binIdx >= binCount) binIdx = binCount - 1;
+      if (binIdx < 0) binIdx = 0;
+
+      const category = colorByKey ? (getLabel(token, colorByKey) || 'Undefined') : 'all';
+      categorySet.add(category);
+      bins[binIdx].counts[category] = (bins[binIdx].counts[category] || 0) + 1;
+      bins[binIdx].total++;
+    });
+
+    // 6. Compute maxY
+    const isDensity = config.distHistYMode === 'density';
+    const isStacked = config.distHistOverlap === 'stacked' || !colorByKey;
+    let maxY = 0;
+
+    bins.forEach(bin => {
+      if (isStacked) {
+        const stackTotal = isDensity ? bin.total / (values.length * binWidth) : bin.total;
+        if (stackTotal > maxY) maxY = stackTotal;
+      } else {
+        // Overlaid: max of individual categories
+        Object.values(bin.counts).forEach(c => {
+          const v = isDensity ? c / (values.length * binWidth) : c;
+          if (v > maxY) maxY = v;
+        });
+      }
+    });
+
+    // 7. Build color map
+    const categories = Array.from(categorySet).sort();
+    // B&W palette: wider spread for overlaid mode so overlaps are distinguishable
+    const bwOverlaid = config.bwMode && config.distHistOverlap === 'overlaid' && colorByKey;
+    const palette = config.bwMode
+      ? (bwOverlaid ? ['#b0b0b0', '#404040', '#d0d0d0', '#707070', '#909090'] : ['#525252', '#94a3b8', '#cbd5e1'])
+      : COLORS;
+    const colors: Record<string, string> = {};
+    categories.forEach((c, i) => {
+      const ov = styleOverrides?.colors[c];
+      colors[c] = (ov && (!config.bwMode || isGreyHex(ov))) ? ov : palette[i % palette.length];
+    });
+
+    return { bins, min, max, maxY, binWidth, categories, colors, totalCount: values.length };
+  }, [data, config.distMode, config.distHistXVar, config.distHistTimePoint, config.distHistBinCount,
+      config.distHistColorBy, config.distHistYMode, config.distHistOverlap,
+      config.bwMode, styleOverrides, getHistValue]);
+
+  // ── Histogram rendering helper ──
+  const renderHistogram = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number, scale: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
+    if (!histogramData || histogramData.bins.length === 0) {
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = `${14 / scale}px Inter`;
+      ctx.textAlign = 'center';
+      ctx.fillText('No numeric data available', width / (2 * scale), height / (2 * scale));
+      return;
+    }
+
+    const { bins, min, max, maxY, binWidth, categories, colors, totalCount } = histogramData;
+    const isExport = !!exportConfig;
+    const isDensity = config.distHistYMode === 'density';
+    const isOverlaid = config.distHistOverlap === 'overlaid' && categories.length > 1 && categories[0] !== 'all';
+    const isStacked = !isOverlaid;
+    const hasColor = categories.length > 1 || (categories.length === 1 && categories[0] !== 'all');
+
+    // Margins
+    const bottomBase = isExport ? Math.max(120, (exportConfig?.xAxisLabelSize || 36) * 2) : 80;
+    const leftBase = isExport ? Math.max(140, (exportConfig?.yAxisLabelSize || 36) * 2) : 70;
+    const topBase = isExport && exportConfig?.showPlotTitle ? Math.max(100, (exportConfig.plotTitleSize || 128) + 40) : 40;
+    const margin = {
+      top: (topBase * drawScale) + ((exportConfig?.graphY || 0) * drawScale),
+      right: 30 * drawScale,
+      bottom: bottomBase * drawScale,
+      left: (leftBase * drawScale) + ((exportConfig?.graphX || 0) * drawScale),
+    };
+    const chartW = width - margin.left - margin.right;
+    const chartH = height - margin.top - margin.bottom;
+
+    if (chartW <= 0 || chartH <= 0) return;
+
+    // Nice tick computation for y-axis
+    const niceStep = (range: number, targetTicks: number): number => {
+      const rough = range / targetTicks;
+      const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+      const norm = rough / mag;
+      let step: number;
+      if (norm < 1.5) step = 1;
+      else if (norm < 3) step = 2;
+      else if (norm < 7) step = 5;
+      else step = 10;
+      return step * mag;
+    };
+
+    // Y-axis setup
+    const yMax = maxY > 0 ? maxY * 1.05 : 1; // 5% headroom
+    const yStep = niceStep(yMax, 5);
+    const mapY = (val: number) => margin.top + chartH - (val / yMax) * chartH;
+    const mapX = (val: number) => margin.left + ((val - min) / (max - min)) * chartW;
+
+    // Font sizes
+    const tickFont = isExport ? (exportConfig?.tickLabelSize || 32) : 11;
+    const labelFont = isExport ? (exportConfig?.xAxisLabelSize || 36) : 13;
+
+    // Grid lines + Y-axis ticks
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = (1 * drawScale) / scale;
+    ctx.fillStyle = '#64748b';
+    ctx.font = `${(tickFont * drawScale) / scale}px Inter`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+
+    for (let yVal = 0; yVal <= yMax; yVal += yStep) {
+      const y = mapY(yVal);
+      if (y < margin.top - 5) break;
+      ctx.beginPath();
+      ctx.moveTo(margin.left, y);
+      ctx.lineTo(margin.left + chartW, y);
+      ctx.stroke();
+      const yTickX = margin.left - (8 * drawScale) + ((exportConfig?.yAxisTickX || 0) * drawScale);
+      const yTickY = y + ((exportConfig?.yAxisTickY || 0) * drawScale);
+      if (isDensity) {
+        ctx.fillText(yVal.toFixed(yVal < 0.01 ? 4 : 2), yTickX, yTickY);
+      } else {
+        ctx.fillText(Math.round(yVal).toString(), yTickX, yTickY);
+      }
+    }
+
+    // X-axis ticks
+    const xStep = niceStep(max - min, Math.min(10, bins.length));
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    const xTickY = margin.top + chartH + (8 * drawScale) + ((exportConfig?.xAxisTickY || 0) * drawScale);
+    for (let xVal = Math.ceil(min / xStep) * xStep; xVal <= max; xVal += xStep) {
+      const x = mapX(xVal);
+      ctx.beginPath();
+      ctx.moveTo(x, margin.top + chartH);
+      ctx.lineTo(x, margin.top + chartH + (5 * drawScale));
+      ctx.stroke();
+      ctx.fillStyle = '#64748b';
+      // Smart formatting
+      const formatted = Math.abs(xVal) >= 100 ? Math.round(xVal).toString()
+        : Math.abs(xVal) >= 1 ? xVal.toFixed(1)
+        : xVal.toFixed(3);
+      ctx.fillText(formatted, x + ((exportConfig?.xAxisTickX || 0) * drawScale), xTickY);
+    }
+
+    // Axis border lines
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = (1.5 * drawScale) / scale;
+    ctx.beginPath();
+    ctx.moveTo(margin.left, margin.top);
+    ctx.lineTo(margin.left, margin.top + chartH);
+    ctx.lineTo(margin.left + chartW, margin.top + chartH);
+    ctx.stroke();
+
+    // Bar rendering
+    const barW = chartW / bins.length;
+    const barGap = Math.max(0, Math.min(barW * 0.1, 2 * drawScale)); // small gap between bins
+
+    if (isOverlaid && hasColor) {
+      // Draw each category separately with transparency — largest total behind
+      const sortedCats = [...categories].sort((a, b) => {
+        const sumA = bins.reduce((s, bin) => s + (bin.counts[a] || 0), 0);
+        const sumB = bins.reduce((s, bin) => s + (bin.counts[b] || 0), 0);
+        return sumB - sumA; // largest first (behind)
+      });
+
+      const opacity = config.distHistOpacity ?? 0.6;
+
+      // Pass 1: fill bars with transparency
+      sortedCats.forEach(cat => {
+        ctx.globalAlpha = opacity;
+        bins.forEach((bin, i) => {
+          const count = bin.counts[cat] || 0;
+          if (count === 0) return;
+          const val = isDensity ? count / (totalCount * binWidth) : count;
+          const barH = (val / yMax) * chartH;
+          const bx = margin.left + i * barW + barGap / 2;
+          const by = margin.top + chartH - barH;
+          ctx.fillStyle = colors[cat];
+          ctx.fillRect(bx, by, barW - barGap, barH);
+        });
+        ctx.globalAlpha = 1.0;
+      });
+
+      // Pass 2: draw border outlines at full opacity so categories remain distinguishable
+      ctx.lineWidth = (1.5 * drawScale) / scale;
+      sortedCats.forEach(cat => {
+        ctx.strokeStyle = colors[cat];
+        bins.forEach((bin, i) => {
+          const count = bin.counts[cat] || 0;
+          if (count === 0) return;
+          const val = isDensity ? count / (totalCount * binWidth) : count;
+          const barH = (val / yMax) * chartH;
+          const bx = margin.left + i * barW + barGap / 2;
+          const by = margin.top + chartH - barH;
+          ctx.strokeRect(bx, by, barW - barGap, barH);
+        });
+      });
+    } else if (isStacked && hasColor) {
+      // Stacked bars
+      bins.forEach((bin, i) => {
+        let stackY = margin.top + chartH;
+        categories.forEach(cat => {
+          const count = bin.counts[cat] || 0;
+          if (count === 0) return;
+          const val = isDensity ? count / (totalCount * binWidth) : count;
+          const barH = (val / yMax) * chartH;
+          stackY -= barH;
+          const bx = margin.left + i * barW + barGap / 2;
+          ctx.fillStyle = colors[cat];
+          ctx.fillRect(bx, stackY, barW - barGap, barH);
+        });
+      });
+    } else {
+      // Single color — no split
+      const color = config.bwMode ? '#475569' : '#3b82f6';
+      bins.forEach((bin, i) => {
+        if (bin.total === 0) return;
+        const val = isDensity ? bin.total / (totalCount * binWidth) : bin.total;
+        const barH = (val / yMax) * chartH;
+        const bx = margin.left + i * barW + barGap / 2;
+        const by = margin.top + chartH - barH;
+        ctx.fillStyle = color;
+        ctx.fillRect(bx, by, barW - barGap, barH);
+      });
+    }
+
+    // Axis labels
+    ctx.fillStyle = '#0f172a';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.font = `bold ${(labelFont * drawScale) / scale}px Inter`;
+    ctx.fillText(prettyLabel(config.distHistXVar || 'duration'), margin.left + chartW / 2, margin.top + chartH + (35 * drawScale) + ((exportConfig?.xAxisTickY || 0) * drawScale));
+
+    // Y-axis label
+    ctx.save();
+    ctx.translate(margin.left - (45 * drawScale) + ((exportConfig?.yAxisLabelX || 0) * drawScale), margin.top + chartH / 2 + ((exportConfig?.yAxisLabelY || 0) * drawScale));
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(isDensity ? 'Density' : 'Count', 0, 0);
+    ctx.restore();
+
+    // Title (export only)
+    if (exportConfig?.showPlotTitle && exportConfig.plotTitle) {
+      ctx.font = `bold ${(exportConfig.plotTitleSize || 48) * drawScale / scale}px Inter`;
+      ctx.fillStyle = '#0f172a';
+      ctx.textAlign = 'center';
+      ctx.fillText(exportConfig.plotTitle, margin.left + chartW / 2 + ((exportConfig.plotTitleX || 0) * drawScale), (30 * drawScale) + ((exportConfig.plotTitleY || 0) * drawScale));
+    }
+
+    // n-count label
+    if (!isExport) {
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = `${(10 * drawScale) / scale}px Inter`;
+      ctx.textAlign = 'right';
+      ctx.fillText(`n = ${totalCount}`, margin.left + chartW, margin.top - (8 * drawScale));
+    }
+  }, [histogramData, config]);
+
   const renderPlot = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number, scale: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
     ctx.clearRect(0, 0, width, height);
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
     ctx.scale(scale, scale);
 
+    // ── Histogram mode ──
+    if (config.distMode === 'histogram') {
+      renderHistogram(ctx, width, height, scale, drawScale, exportConfig);
+      return;
+    }
+
     const { groups, data: pData, colors, textureMap, isInteraction } = plotData as any;
-    
+
     // Dynamic margins based on mode
     const isExport = !!exportConfig;
     const margin = { 
@@ -638,9 +1024,47 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
         });
     }
 
-  }, [plotData, config]);
+  }, [plotData, config, renderHistogram]);
 
   const drawLegend = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
+    // Histogram mode legend
+    if (config.distMode === 'histogram' && histogramData) {
+      if (!histogramData.categories.length || histogramData.categories[0] === 'all') return;
+      const titleSize = exportConfig ? exportConfig.legendTitleSize : 16;
+      const itemSize = exportConfig ? exportConfig.legendItemSize : 14;
+      const spacing = (itemSize * 1.6) * drawScale;
+      const boxSize = (itemSize * 0.8) * drawScale;
+      let curY = y;
+
+      ctx.font = `bold ${(titleSize * drawScale)}px Inter`;
+      ctx.fillStyle = '#0f172a';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText((config.distHistColorBy || 'COLOR').toUpperCase(), x, curY);
+      curY += (titleSize * 1.4) * drawScale;
+
+      ctx.font = `${(itemSize * drawScale)}px Inter`;
+      const isOverlaidExport = config.distHistOverlap === 'overlaid' && histogramData.categories.length > 1;
+      const swatchOpacityExport = isOverlaidExport ? (config.distHistOpacity ?? 0.6) : 1;
+      histogramData.categories.forEach(cat => {
+        // Draw swatch at same opacity as bars for visual consistency
+        ctx.globalAlpha = swatchOpacityExport;
+        ctx.fillStyle = histogramData.colors[cat];
+        ctx.fillRect(x, curY - boxSize / 2, boxSize, boxSize);
+        ctx.globalAlpha = 1.0;
+        // Border around swatch at full opacity
+        ctx.strokeStyle = histogramData.colors[cat];
+        ctx.lineWidth = 1 * drawScale;
+        ctx.strokeRect(x, curY - boxSize / 2, boxSize, boxSize);
+        ctx.fillStyle = '#334155';
+        const count = histogramData.bins.reduce((s, b) => s + (b.counts[cat] || 0), 0);
+        ctx.fillText(`${cat} (n=${count})`, x + boxSize * 1.5, curY);
+        curY += spacing;
+      });
+      return;
+    }
+
+    // Counts mode legend
     const { colors, textureList, textureMap, isInteraction, colorKey, textureKey, colorCounts, textureCounts } = plotData;
     let curY = y;
     const isExport = !!exportConfig;
@@ -884,6 +1308,33 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
   };
 
   const renderScreenLegend = () => {
+    // Histogram mode legend
+    if (config.distMode === 'histogram') {
+      if (!histogramData || !histogramData.categories.length || histogramData.categories[0] === 'all') return null;
+      const isOverlaid = config.distHistOverlap === 'overlaid' && histogramData.categories.length > 1;
+      const swatchOpacity = isOverlaid ? (config.distHistOpacity ?? 0.6) : 1;
+      return (
+        <div className="absolute top-4 right-4 bg-white/95 backdrop-blur p-3 rounded-xl border border-slate-200 text-xs shadow-xl flex flex-col space-y-3 max-h-[85%] overflow-y-auto w-48 pointer-events-auto">
+          <div className="space-y-1">
+            <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1">{config.distHistColorBy}</h4>
+            {histogramData.categories.map(cat => {
+              const count = histogramData.bins.reduce((s, b) => s + (b.counts[cat] || 0), 0);
+              return (
+                <div key={cat} className="flex items-center gap-2 justify-between p-1 rounded hover:bg-slate-100 cursor-pointer" onClick={(e) => onLegendClick?.(cat, { color: histogramData.colors[cat], shape: 'circle', texture: 0, lineType: 'solid' }, e)}>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-sm border border-slate-200" style={{ backgroundColor: histogramData.colors[cat], opacity: swatchOpacity }}></div>
+                    <span>{cat}</span>
+                  </div>
+                  <span className="text-slate-400 text-[10px] font-mono">({count})</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // Counts mode legend
     const { colors, textureList, textureMap, isInteraction, colorKey, textureKey, colorCounts, textureCounts } = plotData as any;
     return (
         <div className="absolute top-4 right-4 bg-white/95 backdrop-blur p-3 rounded-xl border border-slate-200 text-xs shadow-xl flex flex-col space-y-3 max-h-[85%] overflow-y-auto w-48 pointer-events-auto">
@@ -916,10 +1367,84 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
     );
   };
 
+  // ── Histogram mouse handlers ──
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (config.distMode !== 'histogram' || !histogramData || !containerRef.current) {
+      if (hoveredBin) setHoveredBin(null);
+      return;
+    }
+    const cr = containerRef.current.getBoundingClientRect();
+    const mx = e.clientX - cr.left;
+    const my = e.clientY - cr.top;
+    setMousePos({ x: mx, y: my });
+
+    const { width, height } = cr;
+    const isExport = false;
+    const bottomBase = 80;
+    const leftBase = 70;
+    const margin = { top: 40, right: 30, bottom: bottomBase, left: leftBase };
+    const chartW = width - margin.left - margin.right;
+    const chartH = height - margin.top - margin.bottom;
+
+    const binW = chartW / histogramData.bins.length;
+    const binIdx = Math.floor((mx - margin.left) / binW);
+
+    if (binIdx >= 0 && binIdx < histogramData.bins.length &&
+        mx >= margin.left && mx <= margin.left + chartW &&
+        my >= margin.top && my <= margin.top + chartH) {
+      setHoveredBin(histogramData.bins[binIdx]);
+    } else {
+      setHoveredBin(null);
+    }
+  }, [config.distMode, histogramData, hoveredBin]);
+
+  const handleMouseLeave = useCallback(() => {
+    setHoveredBin(null);
+  }, []);
+
   return (
     <div ref={containerRef} className="w-full h-full relative p-4 bg-white">
-      <canvas ref={canvasRef} className="w-full h-full" />
+      <canvas
+        ref={canvasRef}
+        className="w-full h-full"
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+      />
       {renderScreenLegend()}
+
+      {/* Histogram tooltip */}
+      {hoveredBin && config.distMode === 'histogram' && (
+        <div
+          className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 border border-slate-700 backdrop-blur-md space-y-1 min-w-[160px]"
+          style={{
+            left: Math.min(mousePos.x + 16, (containerRef.current?.clientWidth || 400) - 200),
+            top: Math.max(mousePos.y - 16, 8),
+          }}
+        >
+          <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-sky-400">
+            {hoveredBin.x0.toFixed(3)} – {hoveredBin.x1.toFixed(3)}
+          </div>
+          {Object.entries(hoveredBin.counts).length > 1 ? (
+            <>
+              {Object.entries(hoveredBin.counts).sort(([,a],[,b]) => (b as number) - (a as number)).map(([cat, count]) => (
+                <div key={cat} className="flex justify-between gap-4">
+                  <span className="text-slate-300">{cat}</span>
+                  <span className="font-mono font-bold">{count}</span>
+                </div>
+              ))}
+              <div className="border-t border-slate-700 pt-1 flex justify-between gap-4">
+                <span className="text-slate-400 font-bold">Total</span>
+                <span className="font-mono font-bold">{hoveredBin.total}</span>
+              </div>
+            </>
+          ) : (
+            <div className="flex justify-between gap-4">
+              <span className="text-slate-400">Count</span>
+              <span className="font-mono font-bold">{hoveredBin.total}</span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 });

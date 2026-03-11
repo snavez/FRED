@@ -19,6 +19,14 @@ const COLORS = [
 
 const DEFAULT_CLUSTER_GAP = 1.5; // gap between clusters in slot units
 
+/** Returns true if a hex colour is achromatic (R≈G≈B within tolerance 8) */
+const isGreyHex = (hex: string): boolean => {
+  const m = hex.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  if (!m) return false;
+  const [r, g, b] = [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+  return Math.abs(r - g) <= 8 && Math.abs(r - b) <= 8 && Math.abs(g - b) <= 8;
+};
+
 // Hex colour → r,g,b string for rgba()
 const hexToRgb = (hex: string): string => {
   const h = hex.replace('#', '');
@@ -154,7 +162,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     // Build color map (with styleOverride support)
     const cMap: Record<string, string> = {};
     if (hasColor) {
-      allColorValues.forEach((v, i) => cMap[v] = styleOverrides?.colors[v] || palette[i % palette.length]);
+      allColorValues.forEach((v, i) => { const ov = styleOverrides?.colors[v]; cMap[v] = (ov && (!config.bwMode || isGreyHex(ov))) ? ov : palette[i % palette.length]; });
     }
 
     // Build texture map (index-based, with styleOverride support)
@@ -376,7 +384,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
 
     // Configurable box widths and gaps
     const clusterGap = config.durationGroupGap ?? DEFAULT_CLUSTER_GAP;
-    const boxGapRatio = config.durationBoxGap ?? 0.4; // 0 = boxes fill slot, 1 = zero-width boxes
+    const boxGapRatio = config.durationBoxGap ?? 0.4; // additional slot units between boxes (0 = no gap, higher = wider gap)
     const configBoxWidth = (config.durationBoxWidth ?? 0) * drawScale; // 0 = auto
 
     // Determine if we should rotate labels (check longest label length)
@@ -446,16 +454,19 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         });
 
         const totalBoxes = validGroups.length;
-        const totalSlots = totalBoxes + (clusterKeys.length > 1 ? (clusterKeys.length - 1) * clusterGap : 0);
+        // Count inner gaps (between boxes within each cluster)
+        let totalInnerGaps = 0;
+        clusterKeys.forEach(ck => { totalInnerGaps += clusterMap[ck].length - 1; });
+        const totalSlots = totalBoxes + totalInnerGaps * boxGapRatio + (clusterKeys.length > 1 ? (clusterKeys.length - 1) * clusterGap : 0);
         const slotWidth = totalSlots > 0 ? fw / totalSlots : fw;
-        const barWidth = configBoxWidth > 0 ? Math.min(configBoxWidth, slotWidth * 0.95) : Math.min(50 * drawScale, slotWidth * (1 - boxGapRatio));
+        const barWidth = configBoxWidth > 0 ? Math.min(configBoxWidth, slotWidth * 0.95) : Math.min(50 * drawScale, slotWidth * 0.8);
 
         let slotIndex = 0;
         clusterKeys.forEach((ck, ci) => {
           const clusterStartSlot = slotIndex;
           const clusterGroups = clusterMap[ck];
 
-          clusterGroups.forEach(g => {
+          clusterGroups.forEach((g, gi) => {
             const xCenter = fx + (slotIndex + 0.5) * slotWidth;
             drawBox(ctx, g, xCenter, barWidth, mapY, scale, drawScale);
 
@@ -489,6 +500,10 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
             }
 
             slotIndex++;
+            // Add box gap between boxes within the cluster
+            if (gi < clusterGroups.length - 1) {
+              slotIndex += boxGapRatio;
+            }
           });
 
           // Outer label (x-axis / group label) with bracket
@@ -521,11 +536,13 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
       } else {
         // === Flat layout — sort boxes ===
         const sorted = sortGroups(validGroups, config.durationBoxOrder, config.durationBoxDir, config.durationCenterLine);
-        const spacing = fw / sorted.length;
-        const barWidth = configBoxWidth > 0 ? Math.min(configBoxWidth, spacing * 0.95) : Math.min(50 * drawScale, spacing * (1 - boxGapRatio));
+        const totalFlatSlots = sorted.length + (sorted.length - 1) * boxGapRatio;
+        const spacing = fw / totalFlatSlots;
+        const barWidth = configBoxWidth > 0 ? Math.min(configBoxWidth, spacing * 0.95) : Math.min(50 * drawScale, spacing * 0.8);
 
         sorted.forEach((g, i) => {
-          const xCenter = fx + (spacing * i) + spacing / 2;
+          const slotPos = i * (1 + boxGapRatio);
+          const xCenter = fx + (slotPos + 0.5) * spacing;
           drawBox(ctx, g, xCenter, barWidth, mapY, scale, drawScale);
 
           // Box label (data label)
@@ -997,28 +1014,35 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         const hitBoxGapRatio = config.durationBoxGap ?? 0.4;
         const hitConfigBoxWidth = config.durationBoxWidth ?? 0;
         const totalBoxes = validGroups.length;
-        const totalSlots = totalBoxes + (clusterKeysSorted.length > 1 ? (clusterKeysSorted.length - 1) * hitClusterGap : 0);
+        // Count inner gaps (between boxes within each cluster)
+        let hitTotalInnerGaps = 0;
+        clusterKeysSorted.forEach(ck => { hitTotalInnerGaps += clusterMap[ck].length - 1; });
+        const totalSlots = totalBoxes + hitTotalInnerGaps * hitBoxGapRatio + (clusterKeysSorted.length > 1 ? (clusterKeysSorted.length - 1) * hitClusterGap : 0);
         const slotWidth = totalSlots > 0 ? fw / totalSlots : fw;
-        const barWidth = hitConfigBoxWidth > 0 ? Math.min(hitConfigBoxWidth, slotWidth * 0.95) : Math.min(50, slotWidth * (1 - hitBoxGapRatio));
+        const barWidth = hitConfigBoxWidth > 0 ? Math.min(hitConfigBoxWidth, slotWidth * 0.95) : Math.min(50, slotWidth * 0.8);
 
         let slotIndex = 0;
         clusterKeysSorted.forEach((ck, ci) => {
-          clusterMap[ck].forEach(g => {
+          const clusterGroups = clusterMap[ck];
+          clusterGroups.forEach((g, gi) => {
             const xCenter = fx + (slotIndex + 0.5) * slotWidth;
             checkGroup(g, xCenter, barWidth, mapY);
             slotIndex++;
+            if (gi < clusterGroups.length - 1) slotIndex += hitBoxGapRatio;
           });
           if (ci < clusterKeysSorted.length - 1) slotIndex += hitClusterGap;
         });
       } else {
         const sorted = sortGroups(validGroups, config.durationBoxOrder, config.durationBoxDir, config.durationCenterLine);
-        const spacing = fw / sorted.length;
         const hitBoxGapR = config.durationBoxGap ?? 0.4;
         const hitCfgBoxW = config.durationBoxWidth ?? 0;
-        const barWidth = hitCfgBoxW > 0 ? Math.min(hitCfgBoxW, spacing * 0.95) : Math.min(50, spacing * (1 - hitBoxGapR));
+        const totalFlatSlots = sorted.length + (sorted.length - 1) * hitBoxGapR;
+        const spacing = fw / totalFlatSlots;
+        const barWidth = hitCfgBoxW > 0 ? Math.min(hitCfgBoxW, spacing * 0.95) : Math.min(50, spacing * 0.8);
 
         sorted.forEach((g, i) => {
-          const xCenter = fx + (spacing * i) + spacing / 2;
+          const slotPos = i * (1 + hitBoxGapR);
+          const xCenter = fx + (slotPos + 0.5) * spacing;
           checkGroup(g, xCenter, barWidth, mapY);
         });
       }

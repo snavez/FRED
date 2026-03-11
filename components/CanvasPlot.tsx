@@ -20,6 +20,14 @@ const COLORS = [
 
 const BW_COLORS = ['#000000', '#525252', '#969696', '#d4d4d4'];
 
+/** Returns true if a hex colour is achromatic (R≈G≈B within tolerance 8) */
+const isGreyHex = (hex: string): boolean => {
+  const m = hex.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  if (!m) return false;
+  const [r, g, b] = [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+  return Math.abs(r - g) <= 8 && Math.abs(r - b) <= 8 && Math.abs(g - b) <= 8;
+};
+
 const SHAPES = [
   'circle', 'square', 'triangle', 'diamond', 'hexagon',
   'circle-open', 'square-open', 'triangle-open', 'diamond-open',
@@ -120,7 +128,7 @@ function computeMappings(data: SpeechToken[], config: PlotConfig, styleOverrides
 
     const palette = config.bwMode ? BW_COLORS : COLORS;
     const colorMap: Record<string, string> = {};
-    colorValues.forEach((v: string, i) => { colorMap[v] = styleOverrides?.colors[v] || palette[i % palette.length]; });
+    colorValues.forEach((v: string, i) => { const ov = styleOverrides?.colors[v]; colorMap[v] = (ov && (!config.bwMode || isGreyHex(ov))) ? ov : palette[i % palette.length]; });
 
     const shapeMap: Record<string, string> = {};
     shapeValues.forEach((v: string, i) => { shapeMap[v] = styleOverrides?.shapes[v] || SHAPES[i % SHAPES.length]; });

@@ -185,6 +185,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     const active = { color: false, shape: false, texture: false, lineType: false };
     const isTrajectory = currentConfig.plotType === 'trajectory';
     if (currentConfig.colorBy !== 'none') active.color = true;
+    // Histogram mode uses distHistColorBy instead of colorBy
+    if (activeTab === 'dist' && currentConfig.distMode === 'histogram' && currentConfig.distHistColorBy && currentConfig.distHistColorBy !== 'none') active.color = true;
     // Shapes: point mode only (F1/F2 + 3D), not trajectory
     if ((activeTab === 'vowel' || activeTab === '3d') && !isTrajectory && currentConfig.shapeBy !== 'none') active.shape = true;
     // Line type: trajectory mode on F1/F2, or dedicated trajectory tabs
@@ -230,7 +232,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             <button onClick={() => setActiveTab('3d')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === '3d' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Box size={16} /><span>3D F1/F2/F3</span></button>
             <button onClick={() => setActiveTab('traj_series')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'traj_series' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><LineChart size={16} /><span>Time Series</span></button>
             <button onClick={() => setActiveTab('duration')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'duration' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><BarChart2 size={16} /><span>Duration</span></button>
-            <button onClick={() => setActiveTab('dist')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'dist' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><PieChart size={16} /><span>Phoneme Dist.</span></button>
+            <button onClick={() => setActiveTab('dist')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'dist' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><PieChart size={16} /><span>Distributions</span></button>
             <button onClick={() => setActiveTab('table')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'table' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Table size={16} /><span>Table</span></button>
           </div>
 
@@ -866,13 +868,28 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             {/* ═══ Non-vowel/3d tabs: original flat layout ═══ */}
             {activeTab !== 'vowel' && activeTab !== '3d' && (
               <>
-              <div className="flex flex-wrap items-center gap-4 min-h-[40px]">
+              <div className="flex flex-wrap items-center gap-4 min-h-[44px]">
                 <div className="flex items-center gap-2 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
                   <Settings2 size={14} />
                   <span>Config</span>
                 </div>
 
                 <div className="h-6 w-px bg-slate-300"></div>
+
+                {/* Mode toggle (dist tab) */}
+                {activeTab === 'dist' && (
+                  <div className="flex items-center gap-1.5">
+                    <label className="font-semibold text-slate-600">Mode:</label>
+                    <select
+                      className="p-1.5 border border-slate-300 rounded bg-white text-slate-700 text-xs font-bold"
+                      value={currentConfig.distMode || 'counts'}
+                      onChange={e => handleConfig('distMode', e.target.value)}
+                    >
+                      <option value="counts">Counts</option>
+                      <option value="histogram">Distribution</option>
+                    </select>
+                  </div>
+                )}
 
                 {/* Data variant (traj tabs) */}
                 {(activeTab === 'traj_f1f2' || activeTab === 'traj_series') && datasetMeta?.formantVariants && datasetMeta.formantVariants.length >= 2 && (
@@ -973,13 +990,13 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                           {numericVariableOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                         </select>
                       </div>
-                      <div className="flex flex-col gap-0.5 justify-center">
-                        <span className="text-[9px] font-bold text-slate-500 uppercase">Max Value</span>
+                      <div className="flex flex-col justify-center">
+                        <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Max Value</span>
                         <input type="number" step="0.1" className="w-14 p-0.5 border rounded text-[10px]" value={bgConfig.durationRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'durationRange', [0, parseFloat(e.target.value)])} />
                       </div>
                     </>
                   )}
-                  {activeTab === 'dist' && (
+                  {activeTab === 'dist' && currentConfig.distMode !== 'histogram' && (
                     <div className="flex items-center gap-1">
                       <span className="text-[9px] font-bold text-slate-500">Max Count</span>
                       <input type="number" step="10" className="w-12 p-0.5 border rounded text-[10px]" value={bgConfig.countRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'countRange', [0, parseInt(e.target.value)])} />
@@ -990,8 +1007,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 {/* Duration Row 1 continued: Whiskers, Centre, Order */}
                 {activeTab === 'duration' && (
                   <>
-                    <div className="flex flex-col gap-0.5 justify-center">
-                      <span className="text-[9px] font-bold text-slate-500 uppercase">Whiskers</span>
+                    <div className="flex flex-col justify-center">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Whiskers</span>
                       <div className="flex rounded border border-slate-300 overflow-hidden">
                         <button
                           className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationWhiskerMode || 'iqr') === 'iqr' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
@@ -1004,8 +1021,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-0.5 justify-center">
-                      <span className="text-[9px] font-bold text-slate-500 uppercase">Centre</span>
+                    <div className="flex flex-col justify-center">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Centre</span>
                       <div className="flex rounded border border-slate-300 overflow-hidden">
                         <button
                           className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationCenterLine || 'median') === 'median' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
@@ -1018,8 +1035,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-0.5 justify-center">
-                      <span className="text-[9px] font-bold text-slate-500 uppercase">Order</span>
+                    <div className="flex flex-col justify-center">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Order</span>
                       <div className="flex items-center gap-1">
                         <div className="flex rounded border border-slate-300 overflow-hidden">
                           <button
@@ -1044,20 +1061,107 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 )}
 
                 {/* General Visualization Controls (non-duration, non-traj_series) */}
-                {activeTab !== 'duration' && activeTab !== 'traj_series' && (
+                {activeTab !== 'duration' && activeTab !== 'traj_series' && !(activeTab === 'dist' && currentConfig.distMode === 'histogram') && (
                   renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))
                 )}
 
-                {activeTab === 'dist' && (
+                {activeTab === 'dist' && currentConfig.distMode !== 'histogram' && (
                   renderVariableSelect('Texture By', currentConfig.textureBy, v => handleConfig('textureBy', v))
                 )}
 
-                {activeTab !== 'traj_series' && activeTab !== 'duration' && (
+                {activeTab !== 'traj_series' && activeTab !== 'duration' && !(activeTab === 'dist' && currentConfig.distMode === 'histogram') && (
                   <div className="h-6 w-px bg-slate-300"></div>
                 )}
 
-            {/* Distribution Specific Ordering Controls */}
-            {activeTab === 'dist' && (
+            {/* Distribution: Histogram mode controls */}
+            {activeTab === 'dist' && currentConfig.distMode === 'histogram' && (
+                <div className="flex items-center gap-4">
+                    {/* X Variable */}
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">X Variable</span>
+                      <select className="p-1 border border-slate-300 rounded text-[10px]"
+                        value={currentConfig.distHistXVar || 'duration'}
+                        onChange={e => handleConfig('distHistXVar', e.target.value)}>
+                        {[...numericVariableOptions,
+                          { label: 'F1', value: 'f1' },
+                          { label: 'F2', value: 'f2' },
+                          { label: 'F3', value: 'f3' },
+                          { label: 'F1 (smooth)', value: 'f1_smooth' },
+                          { label: 'F2 (smooth)', value: 'f2_smooth' },
+                          { label: 'F3 (smooth)', value: 'f3_smooth' },
+                        ].map(opt => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Time point selector (only for formant variables) */}
+                    {['f1','f2','f3','f1_smooth','f2_smooth','f3_smooth'].includes(currentConfig.distHistXVar || '') && (
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[9px] font-bold text-slate-500 uppercase">Time</span>
+                        <select className="p-1 border border-slate-300 rounded text-[10px]"
+                          value={currentConfig.distHistTimePoint ?? 50}
+                          onChange={e => handleConfig('distHistTimePoint', parseInt(e.target.value))}>
+                          {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Bins */}
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Bins</span>
+                      <input type="number" min="5" max="200" step="1"
+                        className="w-12 p-0.5 border rounded text-[10px]"
+                        value={currentConfig.distHistBinCount || 30}
+                        onChange={e => handleConfig('distHistBinCount', Math.max(1, parseInt(e.target.value) || 30))} />
+                    </div>
+
+                    <div className="h-6 w-px bg-slate-300"></div>
+
+                    {/* Colour By */}
+                    {renderVariableSelect('Colour', currentConfig.distHistColorBy || 'none', v => handleConfig('distHistColorBy', v))}
+
+                    {/* Overlap mode (only when colouring) */}
+                    {currentConfig.distHistColorBy && currentConfig.distHistColorBy !== 'none' && (
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[9px] font-bold text-slate-500 uppercase">Overlap</span>
+                        <select className="p-1 border border-slate-300 rounded text-[10px]"
+                          value={currentConfig.distHistOverlap || 'stacked'}
+                          onChange={e => handleConfig('distHistOverlap', e.target.value)}>
+                          <option value="stacked">Stacked</option>
+                          <option value="overlaid">Overlaid</option>
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Opacity slider (overlaid only) */}
+                    {currentConfig.distHistColorBy && currentConfig.distHistColorBy !== 'none' && currentConfig.distHistOverlap === 'overlaid' && (
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] text-slate-500">Opacity</span>
+                        <input type="range" min="0.1" max="1" step="0.05"
+                          value={currentConfig.distHistOpacity ?? 0.6}
+                          onChange={e => handleConfig('distHistOpacity', parseFloat(e.target.value))}
+                          className="w-16 h-1 accent-slate-600" />
+                      </div>
+                    )}
+
+                    <div className="h-6 w-px bg-slate-300"></div>
+
+                    {/* Y Mode */}
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Y-Axis</span>
+                      <select className="p-1 border border-slate-300 rounded text-[10px]"
+                        value={currentConfig.distHistYMode || 'count'}
+                        onChange={e => handleConfig('distHistYMode', e.target.value)}>
+                        <option value="count">Count</option>
+                        <option value="density">Density</option>
+                      </select>
+                    </div>
+                </div>
+            )}
+
+            {/* Distribution Specific Ordering Controls (Counts mode) */}
+            {activeTab === 'dist' && currentConfig.distMode !== 'histogram' && (
                 <div className="flex items-center gap-4">
                     <div className="flex items-center gap-1">
                          <div className="flex flex-col gap-0.5">
@@ -1405,8 +1509,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 <div className="w-px h-6 bg-slate-200"></div>
 
                 {/* Show Toggles — heading above checkboxes */}
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[9px] font-bold text-slate-500 uppercase">Show</span>
+                <div className="flex flex-col">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Show</span>
                   <div className="flex items-center gap-2">
                     <label className="flex items-center gap-1 cursor-pointer" title="Quartile Boxes">
                       <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showQuartiles} onChange={e => handleConfig('showQuartiles', e.target.checked)} />
@@ -1436,8 +1540,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 <div className="w-px h-6 bg-slate-200"></div>
 
                 {/* Box Width & Gap Controls */}
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[9px] font-bold text-slate-500 uppercase">Layout</span>
+                <div className="flex flex-col">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Layout</span>
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1" title="Box Width (0 = auto)">
                       <span className="text-[9px] text-slate-500">W</span>
@@ -1449,7 +1553,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     </div>
                     <div className="flex items-center gap-1" title="Box Gap (space between boxes)">
                       <span className="text-[9px] text-slate-500">BG</span>
-                      <input type="number" min="0" max="0.9" step="0.05" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.durationBoxGap ?? 0.4} onChange={e => handleConfig('durationBoxGap', parseFloat(e.target.value) || 0)} />
+                      <input type="number" min="0" max="5" step="0.1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.durationBoxGap ?? 0.4} onChange={e => handleConfig('durationBoxGap', parseFloat(e.target.value) || 0)} />
                     </div>
                   </div>
                 </div>
