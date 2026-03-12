@@ -100,18 +100,16 @@ const DEFAULT_LINE_TYPE_NAMES = ['solid', 'dash', 'dot', 'longdash', 'dotdash'];
 
 // Tooltip field label lookup (pretty label for any key, with optional datasetMeta)
 const tooltipLabel = (key: string, meta?: DatasetMeta | null): string => {
+  // Standard names for special roles
+  if (key === 'speaker') return 'Speaker';
+  if (key === 'file_id') return 'File ID';
+  if (key === 'duration') return 'Duration';
+  // Look up user-assigned field name from datasetMeta (covers xmin, custom fields, etc.)
   if (meta) {
     for (const m of meta.columnMappings) {
-      if (m.role === 'speaker' && key === 'speaker') return m.fieldName || m.csvHeader;
-      if (m.role === 'file_id' && key === 'file_id') return m.fieldName || m.csvHeader;
-      if (m.role === 'duration' && key === 'duration') return m.fieldName || 'Duration';
       if ((m.role === 'field' || m.role === 'pitch') && (m.fieldName === key || m.csvHeader === key)) return m.fieldName || m.csvHeader;
     }
   }
-  if (key === 'speaker') return 'Speaker';
-  if (key === 'file_id') return 'File ID';
-  if (key === 'xmin') return 'Time (xmin)';
-  if (key === 'duration') return 'Duration';
   return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 };
 

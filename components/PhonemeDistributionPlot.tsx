@@ -1,11 +1,12 @@
 
 import React, { useRef, useEffect, useMemo, useCallback, forwardRef, useImperativeHandle, useState } from 'react';
-import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig } from '../types';
+import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, DatasetMeta } from '../types';
 import { generateTexture } from '../utils/textureGenerator';
 
 interface DistributionPlotProps {
   data: SpeechToken[];
   config: PlotConfig;
+  datasetMeta?: DatasetMeta | null;
   styleOverrides?: StyleOverrides;
   onLegendClick?: (category: string, currentStyles: any, event: React.MouseEvent) => void;
 }
@@ -51,15 +52,22 @@ const isGreyHex = (hex: string): boolean => {
   return Math.abs(r - g) <= 8 && Math.abs(r - b) <= 8 && Math.abs(g - b) <= 8;
 };
 
-const prettyLabel = (key: string): string => {
-  if (key === 'duration') return 'Duration (s)';
-  if (key === 'xmin') return 'Time (s)';
-  if (key === 'f1') return 'F1 (Hz)';
-  if (key === 'f2') return 'F2 (Hz)';
-  if (key === 'f3') return 'F3 (Hz)';
-  if (key === 'f1_smooth') return 'F1 smooth (Hz)';
-  if (key === 'f2_smooth') return 'F2 smooth (Hz)';
-  if (key === 'f3_smooth') return 'F3 smooth (Hz)';
+const DIST_LABELS: Record<string, string> = {
+  duration: 'Duration (s)',
+  f1: 'F1 (Hz)', f2: 'F2 (Hz)', f3: 'F3 (Hz)',
+  f1_smooth: 'F1 smooth (Hz)', f2_smooth: 'F2 smooth (Hz)', f3_smooth: 'F3 smooth (Hz)',
+};
+
+const prettyLabel = (key: string, meta?: DatasetMeta | null): string => {
+  // Built-in labels for formants and duration
+  if (DIST_LABELS[key]) return DIST_LABELS[key];
+  // Look up user-assigned field name from datasetMeta (covers xmin, custom fields, etc.)
+  if (meta) {
+    for (const m of meta.columnMappings) {
+      if ((m.role === 'field' || m.role === 'pitch') && (m.fieldName === key || m.csvHeader === key))
+        return m.fieldName || m.csvHeader;
+    }
+  }
   return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 };
 
@@ -71,7 +79,7 @@ const COLORS = [
 
 import { getLabel } from '../utils/getLabel';
 
-const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({ data, config, styleOverrides, onLegendClick }, ref) => {
+const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({ data, config, datasetMeta, styleOverrides, onLegendClick }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -475,7 +483,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.font = `bold ${(labelFont * drawScale) / scale}px Inter`;
-    ctx.fillText(prettyLabel(config.distHistXVar || 'duration'), margin.left + chartW / 2, margin.top + chartH + (35 * drawScale) + ((exportConfig?.xAxisTickY || 0) * drawScale));
+    ctx.fillText(prettyLabel(config.distHistXVar || 'duration', datasetMeta), margin.left + chartW / 2, margin.top + chartH + (35 * drawScale) + ((exportConfig?.xAxisTickY || 0) * drawScale));
 
     // Y-axis label
     ctx.save();

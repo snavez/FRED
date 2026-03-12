@@ -51,10 +51,10 @@ const hexToRgb = (hex: string): string => {
   return `${r},${g},${b}`;
 };
 
-// Tooltip field labels
+// Tooltip field labels (fallback only — datasetMeta lookup is preferred)
 const DURATION_TOOLTIP_LABELS: Record<string, string> = {
   file_id: 'File ID', duration: 'Duration', speaker: 'Speaker', word: 'Word',
-  canonical: 'Canonical', produced: 'Produced', xmin: 'Time (xmin)',
+  canonical: 'Canonical', produced: 'Produced',
   phoneme: 'Phoneme', type: 'Type', alignment: 'Alignment',
   vowel_category: 'Vowel Category', stress: 'Stress',
 };
@@ -149,18 +149,24 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     return raw !== undefined ? parseFloat(raw) : NaN;
   }, [config.durationYField, config.durationFormantTimePoint]);
 
-  // Y-axis label
+  // Y-axis label — use user's field name from datasetMeta when available
   const yAxisLabel = useMemo(() => {
     const field = config.durationYField || 'duration';
     if (field === 'duration') return 'Duration (s)';
-    if (field === 'xmin') return 'Time (s)';
     if (FORMANT_VARS.has(field)) {
       const tp = config.durationFormantTimePoint ?? 50;
       const name = field.replace('_smooth', ' smooth').toUpperCase().replace(' SMOOTH', ' (smooth)');
       return `${name} @ ${tp}% (Hz)`;
     }
+    // Look up user-assigned field name from datasetMeta
+    if (datasetMeta) {
+      for (const m of datasetMeta.columnMappings) {
+        if ((m.role === 'field' || m.role === 'pitch') && (m.fieldName === field || m.csvHeader === field))
+          return m.fieldName || m.csvHeader;
+      }
+    }
     return field.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  }, [config.durationYField, config.durationFormantTimePoint]);
+  }, [config.durationYField, config.durationFormantTimePoint, datasetMeta]);
 
   // Hierarchical clustering state
   const clusterBy = config.durationClusterBy;
@@ -1149,13 +1155,13 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     }
   };
 
-  // Tooltip field labels — check datasetMeta first for user-assigned names
+  // Tooltip field labels — standard names for special roles, datasetMeta for fields
   const getFieldLabel = (field: string): string => {
+    if (field === 'speaker') return 'Speaker';
+    if (field === 'file_id') return 'File ID';
+    if (field === 'duration') return 'Duration';
     if (datasetMeta) {
       for (const m of datasetMeta.columnMappings) {
-        if (m.role === 'speaker' && field === 'speaker') return m.fieldName || m.csvHeader;
-        if (m.role === 'file_id' && field === 'file_id') return m.fieldName || m.csvHeader;
-        if (m.role === 'duration' && field === 'duration') return m.fieldName || 'Duration';
         if ((m.role === 'field' || m.role === 'pitch') && (m.fieldName === field || m.csvHeader === field)) return m.fieldName || m.csvHeader;
       }
     }

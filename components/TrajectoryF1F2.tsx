@@ -820,7 +820,6 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         const getFieldLabel = (key: string): string => {
           if (key === 'speaker') return 'Speaker';
           if (key === 'file_id') return 'File ID';
-          if (key === 'xmin') return 'Time (xmin)';
           if (key === 'duration') return 'Duration';
           return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
         };

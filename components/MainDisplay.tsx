@@ -42,8 +42,7 @@ const prettyLabel = (key: string, meta?: DatasetMeta | null): string => {
   if (key === 'speaker') return 'Speaker';
   if (key === 'file_id') return 'File ID';
   if (key === 'duration') return 'Duration';
-  if (key === 'xmin') return 'Time (xmin)';
-  // Check datasetMeta for user-assigned display names
+  // Check datasetMeta for user-assigned display names (covers xmin, custom fields, etc.)
   if (meta) {
     for (const m of meta.columnMappings) {
       if ((m.role === 'field' || m.role === 'pitch') && (m.fieldName === key || m.csvHeader === key)) return m.fieldName || m.csvHeader;
@@ -137,8 +136,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     const options: { label: string; value: string }[] = [{ label: 'Duration', value: 'duration' }];
     if (!datasetMeta) return options;
     const seen = new Set<string>(['duration']);
-    // Add xmin (always numeric)
-    options.push({ label: 'Time (xmin)', value: 'xmin' });
+    // Add xmin (always numeric) — use the user's field name from datasetMeta
+    options.push({ label: prettyLabel('xmin', datasetMeta), value: 'xmin' });
     seen.add('xmin');
     for (const m of datasetMeta.columnMappings) {
       const key = m.fieldName || m.csvHeader;
@@ -1723,6 +1722,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             ref={plotRef}
             data={activeData}
             config={currentConfig}
+            datasetMeta={datasetMeta}
             onLegendClick={handleLegendClick}
             styleOverrides={styleOverrides}
           />
