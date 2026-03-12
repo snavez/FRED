@@ -14,9 +14,9 @@ interface DataMappingDialogProps {
   isEditMode?: boolean;
 }
 
+// Speaker ID & File ID are assigned via the quick-assign dropdowns at the top,
+// so they are NOT listed here — the per-row dropdown only shows these roles.
 const ROLE_OPTIONS: { value: ColumnRole, label: string }[] = [
-  { value: 'speaker', label: 'Speaker ID' },
-  { value: 'file_id', label: 'File ID' },
   { value: 'formant', label: 'Formant Value' },
   { value: 'duration', label: 'Duration Value' },
   { value: 'pitch', label: 'Pitch Value' },
@@ -238,23 +238,18 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                       </div>
                     </td>
                     <td className="py-2 pr-2">
+                      {(m.role === 'speaker' || m.role === 'file_id') ? (
+                        <span className="text-xs text-slate-500 italic">
+                          {m.role === 'speaker' ? 'Speaker ID' : 'File ID'}
+                          <span className="text-[10px] text-slate-400 ml-1">↑ set above</span>
+                        </span>
+                      ) : (
                       <select
                         className="w-full text-xs p-1.5 border border-slate-200 rounded bg-white"
                         value={m.role}
                         onChange={e => {
                           const role = e.target.value as ColumnRole;
-                          const oldRole = m.role;
                           const updates: Partial<ColumnMapping> = { role };
-
-                          // If this row was a duplicate (shared column for speaker+file_id)
-                          // and we're changing it away from its special role, remove the row entirely
-                          if ((oldRole === 'speaker' || oldRole === 'file_id') && role !== oldRole) {
-                            const isDuplicate = mappings.some((pm, pi) => pi !== idx && pm.csvHeader === m.csvHeader);
-                            if (isDuplicate) {
-                              setMappings(prev => prev.filter((_, pi) => pi !== idx));
-                              return;
-                            }
-                          }
 
                           // Set isDataField + showInSidebar defaults based on role
                           if (role === 'formant' || role === 'duration' || role === 'pitch') {
@@ -276,15 +271,6 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                             updates.timePoint = m.timePoint ?? 50;
                             updates.isSmooth = m.isSmooth || false;
                           }
-                          if (role === 'speaker' || role === 'file_id') {
-                            // Clear any other column with this role (but not same column with other special role)
-                            setMappings(prev => prev.map((pm, pi) => {
-                              if (pi === idx) return { ...pm, ...updates };
-                              if (pm.role === role) return { ...pm, role: 'field' as ColumnRole, fieldName: pm.csvHeader, showInSidebar: true, isDataField: false };
-                              return pm;
-                            }));
-                            return;
-                          }
                           updateMapping(idx, updates);
                         }}
                       >
@@ -292,6 +278,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                           <option key={opt.value} value={opt.value}>{opt.label}</option>
                         ))}
                       </select>
+                      )}
                     </td>
                     <td className="py-2 pr-2">
                       {m.role === 'formant' && (
