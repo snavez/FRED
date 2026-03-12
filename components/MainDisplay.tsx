@@ -472,8 +472,10 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                else if (m.role === 'speaker') key = 'speaker';
                                else if (m.role === 'duration') key = 'duration';
                                else if ((m.role === 'field' || m.role === 'pitch') && m.fieldName) key = m.fieldName;
-                               if (!key || seen.has(key)) continue;
-                               seen.add(key);
+                               // Case-insensitive dedup to prevent near-duplicates like 'file_id' vs 'File_ID'
+                               const dedup = key?.toLowerCase().trim();
+                               if (!key || !dedup || seen.has(dedup)) continue;
+                               seen.add(dedup);
                                allFields.push({ key, label: prettyLabel(key, datasetMeta) });
                              }
                            }
@@ -543,8 +545,10 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                else if (m.role === 'speaker') key = 'speaker';
                                else if (m.role === 'duration') key = 'duration';
                                else if ((m.role === 'field' || m.role === 'pitch') && m.fieldName) key = m.fieldName;
-                               if (!key || seen.has(key)) continue;
-                               seen.add(key);
+                               // Case-insensitive dedup to prevent near-duplicates like 'file_id' vs 'File_ID'
+                               const dedup = key?.toLowerCase().trim();
+                               if (!key || !dedup || seen.has(dedup)) continue;
+                               seen.add(dedup);
                                allFields.push({ key, label: prettyLabel(key, datasetMeta) });
                              }
                            }

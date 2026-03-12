@@ -165,7 +165,11 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                       if (!speakerMapping) return prev;
                       const hasDuplicate = prev.some(m => m.csvHeader === speakerMapping.csvHeader && m.role !== 'speaker');
                       if (hasDuplicate) return prev.filter(m => m.role !== 'speaker');
-                      return prev.map(m => m.role === 'speaker' ? { ...m, role: 'field' as ColumnRole, fieldName: m.csvHeader, showInSidebar: true, isDataField: false } : m);
+                      // Avoid reserved name clash when converting to a regular field
+                      const safeName = RESERVED_FIELD_NAMES.has(speakerMapping.csvHeader.toLowerCase().trim())
+                        ? speakerMapping.csvHeader + '_col'
+                        : speakerMapping.csvHeader;
+                      return prev.map(m => m.role === 'speaker' ? { ...m, role: 'field' as ColumnRole, fieldName: safeName, showInSidebar: true, isDataField: false } : m);
                     });
                   } else {
                     assignSpecialRole('speaker', e.target.value);
@@ -193,7 +197,11 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                       if (!fileIdMapping) return prev;
                       const hasDuplicate = prev.some(m => m.csvHeader === fileIdMapping.csvHeader && m.role !== 'file_id');
                       if (hasDuplicate) return prev.filter(m => m.role !== 'file_id');
-                      return prev.map(m => m.role === 'file_id' ? { ...m, role: 'field' as ColumnRole, fieldName: m.csvHeader, showInSidebar: true, isDataField: false } : m);
+                      // Avoid reserved name clash when converting to a regular field
+                      const safeName = RESERVED_FIELD_NAMES.has(fileIdMapping.csvHeader.toLowerCase().trim())
+                        ? fileIdMapping.csvHeader + '_col'
+                        : fileIdMapping.csvHeader;
+                      return prev.map(m => m.role === 'file_id' ? { ...m, role: 'field' as ColumnRole, fieldName: safeName, showInSidebar: true, isDataField: false } : m);
                     });
                   } else {
                     assignSpecialRole('file_id', e.target.value);
