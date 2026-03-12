@@ -286,7 +286,10 @@ const App: React.FC = () => {
 
     return sourceData.filter(token => {
       for (const { accessor, set } of filterEntries) {
-        if (!set.has(accessor(token))) return false;
+        const val = accessor(token);
+        // Empty/missing values always pass — only non-empty values get checked
+        if (val === '') continue;
+        if (!set.has(val)) return false;
       }
       return true;
     });

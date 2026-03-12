@@ -106,7 +106,11 @@ const Sidebar: React.FC<SidebarProps> = ({
       let subset = data;
       for (const entry of allFilterEntries) {
         if (entry.key === key) continue;
-        subset = subset.filter(t => entry.set.has(getTokenValue(t, entry.key)));
+        subset = subset.filter(t => {
+          const val = getTokenValue(t, entry.key);
+          // Empty/missing values always pass — only non-empty values get checked
+          return val === '' || entry.set.has(val);
+        });
       }
 
       const values = subset.map(t => getTokenValue(t, key)).filter(v => v !== '');
