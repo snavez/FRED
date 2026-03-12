@@ -87,6 +87,7 @@ export interface PlotConfig {
   showOutliers: boolean;
   showDurationPoints: boolean;
   durationYField: string;                  // 'duration' (default) or any field key
+  durationFormantTimePoint: number;         // timepoint for formant Y-axis extraction (default: 50)
   durationPlotBy: string;                  // 'none' or field key — faceting variable
   durationClusterBy: string;               // 'none' or field key — hierarchical x-axis grouping
   durationWhiskerMode: 'iqr' | 'minmax';  // 1.5×IQR vs min/max whiskers

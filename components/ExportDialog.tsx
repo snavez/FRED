@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ExportConfig, PlotHandle, Layer, LayerLegendConfig } from '../types';
 import { Download, X, RefreshCw, Type, Link, Link2Off, ChevronDown, ChevronRight, RotateCcw, ArrowUp, ArrowDown, ArrowLeft, ArrowRight } from 'lucide-react';
 
@@ -137,6 +137,21 @@ const NudgePad: React.FC<{
   step?: number;
   label?: string;
 }> = ({ x, y, onChange, step = 10, label }) => {
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const livePos = useRef({ x: 0, y: 0 });
+
+  // Keep livePos in sync with props
+  useEffect(() => { livePos.current = { x, y }; }, [x, y]);
+
+  const stopRepeat = useCallback(() => {
+    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => () => stopRepeat(), [stopRepeat]);
+
   const nudge = (dx: number, dy: number, e: React.MouseEvent) => {
     let mult = 1;
     if (e.shiftKey) mult = 0.2;
@@ -147,17 +162,31 @@ const NudgePad: React.FC<{
     );
   };
 
+  const startRepeat = (dx: number, dy: number, e: React.MouseEvent) => {
+    nudge(dx, dy, e); // Fire once immediately
+    const mult = e.shiftKey ? 0.2 : (e.ctrlKey || e.metaKey) ? 5 : 1;
+    const stepVal = step * mult;
+    timeoutRef.current = setTimeout(() => {
+      intervalRef.current = setInterval(() => {
+        const newX = Math.round((livePos.current.x + dx * stepVal) * 10) / 10;
+        const newY = Math.round((livePos.current.y + dy * stepVal) * 10) / 10;
+        onChange(newX, newY);
+      }, 60);
+    }, 300);
+  };
+
   const hasOffset = x !== 0 || y !== 0;
+  const btnClass = "w-6 h-6 flex items-center justify-center rounded bg-white border border-slate-200 hover:bg-slate-50 text-slate-500 hover:text-slate-700 select-none";
 
   return (
-    <div className="bg-slate-100 rounded p-1.5">
+    <div className="bg-slate-100 rounded p-1.5 select-none">
       {label && <div className="text-[9px] font-bold text-slate-400 uppercase mb-1 text-center">{label}</div>}
       <div className="flex items-center justify-center gap-0.5">
-        <button onClick={e => nudge(-1, 0, e)} className="w-6 h-6 flex items-center justify-center rounded bg-white border border-slate-200 hover:bg-slate-50 text-slate-500 hover:text-slate-700" title="Nudge left (Shift=fine, Ctrl=coarse)">
+        <button onMouseDown={e => startRepeat(-1, 0, e)} onMouseUp={stopRepeat} onMouseLeave={stopRepeat} className={btnClass} title="Nudge left (hold to repeat, Shift=fine, Ctrl=coarse)">
           <ArrowLeft size={10} />
         </button>
         <div className="flex flex-col gap-0.5">
-          <button onClick={e => nudge(0, -1, e)} className="w-6 h-6 flex items-center justify-center rounded bg-white border border-slate-200 hover:bg-slate-50 text-slate-500 hover:text-slate-700" title="Nudge up">
+          <button onMouseDown={e => startRepeat(0, -1, e)} onMouseUp={stopRepeat} onMouseLeave={stopRepeat} className={btnClass} title="Nudge up">
             <ArrowUp size={10} />
           </button>
           <button
@@ -167,19 +196,17 @@ const NudgePad: React.FC<{
           >
             <RotateCcw size={8} />
           </button>
-          <button onClick={e => nudge(0, 1, e)} className="w-6 h-6 flex items-center justify-center rounded bg-white border border-slate-200 hover:bg-slate-50 text-slate-500 hover:text-slate-700" title="Nudge down">
+          <button onMouseDown={e => startRepeat(0, 1, e)} onMouseUp={stopRepeat} onMouseLeave={stopRepeat} className={btnClass} title="Nudge down">
             <ArrowDown size={10} />
           </button>
         </div>
-        <button onClick={e => nudge(1, 0, e)} className="w-6 h-6 flex items-center justify-center rounded bg-white border border-slate-200 hover:bg-slate-50 text-slate-500 hover:text-slate-700" title="Nudge right">
+        <button onMouseDown={e => startRepeat(1, 0, e)} onMouseUp={stopRepeat} onMouseLeave={stopRepeat} className={btnClass} title="Nudge right">
           <ArrowRight size={10} />
         </button>
       </div>
-      {hasOffset && (
-        <div className="text-[8px] text-slate-400 text-center mt-0.5 font-mono">
-          {x}, {y}
-        </div>
-      )}
+      <div className="text-[8px] text-slate-400 text-center mt-0.5 font-mono">
+        {x}, {y}
+      </div>
     </div>
   );
 };

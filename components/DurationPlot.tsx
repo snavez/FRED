@@ -27,6 +27,21 @@ const isGreyHex = (hex: string): boolean => {
   return Math.abs(r - g) <= 8 && Math.abs(r - b) <= 8 && Math.abs(g - b) <= 8;
 };
 
+const FORMANT_VARS = new Set(['f1', 'f2', 'f3', 'f1_smooth', 'f2_smooth', 'f3_smooth']);
+
+const findNearestTimePoint = (trajectory: { time: number }[], target: number): number | undefined => {
+  if (trajectory.length === 0) return undefined;
+  const exact = trajectory.find(p => p.time === target);
+  if (exact) return target;
+  let best = trajectory[0].time;
+  let bestDist = Math.abs(best - target);
+  for (const p of trajectory) {
+    const d = Math.abs(p.time - target);
+    if (d < bestDist) { best = p.time; bestDist = d; }
+  }
+  return best;
+};
+
 // Hex colour → r,g,b string for rgba()
 const hexToRgb = (hex: string): string => {
   const h = hex.replace('#', '');
@@ -116,16 +131,36 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
 
   // Generalized Y-axis value extractor
   const getValue = useCallback((t: SpeechToken): number => {
-    if (!config.durationYField || config.durationYField === 'duration') return t.duration;
-    const raw = t.fields[config.durationYField];
+    const field = config.durationYField || 'duration';
+    if (field === 'duration') return t.duration;
+    if (field === 'xmin') return t.xmin;
+    // Formant variables — extract from trajectory at target timepoint
+    if (FORMANT_VARS.has(field)) {
+      if (!t.trajectory || t.trajectory.length === 0) return NaN;
+      const targetTime = config.durationFormantTimePoint ?? 50;
+      const nearestTime = findNearestTimePoint(t.trajectory, targetTime);
+      if (nearestTime === undefined) return NaN;
+      const point = t.trajectory.find(p => p.time === nearestTime);
+      if (!point) return NaN;
+      return (point as any)[field] ?? NaN;
+    }
+    // Custom fields
+    const raw = t.fields[field];
     return raw !== undefined ? parseFloat(raw) : NaN;
-  }, [config.durationYField]);
+  }, [config.durationYField, config.durationFormantTimePoint]);
 
   // Y-axis label
   const yAxisLabel = useMemo(() => {
-    if (!config.durationYField || config.durationYField === 'duration') return 'Duration (s)';
-    return config.durationYField.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  }, [config.durationYField]);
+    const field = config.durationYField || 'duration';
+    if (field === 'duration') return 'Duration (s)';
+    if (field === 'xmin') return 'Time (s)';
+    if (FORMANT_VARS.has(field)) {
+      const tp = config.durationFormantTimePoint ?? 50;
+      const name = field.replace('_smooth', ' smooth').toUpperCase().replace(' SMOOTH', ' (smooth)');
+      return `${name} @ ${tp}% (Hz)`;
+    }
+    return field.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }, [config.durationYField, config.durationFormantTimePoint]);
 
   // Hierarchical clustering state
   const clusterBy = config.durationClusterBy;
@@ -1114,14 +1149,17 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     }
   };
 
-  // Tooltip field labels
+  // Tooltip field labels — check datasetMeta first for user-assigned names
   const getFieldLabel = (field: string): string => {
-    if (DURATION_TOOLTIP_LABELS[field]) return DURATION_TOOLTIP_LABELS[field];
-    // Check custom field from datasetMeta
     if (datasetMeta) {
-      const cm = datasetMeta.columnMappings.find(m => m.fieldName === field);
-      if (cm) return cm.originalHeader;
+      for (const m of datasetMeta.columnMappings) {
+        if (m.role === 'speaker' && field === 'speaker') return m.fieldName || m.csvHeader;
+        if (m.role === 'file_id' && field === 'file_id') return m.fieldName || m.csvHeader;
+        if (m.role === 'duration' && field === 'duration') return m.fieldName || 'Duration';
+        if ((m.role === 'field' || m.role === 'pitch') && (m.fieldName === field || m.csvHeader === field)) return m.fieldName || m.csvHeader;
+      }
     }
+    if (DURATION_TOOLTIP_LABELS[field]) return DURATION_TOOLTIP_LABELS[field];
     return field.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   };
 

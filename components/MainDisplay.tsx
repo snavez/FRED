@@ -10,7 +10,7 @@ import PhonemeDistributionPlot from './PhonemeDistributionPlot';
 import Scatter3DPlot from './Scatter3DPlot';
 import StyleEditor from './StyleEditor';
 import ExportDialog from './ExportDialog';
-import { Grid, LineChart, Table, Settings2, MoveUpRight, Printer, Check, Download, BarChart2, PieChart, Box, Waves, ArrowDown, ArrowUp, ArrowUpDown, Eye, EyeOff, Plus, X, ChevronUp, ChevronDown, Layers, MessageSquare } from 'lucide-react';
+import { Grid, LineChart, Table, Settings2, MoveUpRight, Printer, Check, Download, BarChart2, PieChart, Box, Waves, ArrowDown, ArrowUp, ArrowUpDown, Eye, EyeOff, Plus, X, ChevronUp, ChevronDown, Layers, MessageSquare, HelpCircle } from 'lucide-react';
 
 interface MainDisplayProps {
   layers: Layer[];
@@ -36,12 +36,45 @@ const opacityToSlider = (opacity: number) => Math.sqrt(opacity);
 const sliderToOpacity = (slider: number) => slider * slider;
 
 /** Pretty label for a field key */
-const prettyLabel = (key: string): string => {
+const prettyLabel = (key: string, meta?: DatasetMeta | null): string => {
+  // Check datasetMeta for user-assigned display names first
+  if (meta) {
+    for (const m of meta.columnMappings) {
+      if (m.role === 'speaker' && key === 'speaker') return m.fieldName || m.csvHeader;
+      if (m.role === 'file_id' && key === 'file_id') return m.fieldName || m.csvHeader;
+      if (m.role === 'duration' && key === 'duration') return m.fieldName || 'Duration';
+      if ((m.role === 'field' || m.role === 'pitch') && (m.fieldName === key || m.csvHeader === key)) return m.fieldName || m.csvHeader;
+    }
+  }
+  // Fallback defaults
   if (key === 'speaker') return 'Speaker';
   if (key === 'file_id') return 'File ID';
   if (key === 'xmin') return 'Time (xmin)';
   if (key === 'duration') return 'Duration';
   return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+};
+
+/** Help tooltip wrapper — shows amber dot + hover popover when helpMode is active */
+const HelpTooltip: React.FC<{ text: string; helpMode: boolean; children: React.ReactNode }> = ({ text, helpMode, children }) => {
+  const [show, setShow] = useState(false);
+  const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  if (!helpMode) return <>{children}</>;
+  return (
+    <div
+      className="relative inline-flex"
+      onMouseEnter={() => { if (timeoutRef.current) clearTimeout(timeoutRef.current); setShow(true); }}
+      onMouseLeave={() => { timeoutRef.current = setTimeout(() => setShow(false), 150); }}
+    >
+      {children}
+      <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-amber-400 rounded-full border border-white z-10 pointer-events-none" />
+      {show && (
+        <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-amber-50 border border-amber-200 text-amber-900 text-[11px] leading-snug rounded-lg shadow-lg px-3 py-2 z-50 min-w-[180px] max-w-[260px] whitespace-normal pointer-events-none">
+          <div className="absolute top-full left-1/2 -translate-x-1/2 w-2 h-2 bg-amber-50 border-r border-b border-amber-200 rotate-45 -mt-1" />
+          {text}
+        </div>
+      )}
+    </div>
+  );
 };
 
 const MainDisplay: React.FC<MainDisplayProps> = ({
@@ -57,8 +90,9 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   const [editingLayerName, setEditingLayerName] = useState<string | null>(null);
   const [editingNameValue, setEditingNameValue] = useState('');
   const [layerPanelOpen, setLayerPanelOpen] = useState(false);
-  const [showTooltipSettings, setShowTooltipSettings] = useState(false);
-  const [showDurationTooltipSettings, setShowDurationTooltipSettings] = useState(false);
+  const [showPointInfoSettings, setShowPointInfoSettings] = useState(false);
+  const [showDurationPointInfoSettings, setShowDurationPointInfoSettings] = useState(false);
+  const [helpMode, setHelpMode] = useState(false);
 
   // Dynamic variable options: built from datasetMeta column mappings
   const variableOptions = useMemo(() => {
@@ -74,7 +108,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
       else if (m.role === 'field' && m.fieldName) key = m.fieldName;
       if (!key || seen.has(key)) continue;
       seen.add(key);
-      options.push({ label: prettyLabel(key), value: key });
+      options.push({ label: prettyLabel(key, datasetMeta), value: key });
     }
 
     return options;
@@ -94,13 +128,20 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
       // Include pitch-role columns
       if (m.role === 'pitch' && key) {
         seen.add(key);
-        options.push({ label: prettyLabel(key), value: key });
+        options.push({ label: prettyLabel(key, datasetMeta), value: key });
       }
       // Include data fields (isDataField: true) — these are numeric plot values
       if (m.role === 'field' && m.isDataField && key) {
         seen.add(key);
-        options.push({ label: prettyLabel(key), value: key });
+        options.push({ label: prettyLabel(key, datasetMeta), value: key });
       }
+    }
+    // Add formant options
+    for (const f of [
+      { label: 'F1', value: 'f1' }, { label: 'F2', value: 'f2' }, { label: 'F3', value: 'f3' },
+      { label: 'F1 (smooth)', value: 'f1_smooth' }, { label: 'F2 (smooth)', value: 'f2_smooth' }, { label: 'F3 (smooth)', value: 'f3_smooth' },
+    ]) {
+      if (!seen.has(f.value)) { seen.add(f.value); options.push(f); }
     }
     return options;
   }, [datasetMeta]);
@@ -380,22 +421,22 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                  </div>
                )}
 
-               {/* Tooltip Field Selector (F1/F2 & 3D) */}
+               {/* Point Info Field Selector (F1/F2 & 3D) */}
                {(activeTab === 'vowel' || activeTab === '3d') && (
                  <div className="relative">
                    <button
-                     onClick={() => setShowTooltipSettings(!showTooltipSettings)}
-                     className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${showTooltipSettings ? 'bg-sky-50 text-sky-800 border-sky-200 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
-                     title="Configure tooltip fields"
+                     onClick={() => setShowPointInfoSettings(!showPointInfoSettings)}
+                     className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${showPointInfoSettings ? 'bg-sky-50 text-sky-800 border-sky-200 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                     title="Configure point info fields"
                    >
                      <MessageSquare size={14} />
-                     <span>Tooltip</span>
+                     <span>Point Info</span>
                    </button>
-                   {showTooltipSettings && (
+                   {showPointInfoSettings && (
                      <div className="absolute top-full mt-1 right-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 min-w-[220px] p-3">
                        <div className="flex items-center justify-between mb-2 pb-2 border-b border-slate-100">
-                         <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Tooltip Fields</span>
-                         <button onClick={() => setShowTooltipSettings(false)} className="p-0.5 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600">
+                         <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Point Info Fields</span>
+                         <button onClick={() => setShowPointInfoSettings(false)} className="p-0.5 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600">
                            <X size={12} />
                          </button>
                        </div>
@@ -406,13 +447,14 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                            if (datasetMeta) {
                              for (const m of datasetMeta.columnMappings) {
                                let key: string | null = null;
-                               if (m.role === 'speaker') key = 'speaker';
-                               else if (m.role === 'file_id') key = 'file_id';
-                               else if (m.role === 'duration') key = 'duration';
-                               else if ((m.role === 'field' || m.role === 'pitch') && m.fieldName) key = m.fieldName;
+                               // file_id always included; others only if visible in sidebar
+                               if (m.role === 'file_id') key = 'file_id';
+                               else if (m.role === 'speaker' && m.showInSidebar !== false) key = 'speaker';
+                               else if (m.role === 'duration' && m.showInSidebar !== false) key = 'duration';
+                               else if ((m.role === 'field' || m.role === 'pitch') && m.fieldName && m.showInSidebar !== false) key = m.fieldName;
                                if (!key || seen.has(key)) continue;
                                seen.add(key);
-                               allFields.push({ key, label: prettyLabel(key) });
+                               allFields.push({ key, label: prettyLabel(key, datasetMeta) });
                              }
                            }
                            const selected = currentConfig.tooltipFields || [];
@@ -450,22 +492,22 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                  </div>
                )}
 
-               {/* Tooltip Field Selector (Duration) */}
+               {/* Point Info Field Selector (Duration) */}
                {activeTab === 'duration' && (
                  <div className="relative">
                    <button
-                     onClick={() => setShowDurationTooltipSettings(!showDurationTooltipSettings)}
-                     className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${showDurationTooltipSettings ? 'bg-sky-50 text-sky-800 border-sky-200 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
-                     title="Configure duration tooltip fields"
+                     onClick={() => setShowDurationPointInfoSettings(!showDurationPointInfoSettings)}
+                     className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${showDurationPointInfoSettings ? 'bg-sky-50 text-sky-800 border-sky-200 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                     title="Configure point info fields"
                    >
                      <MessageSquare size={14} />
-                     <span>Tooltip</span>
+                     <span>Point Info</span>
                    </button>
-                   {showDurationTooltipSettings && (
+                   {showDurationPointInfoSettings && (
                      <div className="absolute top-full mt-1 right-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 min-w-[220px] p-3">
                        <div className="flex items-center justify-between mb-2 pb-2 border-b border-slate-100">
-                         <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Duration Tooltip Fields</span>
-                         <button onClick={() => setShowDurationTooltipSettings(false)} className="p-0.5 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600">
+                         <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Point Info Fields</span>
+                         <button onClick={() => setShowDurationPointInfoSettings(false)} className="p-0.5 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600">
                            <X size={12} />
                          </button>
                        </div>
@@ -476,13 +518,14 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                            if (datasetMeta) {
                              for (const m of datasetMeta.columnMappings) {
                                let key: string | null = null;
-                               if (m.role === 'speaker') key = 'speaker';
-                               else if (m.role === 'file_id') key = 'file_id';
-                               else if (m.role === 'duration') key = 'duration';
-                               else if ((m.role === 'field' || m.role === 'pitch') && m.fieldName) key = m.fieldName;
+                               // file_id always included; others only if visible in sidebar
+                               if (m.role === 'file_id') key = 'file_id';
+                               else if (m.role === 'speaker' && m.showInSidebar !== false) key = 'speaker';
+                               else if (m.role === 'duration' && m.showInSidebar !== false) key = 'duration';
+                               else if ((m.role === 'field' || m.role === 'pitch') && m.fieldName && m.showInSidebar !== false) key = m.fieldName;
                                if (!key || seen.has(key)) continue;
                                seen.add(key);
-                               allFields.push({ key, label: prettyLabel(key) });
+                               allFields.push({ key, label: prettyLabel(key, datasetMeta) });
                              }
                            }
                            const selected = currentConfig.durationTooltipFields || ['file_id', 'duration'];
@@ -520,6 +563,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                  </div>
                )}
 
+               <button onClick={() => setHelpMode(!helpMode)} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${helpMode ? 'bg-amber-50 text-amber-800 border-amber-300 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`} title="Toggle help tooltips on controls"><HelpCircle size={14} /><span>Help</span></button>
                <button onClick={handleExportClick} className="flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all bg-white text-sky-700 border-sky-200 hover:bg-sky-50"><Download size={14} /><span>Export</span></button>
                <button onClick={() => handleConfig('bwMode', !currentConfig.bwMode)} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-xs font-bold border transition-all ${currentConfig.bwMode ? 'bg-slate-800 text-white border-slate-800 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}><Printer size={14} /><span>B&W</span></button>
              </div>
@@ -544,6 +588,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
                   {/* Data variant */}
                   {datasetMeta?.formantVariants && datasetMeta.formantVariants.length >= 2 && (
+                    <HelpTooltip helpMode={helpMode} text="Switch between raw and smoothed formant data. Smoothed values reduce measurement noise from the acoustic analysis.">
                     <div className="flex items-center gap-1.5 mr-2">
                       <span className="font-semibold text-slate-600 flex items-center gap-1"><Waves size={12} />Data:</span>
                       <select
@@ -557,9 +602,11 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         ))}
                       </select>
                     </div>
+                    </HelpTooltip>
                   )}
 
                   {/* Scale */}
+                  <HelpTooltip helpMode={helpMode} text="Formant frequency scale. Hz = raw values. Bark/ERB/Mel = psychoacoustic scales. Lobanov/Nearey = speaker-normalised (requires Speaker ID).">
                   <div className="flex items-center gap-1.5 mr-2">
                     <span className="font-semibold text-slate-600 flex items-center gap-1"><ArrowUpDown size={12} />Scale:</span>
                     <select
@@ -576,6 +623,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       <option value="nearey1">Nearey 1</option>
                     </select>
                   </div>
+                  </HelpTooltip>
 
                   {/* Axis ranges */}
                   <div className="flex items-center gap-2 border-r border-slate-300 pr-4 mr-2">
@@ -617,6 +665,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   </div>
 
                   {/* Mode */}
+                  <HelpTooltip helpMode={helpMode} text="Point mode plots individual tokens at a single timepoint. Trajectory mode draws formant movement lines across time.">
                   <div className="flex items-center gap-1.5">
                     <label className="font-semibold text-slate-600">Mode:</label>
                     <select
@@ -640,6 +689,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       <option value="trajectory">Trajectory</option>
                     </select>
                   </div>
+                  </HelpTooltip>
 
                   {/* Time / Range */}
                   {currentConfig.plotType !== 'trajectory' ? (
@@ -878,6 +928,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
                 {/* Mode toggle (dist tab) */}
                 {activeTab === 'dist' && (
+                  <HelpTooltip helpMode={helpMode} text="Counts = categorical bar chart of token frequencies. Distribution = continuous histogram of a numeric variable (duration, formants, etc.).">
                   <div className="flex items-center gap-1.5">
                     <label className="font-semibold text-slate-600">Mode:</label>
                     <select
@@ -889,6 +940,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       <option value="histogram">Distribution</option>
                     </select>
                   </div>
+                  </HelpTooltip>
                 )}
 
                 {/* Data variant (traj tabs) */}
@@ -984,12 +1036,24 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   )}
                   {activeTab === 'duration' && (
                     <>
+                      <HelpTooltip helpMode={helpMode} text="Choose the variable for the Y-axis. Duration is the default. You can also plot formant values (F1/F2/F3) or other numeric fields from your dataset.">
                       <div className="flex items-center gap-2">
                         <label className="font-semibold text-slate-600">Y-Axis:</label>
                         <select className="p-0.5 border rounded text-[10px]" value={currentConfig.durationYField || 'duration'} onChange={e => handleConfig('durationYField', e.target.value)}>
                           {numericVariableOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                         </select>
                       </div>
+                      </HelpTooltip>
+                      {['f1','f2','f3','f1_smooth','f2_smooth','f3_smooth'].includes(currentConfig.durationYField || '') && (
+                        <div className="flex flex-col justify-center">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Time</span>
+                          <select className="p-0.5 border rounded text-[10px]"
+                            value={currentConfig.durationFormantTimePoint ?? 50}
+                            onChange={e => handleConfig('durationFormantTimePoint', parseInt(e.target.value))}>
+                            {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                          </select>
+                        </div>
+                      )}
                       <div className="flex flex-col justify-center">
                         <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Max Value</span>
                         <input type="number" step="0.1" className="w-14 p-0.5 border rounded text-[10px]" value={bgConfig.durationRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'durationRange', [0, parseFloat(e.target.value)])} />
@@ -1007,6 +1071,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 {/* Duration Row 1 continued: Whiskers, Centre, Order */}
                 {activeTab === 'duration' && (
                   <>
+                    <HelpTooltip helpMode={helpMode} text="Controls how far whisker lines extend. IQR = 1.5× interquartile range (outliers shown separately). Range = full min-to-max span.">
                     <div className="flex flex-col justify-center">
                       <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Whiskers</span>
                       <div className="flex rounded border border-slate-300 overflow-hidden">
@@ -1020,7 +1085,9 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         >Range</button>
                       </div>
                     </div>
+                    </HelpTooltip>
 
+                    <HelpTooltip helpMode={helpMode} text="The thick line inside the box. Median = middle value (robust to outliers). Mean = arithmetic average.">
                     <div className="flex flex-col justify-center">
                       <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Centre</span>
                       <div className="flex rounded border border-slate-300 overflow-hidden">
@@ -1034,7 +1101,9 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         >Mean</button>
                       </div>
                     </div>
+                    </HelpTooltip>
 
+                    <HelpTooltip helpMode={helpMode} text="Box ordering on X-axis. Alpha = alphabetical. Central = sorted by median/mean centrality. Arrow toggles ascending/descending.">
                     <div className="flex flex-col justify-center">
                       <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Order</span>
                       <div className="flex items-center gap-1">
@@ -1057,6 +1126,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         </button>
                       </div>
                     </div>
+                    </HelpTooltip>
                   </>
                 )}
 
@@ -1262,6 +1332,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     <div className="h-6 w-px bg-slate-300"></div>
 
                     {/* Bar Width & Gap Controls */}
+                    <HelpTooltip helpMode={helpMode} text="W = bar width in pixels (0 = auto). GG = gap between groups in pixels (0 = auto). BG = gap between bars within a group (0 = auto).">
                     <div className="flex flex-col gap-0.5">
                       <span className="text-[9px] font-bold text-slate-500 uppercase">Layout</span>
                       <div className="flex items-center gap-2">
@@ -1279,6 +1350,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         </div>
                       </div>
                     </div>
+                    </HelpTooltip>
                 </div>
             )}
 
@@ -1509,6 +1581,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 <div className="w-px h-6 bg-slate-200"></div>
 
                 {/* Show Toggles — heading above checkboxes */}
+                <HelpTooltip helpMode={helpMode} text="Toggle visibility of box plot elements. Quartiles = Q1-Q3 box. Outliers = points beyond 1.5×IQR (only in IQR whisker mode). Points = raw data jittered on the plot.">
                 <div className="flex flex-col">
                   <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Show</span>
                   <div className="flex items-center gap-2">
@@ -1536,10 +1609,12 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     )}
                   </div>
                 </div>
+                </HelpTooltip>
 
                 <div className="w-px h-6 bg-slate-200"></div>
 
                 {/* Box Width & Gap Controls */}
+                <HelpTooltip helpMode={helpMode} text="W = box width in pixels (0 = auto). GG = gap between clusters (slot units). BG = gap between boxes within a cluster.">
                 <div className="flex flex-col">
                   <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Layout</span>
                   <div className="flex items-center gap-2">
@@ -1557,6 +1632,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     </div>
                   </div>
                 </div>
+                </HelpTooltip>
               </div>
             )}
 
@@ -1644,7 +1720,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                } else if (m.role === 'field' && m.fieldName && !seen.has(m.fieldName)) {
                  const fn = m.fieldName;
                  seen.add(fn);
-                 tableCols.push({ key: fn, label: prettyLabel(fn), accessor: t => t.fields[fn] ?? '' });
+                 tableCols.push({ key: fn, label: prettyLabel(fn, datasetMeta), accessor: t => t.fields[fn] ?? '' });
                }
              }
            }
@@ -1714,8 +1790,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
       />
 
       {/* Close dropdowns on click outside */}
-      {(showAddMenu || layerPanelOpen || showTooltipSettings || showDurationTooltipSettings) && (
-        <div className="fixed inset-0 z-40" onClick={() => { setShowAddMenu(false); setLayerPanelOpen(false); setShowTooltipSettings(false); setShowDurationTooltipSettings(false); }}></div>
+      {(showAddMenu || layerPanelOpen || showPointInfoSettings || showDurationPointInfoSettings) && (
+        <div className="fixed inset-0 z-40" onClick={() => { setShowAddMenu(false); setLayerPanelOpen(false); setShowPointInfoSettings(false); setShowDurationPointInfoSettings(false); }}></div>
       )}
     </div>
   );

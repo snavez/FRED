@@ -98,8 +98,16 @@ const LINE_TYPE_PATTERNS: Record<string, number[]> = {
 };
 const DEFAULT_LINE_TYPE_NAMES = ['solid', 'dash', 'dot', 'longdash', 'dotdash'];
 
-// Tooltip field label lookup (pretty label for any key)
-const tooltipLabel = (key: string): string => {
+// Tooltip field label lookup (pretty label for any key, with optional datasetMeta)
+const tooltipLabel = (key: string, meta?: DatasetMeta | null): string => {
+  if (meta) {
+    for (const m of meta.columnMappings) {
+      if (m.role === 'speaker' && key === 'speaker') return m.fieldName || m.csvHeader;
+      if (m.role === 'file_id' && key === 'file_id') return m.fieldName || m.csvHeader;
+      if (m.role === 'duration' && key === 'duration') return m.fieldName || 'Duration';
+      if ((m.role === 'field' || m.role === 'pitch') && (m.fieldName === key || m.csvHeader === key)) return m.fieldName || m.csvHeader;
+    }
+  }
   if (key === 'speaker') return 'Speaker';
   if (key === 'file_id') return 'File ID';
   if (key === 'xmin') return 'Time (xmin)';
@@ -1234,7 +1242,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
             </div>
           );
         }
-        const getFieldLabel = (key: string) => tooltipLabel(key);
+        const getFieldLabel = (key: string) => tooltipLabel(key, datasetMeta);
         const [firstField, ...restFields] = fields;
         return (
           <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-16 top-16 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]">

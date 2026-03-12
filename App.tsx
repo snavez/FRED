@@ -60,6 +60,7 @@ const INITIAL_CONFIG: PlotConfig = {
   showOutliers: true,
   showDurationPoints: false,
   durationYField: 'duration',
+  durationFormantTimePoint: 50,
   durationPlotBy: 'none',
   durationClusterBy: 'none',
   durationWhiskerMode: 'iqr',

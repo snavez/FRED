@@ -30,6 +30,8 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
   const [mappings, setMappings] = useState<ColumnMapping[]>(detectedMappings);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [sidebarHelpRect, setSidebarHelpRect] = useState<DOMRect | null>(null);
+  const [speakerHelpRect, setSpeakerHelpRect] = useState<DOMRect | null>(null);
+  const [fileIdHelpRect, setFileIdHelpRect] = useState<DOMRect | null>(null);
 
   // Reset mappings when dialog opens with new data
   React.useEffect(() => {
@@ -124,7 +126,10 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
         <div className="px-5 pt-4 pb-3 border-b border-slate-100 bg-slate-50/50 shrink-0">
           <div className="flex gap-6">
             <div className="flex items-center gap-2">
-              <label className="text-[11px] font-bold text-slate-600 whitespace-nowrap">Speaker ID:</label>
+              <label className="text-xs font-bold text-slate-600 whitespace-nowrap cursor-help border-b border-dashed border-slate-300"
+                onMouseEnter={e => setSpeakerHelpRect(e.currentTarget.getBoundingClientRect())}
+                onMouseLeave={() => setSpeakerHelpRect(null)}
+              >Speaker ID:</label>
               <select
                 className="text-xs p-1.5 border border-slate-200 rounded bg-white min-w-[160px]"
                 value={speakerCol}
@@ -149,7 +154,10 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
               </select>
             </div>
             <div className="flex items-center gap-2">
-              <label className="text-[11px] font-bold text-slate-600 whitespace-nowrap">File ID:</label>
+              <label className="text-xs font-bold text-slate-600 whitespace-nowrap cursor-help border-b border-dashed border-slate-300"
+                onMouseEnter={e => setFileIdHelpRect(e.currentTarget.getBoundingClientRect())}
+                onMouseLeave={() => setFileIdHelpRect(null)}
+              >File ID:</label>
               <select
                 className="text-xs p-1.5 border border-slate-200 rounded bg-white min-w-[160px]"
                 value={fileIdCol}
@@ -174,23 +182,19 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
               </select>
             </div>
           </div>
-          <p className="text-[10px] text-slate-500 mt-2 leading-relaxed">
-            <span className="font-semibold">Speaker ID</span> is used for speaker normalisation (Lobanov, Nearey).
-            <br />
-            <span className="font-semibold">File ID</span> helps you identify and track down outlying tokens.
-            <br />
-            You can set either to &ldquo;None&rdquo;, but you will miss out on this functionality.
+          <p className="text-[11px] text-slate-500 mt-2 leading-relaxed">
+            Both can be None, or point at the same CSV column. Hover over the labels above for more info.
           </p>
         </div>
 
         {/* Filter vs Data explanation */}
         <div className="mx-5 mt-3 mb-1 p-3 bg-amber-50/60 border border-amber-100 rounded-lg shrink-0">
-          <p className="text-[10px] text-amber-900 leading-relaxed">
+          <p className="text-[11px] text-amber-900 leading-relaxed">
             <span className="font-bold">Filter fields</span> contain categorical labels for filtering your data (e.g. phoneme, stress, gender, speaker). They can appear in the sidebar for interactive filtering.
             <br />
             <span className="font-bold">Data fields</span> contain values to be plotted (e.g. formant measurements, duration). Data fields are not available as sidebar filters.
           </p>
-          <p className="text-[10px] text-amber-800/70 mt-1 italic">
+          <p className="text-[11px] text-amber-800/70 mt-1 italic">
             Toggle any field between filter and data below. Sidebar visibility can also be changed after import.
           </p>
         </div>
@@ -200,12 +204,12 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-white z-10">
               <tr className="border-b border-slate-200">
-                <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2 w-36">CSV Column</th>
-                <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2 w-40">Sample Values</th>
-                <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2 w-36">Map To</th>
-                <th className="text-left text-[10px] font-bold text-slate-400 uppercase py-2">Field Name</th>
-                <th className="text-center text-[10px] font-bold text-slate-400 uppercase py-2 w-24">Type</th>
-                <th className="text-center text-[10px] font-bold text-slate-400 uppercase py-2 w-16">
+                <th className="text-left text-[11px] font-bold text-slate-400 uppercase py-2 w-36">CSV Column</th>
+                <th className="text-left text-[11px] font-bold text-slate-400 uppercase py-2 w-40">Sample Values</th>
+                <th className="text-left text-[11px] font-bold text-slate-400 uppercase py-2 w-36">Map To</th>
+                <th className="text-left text-[11px] font-bold text-slate-400 uppercase py-2">Field Name</th>
+                <th className="text-center text-[11px] font-bold text-slate-400 uppercase py-2 w-24">Type</th>
+                <th className="text-center text-[11px] font-bold text-slate-400 uppercase py-2 w-16">
                   <span
                     className="cursor-help border-b border-dashed border-slate-300"
                     onMouseEnter={e => setSidebarHelpRect(e.currentTarget.getBoundingClientRect())}
@@ -229,7 +233,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                     <td className="py-2 pr-2">
                       <div className="flex flex-wrap gap-1">
                         {samples.map((s, i) => (
-                          <span key={i} className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 truncate max-w-[70px]">{s}</span>
+                          <span key={i} className="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 truncate max-w-[70px]">{s}</span>
                         ))}
                       </div>
                     </td>
@@ -301,7 +305,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                             <option value="f2">F2</option>
                             <option value="f3">F3</option>
                           </select>
-                          <span className="text-[10px] text-slate-400">@</span>
+                          <span className="text-[11px] text-slate-400">@</span>
                           <input
                             type="number"
                             className="text-xs p-1 border border-slate-200 rounded w-14"
@@ -310,9 +314,9 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                             min={0}
                             max={100}
                           />
-                          <span className="text-[10px] text-slate-400">%</span>
+                          <span className="text-[11px] text-slate-400">%</span>
                           {m.formantLabel && (
-                            <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">{m.formantLabel}</span>
+                            <span className="text-[11px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">{m.formantLabel}</span>
                           )}
                         </div>
                       )}
@@ -328,7 +332,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                         </div>
                       )}
                       {(m.role === 'speaker' || m.role === 'file_id' || m.role === 'duration') && (
-                        <span className="text-[10px] text-slate-400 italic">auto-detected</span>
+                        <span className="text-[11px] text-slate-400 italic">auto-detected</span>
                       )}
                     </td>
                     {/* Type: Filter / Data toggle */}
@@ -337,14 +341,14 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                         <div className="flex items-center justify-center gap-1">
                           <button
                             onClick={() => updateMapping(idx, { isDataField: false, showInSidebar: true })}
-                            className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${!isData ? 'bg-sky-100 border-sky-300 text-sky-700 font-bold' : 'border-slate-200 text-slate-400 hover:border-slate-300'}`}
+                            className={`text-[11px] px-1.5 py-0.5 rounded border transition-colors ${!isData ? 'bg-sky-100 border-sky-300 text-sky-700 font-bold' : 'border-slate-200 text-slate-400 hover:border-slate-300'}`}
                             title="Filter field: categorical labels for filtering data"
                           >
                             Filter
                           </button>
                           <button
                             onClick={() => updateMapping(idx, { isDataField: true, showInSidebar: false })}
-                            className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${isData ? 'bg-amber-100 border-amber-300 text-amber-700 font-bold' : 'border-slate-200 text-slate-400 hover:border-slate-300'}`}
+                            className={`text-[11px] px-1.5 py-0.5 rounded border transition-colors ${isData ? 'bg-amber-100 border-amber-300 text-amber-700 font-bold' : 'border-slate-200 text-slate-400 hover:border-slate-300'}`}
                             title="Data field: numeric values to be plotted"
                           >
                             Data
@@ -400,13 +404,29 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
           </button>
         </div>
 
-        {/* Fixed-position tooltip for Sidebar help */}
+        {/* Fixed-position tooltips */}
         {sidebarHelpRect && (
           <div
-            className="fixed w-48 bg-slate-800 text-white text-[10px] font-normal normal-case tracking-normal p-2 rounded-lg shadow-lg z-[200] leading-relaxed pointer-events-none"
+            className="fixed w-48 bg-slate-800 text-white text-[11px] font-normal normal-case tracking-normal p-2 rounded-lg shadow-lg z-[200] leading-relaxed pointer-events-none"
             style={{ top: sidebarHelpRect.bottom + 4, left: sidebarHelpRect.left + sidebarHelpRect.width / 2 - 96 }}
           >
             Tick to show this field as a filter in the sidebar. Can be changed after import.
+          </div>
+        )}
+        {speakerHelpRect && (
+          <div
+            className="fixed w-56 bg-slate-800 text-white text-[11px] font-normal normal-case tracking-normal p-2 rounded-lg shadow-lg z-[200] leading-relaxed pointer-events-none"
+            style={{ top: speakerHelpRect.bottom + 4, left: speakerHelpRect.left + speakerHelpRect.width / 2 - 112 }}
+          >
+            Used for speaker normalisation (Lobanov, Nearey). If no Speaker ID is specified, normalisation functionality will not be accessible.
+          </div>
+        )}
+        {fileIdHelpRect && (
+          <div
+            className="fixed w-56 bg-slate-800 text-white text-[11px] font-normal normal-case tracking-normal p-2 rounded-lg shadow-lg z-[200] leading-relaxed pointer-events-none"
+            style={{ top: fileIdHelpRect.bottom + 4, left: fileIdHelpRect.left + fileIdHelpRect.width / 2 - 112 }}
+          >
+            The audio filename helps you identify and trace individual tokens back to their source recording. Useful for tracking down outliers.
           </div>
         )}
       </div>
