@@ -1234,22 +1234,30 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
       {hoveredToken && (
         <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]"
           style={{ left: mousePos.x + 16, top: mousePos.y - 16 }}>
-          {tooltipFields.length > 0 && (() => {
-            const firstField = tooltipFields[0];
-            const firstVal = getTooltipValue(hoveredToken, firstField, getValue);
-            return firstVal ? (
-              <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-sky-400">{getFieldLabel(firstField)}: {firstVal}</div>
-            ) : null;
+          {(() => {
+            // Use file_id as the heading if selected; otherwise no heading
+            const headingField = tooltipFields.includes('file_id') ? 'file_id' : null;
+            const bodyFields = headingField ? tooltipFields.filter(f => f !== headingField) : tooltipFields;
+            return (
+              <>
+                {headingField && (() => {
+                  const val = getTooltipValue(hoveredToken, headingField, getValue);
+                  return val ? (
+                    <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-sky-400">{val}</div>
+                  ) : null;
+                })()}
+                <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                  {bodyFields.map(field => {
+                    const val = getTooltipValue(hoveredToken, field, getValue);
+                    if (!val) return null;
+                    return (
+                      <p key={field}><span className="text-slate-400 font-bold uppercase text-[9px]">{getFieldLabel(field)}:</span> {val}</p>
+                    );
+                  })}
+                </div>
+              </>
+            );
           })()}
-          <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-            {tooltipFields.slice(1).map(field => {
-              const val = getTooltipValue(hoveredToken, field, getValue);
-              if (!val) return null;
-              return (
-                <p key={field}><span className="text-slate-400 font-bold uppercase text-[9px]">{getFieldLabel(field)}:</span> {val}</p>
-              );
-            })}
-          </div>
         </div>
       )}
     </div>

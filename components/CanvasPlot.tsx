@@ -1238,21 +1238,23 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         if (fields.length === 0) {
           return (
             <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-16 top-16 border border-slate-700 backdrop-blur-md min-w-[200px]">
-              <p className="text-slate-400 italic text-center">Select fields from the <span className="text-sky-400 font-bold">Tooltip</span> dropdown to see token data here.</p>
+              <p className="text-slate-400 italic text-center">Select fields from the <span className="text-sky-400 font-bold">Point Info</span> dropdown to see token data here.</p>
             </div>
           );
         }
         const getFieldLabel = (key: string) => tooltipLabel(key, datasetMeta);
-        const [firstField, ...restFields] = fields;
+        // Use file_id as the heading if selected; otherwise no heading
+        const headingField = fields.includes('file_id') ? 'file_id' : null;
+        const bodyFields = headingField ? fields.filter(f => f !== headingField) : fields;
         return (
           <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-16 top-16 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]">
-            {firstField && (
+            {headingField && (
               <div className="border-b border-slate-700 pb-1 mb-1 font-bold text-sky-400">
-                {getFieldLabel(firstField)}: {getTooltipValue(hoveredToken, firstField)}
+                {getTooltipValue(hoveredToken, headingField)}
               </div>
             )}
             <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-              {restFields.map(field => (
+              {bodyFields.map(field => (
                 <p key={field}><span className="text-slate-400 font-bold uppercase text-[9px]">{getFieldLabel(field)}:</span> {getTooltipValue(hoveredToken, field)}</p>
               ))}
             </div>
