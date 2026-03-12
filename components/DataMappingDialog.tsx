@@ -24,10 +24,10 @@ const ROLE_OPTIONS: { value: ColumnRole, label: string }[] = [
   { value: 'ignore', label: 'Ignore' },
 ];
 
-// These names are used as built-in properties on SpeechToken with hardcoded
-// accessors throughout the app. A custom field using one of these names will
-// collide and produce broken/empty results.
-const RESERVED_FIELD_NAMES = new Set(['duration', 'speaker', 'file_id', 'xmin']);
+// These names have hardcoded property accessors in filtering (App.tsx) and
+// sidebar display (Sidebar.tsx). A custom field using one of these names will
+// collide and produce blank plots / broken filters.
+const RESERVED_FIELD_NAMES = new Set(['duration', 'speaker', 'file_id']);
 
 const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
   isOpen, onClose, onConfirm, headers, sampleData, detectedMappings, fileName, isEditMode
