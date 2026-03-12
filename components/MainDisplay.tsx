@@ -54,13 +54,30 @@ const prettyLabel = (key: string, meta?: DatasetMeta | null): string => {
   return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 };
 
-/** Help tooltip wrapper — shows amber dot + hover popover when helpMode is active */
+/** Help tooltip wrapper — shows amber dot + hover popover when helpMode is active.
+ *  Uses fixed positioning so the popover escapes overflow:hidden containers. */
 const HelpTooltip: React.FC<{ text: string; helpMode: boolean; children: React.ReactNode }> = ({ text, helpMode, children }) => {
   const [show, setShow] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   if (!helpMode) return <>{children}</>;
+
+  // Compute fixed position from wrapper bounding rect
+  const getStyle = (): React.CSSProperties => {
+    if (!wrapRef.current) return { display: 'none' };
+    const r = wrapRef.current.getBoundingClientRect();
+    return {
+      position: 'fixed',
+      left: r.left + r.width / 2,
+      top: r.top - 8, // 8px gap above the wrapper
+      transform: 'translate(-50%, -100%)',
+      zIndex: 9999,
+    };
+  };
+
   return (
     <div
+      ref={wrapRef}
       className="relative inline-flex"
       onMouseEnter={() => { if (timeoutRef.current) clearTimeout(timeoutRef.current); setShow(true); }}
       onMouseLeave={() => { timeoutRef.current = setTimeout(() => setShow(false), 150); }}
@@ -68,7 +85,10 @@ const HelpTooltip: React.FC<{ text: string; helpMode: boolean; children: React.R
       {children}
       <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-amber-400 rounded-full border border-white z-10 pointer-events-none" />
       {show && (
-        <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-amber-50 border border-amber-200 text-amber-900 text-[11px] leading-snug rounded-lg shadow-lg px-3 py-2 z-50 min-w-[180px] max-w-[260px] whitespace-normal pointer-events-none">
+        <div
+          style={getStyle()}
+          className="bg-amber-50 border border-amber-200 text-amber-900 text-[11px] leading-snug rounded-lg shadow-lg px-3 py-2 min-w-[180px] max-w-[260px] whitespace-normal pointer-events-none"
+        >
           <div className="absolute top-full left-1/2 -translate-x-1/2 w-2 h-2 bg-amber-50 border-r border-b border-amber-200 rotate-45 -mt-1" />
           {text}
         </div>
