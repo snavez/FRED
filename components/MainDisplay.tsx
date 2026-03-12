@@ -1151,228 +1151,127 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   </>
                 )}
 
-                {/* General Visualization Controls (non-duration, non-traj_series) */}
-                {activeTab !== 'duration' && activeTab !== 'traj_series' && !(activeTab === 'dist' && currentConfig.distMode === 'histogram') && (
+                {/* General Visualization Controls (non-duration, non-traj_series, non-dist) */}
+                {activeTab !== 'duration' && activeTab !== 'traj_series' && activeTab !== 'dist' && (
                   renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))
                 )}
 
-                {activeTab === 'dist' && currentConfig.distMode !== 'histogram' && (
-                  renderVariableSelect('Texture By', currentConfig.textureBy, v => handleConfig('textureBy', v))
-                )}
-
-                {activeTab !== 'traj_series' && activeTab !== 'duration' && !(activeTab === 'dist' && currentConfig.distMode === 'histogram') && (
+                {activeTab !== 'traj_series' && activeTab !== 'duration' && activeTab !== 'dist' && (
                   <div className="h-6 w-px bg-slate-300"></div>
                 )}
 
-            {/* Distribution: Histogram mode controls */}
+            {/* Distribution: Histogram mode Row 1 — X Variable, Time, Y-Axis */}
             {activeTab === 'dist' && currentConfig.distMode === 'histogram' && (
-                <div className="flex items-center gap-4">
-                    {/* X Variable */}
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-[9px] font-bold text-slate-500 uppercase">X Variable</span>
-                      <select className="p-1 border border-slate-300 rounded text-[10px]"
-                        value={currentConfig.distHistXVar || 'duration'}
-                        onChange={e => handleConfig('distHistXVar', e.target.value)}>
-                        {[...numericVariableOptions,
-                          { label: 'F1', value: 'f1' },
-                          { label: 'F2', value: 'f2' },
-                          { label: 'F3', value: 'f3' },
-                          { label: 'F1 (smooth)', value: 'f1_smooth' },
-                          { label: 'F2 (smooth)', value: 'f2_smooth' },
-                          { label: 'F3 (smooth)', value: 'f3_smooth' },
-                        ].map(opt => (
-                          <option key={opt.value} value={opt.value}>{opt.label}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Time point selector (only for formant variables) */}
-                    {['f1','f2','f3','f1_smooth','f2_smooth','f3_smooth'].includes(currentConfig.distHistXVar || '') && (
+                <>
+                    <div className="h-6 w-px bg-slate-300"></div>
+                    <div className="flex items-center gap-4">
+                      {/* X Variable */}
                       <div className="flex flex-col gap-0.5">
-                        <span className="text-[9px] font-bold text-slate-500 uppercase">Time</span>
+                        <span className="text-[9px] font-bold text-slate-500 uppercase">X Variable</span>
                         <select className="p-1 border border-slate-300 rounded text-[10px]"
-                          value={currentConfig.distHistTimePoint ?? 50}
-                          onChange={e => handleConfig('distHistTimePoint', parseInt(e.target.value))}>
-                          {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                          value={currentConfig.distHistXVar || 'duration'}
+                          onChange={e => handleConfig('distHistXVar', e.target.value)}>
+                          {[...numericVariableOptions,
+                            { label: 'F1', value: 'f1' },
+                            { label: 'F2', value: 'f2' },
+                            { label: 'F3', value: 'f3' },
+                            { label: 'F1 (smooth)', value: 'f1_smooth' },
+                            { label: 'F2 (smooth)', value: 'f2_smooth' },
+                            { label: 'F3 (smooth)', value: 'f3_smooth' },
+                          ].map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
                         </select>
                       </div>
-                    )}
 
-                    {/* Bins */}
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-[9px] font-bold text-slate-500 uppercase">Bins</span>
-                      <input type="number" min="5" max="200" step="1"
-                        className="w-12 p-0.5 border rounded text-[10px]"
-                        value={currentConfig.distHistBinCount || 30}
-                        onChange={e => handleConfig('distHistBinCount', Math.max(1, parseInt(e.target.value) || 30))} />
-                    </div>
+                      {/* Time point selector (only for formant variables) */}
+                      {['f1','f2','f3','f1_smooth','f2_smooth','f3_smooth'].includes(currentConfig.distHistXVar || '') && (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase">Time</span>
+                          <select className="p-1 border border-slate-300 rounded text-[10px]"
+                            value={currentConfig.distHistTimePoint ?? 50}
+                            onChange={e => handleConfig('distHistTimePoint', parseInt(e.target.value))}>
+                            {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                          </select>
+                        </div>
+                      )}
 
-                    <div className="h-6 w-px bg-slate-300"></div>
-
-                    {/* Colour By */}
-                    {renderVariableSelect('Colour', currentConfig.distHistColorBy || 'none', v => handleConfig('distHistColorBy', v))}
-
-                    {/* Overlap mode (only when colouring) */}
-                    {currentConfig.distHistColorBy && currentConfig.distHistColorBy !== 'none' && (
+                      {/* Y Mode */}
                       <div className="flex flex-col gap-0.5">
-                        <span className="text-[9px] font-bold text-slate-500 uppercase">Overlap</span>
+                        <span className="text-[9px] font-bold text-slate-500 uppercase">Y-Axis</span>
                         <select className="p-1 border border-slate-300 rounded text-[10px]"
-                          value={currentConfig.distHistOverlap || 'stacked'}
-                          onChange={e => handleConfig('distHistOverlap', e.target.value)}>
-                          <option value="stacked">Stacked</option>
-                          <option value="overlaid">Overlaid</option>
+                          value={currentConfig.distHistYMode || 'count'}
+                          onChange={e => handleConfig('distHistYMode', e.target.value)}>
+                          <option value="count">Count</option>
+                          <option value="density">Density</option>
                         </select>
                       </div>
-                    )}
-
-                    {/* Opacity slider (overlaid only) */}
-                    {currentConfig.distHistColorBy && currentConfig.distHistColorBy !== 'none' && currentConfig.distHistOverlap === 'overlaid' && (
-                      <div className="flex items-center gap-1">
-                        <span className="text-[9px] text-slate-500">Opacity</span>
-                        <input type="range" min="0.1" max="1" step="0.05"
-                          value={currentConfig.distHistOpacity ?? 0.6}
-                          onChange={e => handleConfig('distHistOpacity', parseFloat(e.target.value))}
-                          className="w-16 h-1 accent-slate-600" />
-                      </div>
-                    )}
-
-                    <div className="h-6 w-px bg-slate-300"></div>
-
-                    {/* Y Mode */}
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-[9px] font-bold text-slate-500 uppercase">Y-Axis</span>
-                      <select className="p-1 border border-slate-300 rounded text-[10px]"
-                        value={currentConfig.distHistYMode || 'count'}
-                        onChange={e => handleConfig('distHistYMode', e.target.value)}>
-                        <option value="count">Count</option>
-                        <option value="density">Density</option>
-                      </select>
                     </div>
-                </div>
+                </>
             )}
 
-            {/* Distribution Specific Ordering Controls (Counts mode) */}
+            {/* Distribution Counts: ordering controls in Row 1 */}
             {activeTab === 'dist' && currentConfig.distMode !== 'histogram' && (
-                <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-1">
-                         <div className="flex flex-col gap-0.5">
-                             <span className="text-[9px] font-bold text-slate-500 uppercase">Group Order</span>
-                             <div className="flex items-center gap-1">
-                                 <select
-                                    className="p-1 border border-slate-300 rounded text-[10px]"
-                                    value={currentConfig.distGroupOrder}
-                                    onChange={e => handleConfig('distGroupOrder', e.target.value)}
-                                 >
-                                     <option value="count">Count</option>
-                                     <option value="alpha">Alpha</option>
-                                 </select>
-                                 <button
-                                    onClick={() => handleConfig('distGroupDir', currentConfig.distGroupDir === 'asc' ? 'desc' : 'asc')}
-                                    className="p-1 border border-slate-300 rounded bg-white hover:bg-slate-50 text-slate-600"
-                                    title={currentConfig.distGroupDir === 'asc' ? 'Ascending' : 'Descending'}
-                                 >
-                                     {currentConfig.distGroupDir === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>}
-                                 </button>
-                             </div>
-                         </div>
+                <>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Group Order</span>
+                      <div className="flex items-center gap-1">
+                        <select className="p-1 border border-slate-300 rounded text-[10px]" value={currentConfig.distGroupOrder} onChange={e => handleConfig('distGroupOrder', e.target.value)}>
+                          <option value="count">Count</option>
+                          <option value="alpha">Alpha</option>
+                        </select>
+                        <button onClick={() => handleConfig('distGroupDir', currentConfig.distGroupDir === 'asc' ? 'desc' : 'asc')} className="p-1 border border-slate-300 rounded bg-white hover:bg-slate-50 text-slate-600" title={currentConfig.distGroupDir === 'asc' ? 'Ascending' : 'Descending'}>
+                          {currentConfig.distGroupDir === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>}
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1">
-                         <div className="flex flex-col gap-0.5">
-                             <span className="text-[9px] font-bold text-slate-500 uppercase">Bar Order</span>
-                             <div className="flex items-center gap-1">
-                                 <select
-                                    className="p-1 border border-slate-300 rounded text-[10px]"
-                                    value={currentConfig.distBarOrder}
-                                    onChange={e => handleConfig('distBarOrder', e.target.value)}
-                                 >
-                                     <option value="count">Count</option>
-                                     <option value="alpha">Alpha</option>
-                                 </select>
-                                 <button
-                                    onClick={() => handleConfig('distBarDir', currentConfig.distBarDir === 'asc' ? 'desc' : 'asc')}
-                                    className="p-1 border border-slate-300 rounded bg-white hover:bg-slate-50 text-slate-600"
-                                    title={currentConfig.distBarDir === 'asc' ? 'Ascending' : 'Descending'}
-                                 >
-                                     {currentConfig.distBarDir === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>}
-                                 </button>
-                             </div>
-                         </div>
+
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Bar Order</span>
+                      <div className="flex items-center gap-1">
+                        <select className="p-1 border border-slate-300 rounded text-[10px]" value={currentConfig.distBarOrder} onChange={e => handleConfig('distBarOrder', e.target.value)}>
+                          <option value="count">Count</option>
+                          <option value="alpha">Alpha</option>
+                        </select>
+                        <button onClick={() => handleConfig('distBarDir', currentConfig.distBarDir === 'asc' ? 'desc' : 'asc')} className="p-1 border border-slate-300 rounded bg-white hover:bg-slate-50 text-slate-600" title={currentConfig.distBarDir === 'asc' ? 'Ascending' : 'Descending'}>
+                          {currentConfig.distBarDir === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>}
+                        </button>
+                      </div>
                     </div>
 
                     <div className="h-6 w-px bg-slate-300"></div>
 
                     <div className="flex flex-col gap-0.5">
-                        <span className="text-[9px] font-bold text-slate-500 uppercase">Bar Mode</span>
-                        <select
-                            className="p-1 border border-slate-300 rounded text-[10px]"
-                            value={currentConfig.distBarMode || 'grouped'}
-                            onChange={e => handleConfig('distBarMode', e.target.value)}
-                        >
-                            <option value="grouped">Grouped</option>
-                            <option value="stacked">Stacked</option>
-                        </select>
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Bar Mode</span>
+                      <select className="p-1 border border-slate-300 rounded text-[10px]" value={currentConfig.distBarMode || 'grouped'} onChange={e => handleConfig('distBarMode', e.target.value)}>
+                        <option value="grouped">Grouped</option>
+                        <option value="stacked">Stacked</option>
+                      </select>
                     </div>
 
                     {currentConfig.textureBy !== 'none' && currentConfig.textureBy !== currentConfig.colorBy && (
-                        <div className="flex flex-col gap-0.5 animate-in fade-in slide-in-from-left-2 duration-300">
-                            <span className="text-[9px] font-bold text-slate-500 uppercase">Cluster By</span>
-                            <select
-                                className="p-1 border border-slate-300 rounded text-[10px] max-w-[80px]"
-                                value={currentConfig.distPrimaryVar || 'color'}
-                                onChange={e => handleConfig('distPrimaryVar', e.target.value)}
-                            >
-                                <option value="color">Color ({currentConfig.colorBy})</option>
-                                <option value="texture">Pattern ({currentConfig.textureBy})</option>
-                            </select>
-                        </div>
+                      <div className="flex flex-col gap-0.5 animate-in fade-in slide-in-from-left-2 duration-300">
+                        <span className="text-[9px] font-bold text-slate-500 uppercase">Cluster By</span>
+                        <select className="p-1 border border-slate-300 rounded text-[10px] max-w-[80px]" value={currentConfig.distPrimaryVar || 'color'} onChange={e => handleConfig('distPrimaryVar', e.target.value)}>
+                          <option value="color">Color ({currentConfig.colorBy})</option>
+                          <option value="texture">Pattern ({currentConfig.textureBy})</option>
+                        </select>
+                      </div>
                     )}
 
                     <div className="flex flex-col gap-0.5">
-                        <span className="text-[9px] font-bold text-slate-500 uppercase">Values</span>
-                        <div className="flex items-center gap-1">
-                            <select
-                                className="p-1 border border-slate-300 rounded text-[10px]"
-                                value={currentConfig.distValueMode || 'count'}
-                                onChange={e => handleConfig('distValueMode', e.target.value)}
-                            >
-                                <option value="count">Count</option>
-                                <option value="percentage">Percent</option>
-                            </select>
-                            {currentConfig.distValueMode === 'percentage' && currentConfig.distBarMode === 'stacked' && (
-                                <button
-                                    onClick={() => handleConfig('distNormalize', !currentConfig.distNormalize)}
-                                    className={`p-1 border rounded text-[10px] ${currentConfig.distNormalize ? 'bg-sky-100 border-sky-200 text-sky-800' : 'bg-white border-slate-300 text-slate-600'}`}
-                                    title="Normalize each stack to 100%"
-                                >
-                                    100%
-                                </button>
-                            )}
-                        </div>
-                    </div>
-
-                    <div className="h-6 w-px bg-slate-300"></div>
-
-                    {/* Bar Width & Gap Controls */}
-                    <HelpTooltip helpMode={helpMode} text="W = bar width in pixels (0 = auto). GG = gap between groups in pixels (0 = auto). BG = gap between bars within a group (0 = auto).">
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-[9px] font-bold text-slate-500 uppercase">Layout</span>
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1" title="Bar Width (0 = auto)">
-                          <span className="text-[9px] text-slate-500">W</span>
-                          <input type="number" min="0" max="100" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distBarWidth || 0} onChange={e => handleConfig('distBarWidth', parseFloat(e.target.value) || 0)} />
-                        </div>
-                        <div className="flex items-center gap-1" title="Group Gap">
-                          <span className="text-[9px] text-slate-500">GG</span>
-                          <input type="number" min="0" max="50" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distGroupGap || 0} onChange={e => handleConfig('distGroupGap', parseFloat(e.target.value) || 0)} />
-                        </div>
-                        <div className="flex items-center gap-1" title="Bar Gap">
-                          <span className="text-[9px] text-slate-500">BG</span>
-                          <input type="number" min="0" max="20" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distBarGap || 0} onChange={e => handleConfig('distBarGap', parseFloat(e.target.value) || 0)} />
-                        </div>
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Values</span>
+                      <div className="flex items-center gap-1">
+                        <select className="p-1 border border-slate-300 rounded text-[10px]" value={currentConfig.distValueMode || 'count'} onChange={e => handleConfig('distValueMode', e.target.value)}>
+                          <option value="count">Count</option>
+                          <option value="percentage">Percent</option>
+                        </select>
+                        {currentConfig.distValueMode === 'percentage' && currentConfig.distBarMode === 'stacked' && (
+                          <button onClick={() => handleConfig('distNormalize', !currentConfig.distNormalize)} className={`p-1 border rounded text-[10px] ${currentConfig.distNormalize ? 'bg-sky-100 border-sky-200 text-sky-800' : 'bg-white border-slate-300 text-slate-600'}`} title="Normalize each stack to 100%">100%</button>
+                        )}
                       </div>
                     </div>
-                    </HelpTooltip>
-                </div>
+                </>
             )}
 
 
@@ -1654,6 +1553,79 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   </div>
                 </div>
                 </HelpTooltip>
+              </div>
+            )}
+
+            {/* ── Dist Counts: Row 2 — Colour, Texture, Layout ── */}
+            {activeTab === 'dist' && currentConfig.distMode !== 'histogram' && (
+              <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2 min-h-[40px]">
+                {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
+                {renderVariableSelect('Texture By', currentConfig.textureBy, v => handleConfig('textureBy', v))}
+
+                <div className="w-px h-6 bg-slate-200"></div>
+
+                {/* Bar Width & Gap Controls */}
+                <HelpTooltip helpMode={helpMode} text="Box width = bar width in pixels (0 = auto). Group Gap = gap between groups in pixels (0 = auto). Box Gap = gap between bars within a group (0 = auto).">
+                <div className="flex flex-col">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Layout</span>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1" title="Bar Width (0 = auto)">
+                      <span className="text-[9px] text-slate-500">Box width</span>
+                      <input type="number" min="0" max="100" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distBarWidth || 0} onChange={e => handleConfig('distBarWidth', parseFloat(e.target.value) || 0)} />
+                    </div>
+                    <div className="flex items-center gap-1" title="Group Gap">
+                      <span className="text-[9px] text-slate-500">Group Gap</span>
+                      <input type="number" min="0" max="50" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distGroupGap || 0} onChange={e => handleConfig('distGroupGap', parseFloat(e.target.value) || 0)} />
+                    </div>
+                    <div className="flex items-center gap-1" title="Bar Gap">
+                      <span className="text-[9px] text-slate-500">Box Gap</span>
+                      <input type="number" min="0" max="20" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distBarGap || 0} onChange={e => handleConfig('distBarGap', parseFloat(e.target.value) || 0)} />
+                    </div>
+                  </div>
+                </div>
+                </HelpTooltip>
+              </div>
+            )}
+
+            {/* ── Dist Histogram: Row 2 — Colour, Overlap, Opacity, Bins ── */}
+            {activeTab === 'dist' && currentConfig.distMode === 'histogram' && (
+              <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2 min-h-[40px]">
+                {renderVariableSelect('Colour', currentConfig.distHistColorBy || 'none', v => handleConfig('distHistColorBy', v))}
+
+                {/* Overlap mode (only when colouring) */}
+                {currentConfig.distHistColorBy && currentConfig.distHistColorBy !== 'none' && (
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase">Overlap</span>
+                    <select className="p-1 border border-slate-300 rounded text-[10px]"
+                      value={currentConfig.distHistOverlap || 'stacked'}
+                      onChange={e => handleConfig('distHistOverlap', e.target.value)}>
+                      <option value="stacked">Stacked</option>
+                      <option value="overlaid">Overlaid</option>
+                    </select>
+                  </div>
+                )}
+
+                {/* Opacity slider (overlaid only) */}
+                {currentConfig.distHistColorBy && currentConfig.distHistColorBy !== 'none' && currentConfig.distHistOverlap === 'overlaid' && (
+                  <div className="flex items-center gap-1">
+                    <span className="text-[9px] text-slate-500">Opacity</span>
+                    <input type="range" min="0.1" max="1" step="0.05"
+                      value={currentConfig.distHistOpacity ?? 0.6}
+                      onChange={e => handleConfig('distHistOpacity', parseFloat(e.target.value))}
+                      className="w-16 h-1 accent-slate-600" />
+                  </div>
+                )}
+
+                <div className="w-px h-6 bg-slate-200"></div>
+
+                {/* Bins */}
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[9px] font-bold text-slate-500 uppercase">Bins</span>
+                  <input type="number" min="5" max="200" step="1"
+                    className="w-12 p-0.5 border rounded text-[10px]"
+                    value={currentConfig.distHistBinCount || 30}
+                    onChange={e => handleConfig('distHistBinCount', Math.max(1, parseInt(e.target.value) || 30))} />
+                </div>
               </div>
             )}
 
