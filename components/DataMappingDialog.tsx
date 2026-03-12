@@ -24,6 +24,11 @@ const ROLE_OPTIONS: { value: ColumnRole, label: string }[] = [
   { value: 'ignore', label: 'Ignore' },
 ];
 
+// These names are used as built-in properties on SpeechToken with hardcoded
+// accessors throughout the app. A custom field using one of these names will
+// collide and produce broken/empty results.
+const RESERVED_FIELD_NAMES = new Set(['duration', 'speaker', 'file_id', 'xmin']);
+
 const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
   isOpen, onClose, onConfirm, headers, sampleData, detectedMappings, fileName, isEditMode
 }) => {
@@ -83,6 +88,26 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
       const m = mappings.find(mm => mm.csvHeader === h);
       return m && m.role !== 'formant';
     }), [headers, mappings]);
+
+  // Detect custom fields whose names clash with built-in reserved properties.
+  // A clash only matters when the reserved role is NOT already assigned — e.g. a
+  // custom field named "duration" only clashes if there's no "Duration Value" role.
+  const reservedClashes = useMemo(() => {
+    const clashes = new Set<number>(); // indices of offending mappings
+    const assignedRoles = new Set(mappings.map(m => m.role));
+    for (let i = 0; i < mappings.length; i++) {
+      const m = mappings[i];
+      if ((m.role === 'field' || m.role === 'pitch') && m.fieldName) {
+        const lower = m.fieldName.toLowerCase().trim();
+        if (RESERVED_FIELD_NAMES.has(lower)) {
+          // "duration" only clashes if there's also a duration-role mapping (or none — the property still defaults to 0)
+          // Actually, it ALWAYS clashes because the hardcoded accessors read the property, not fields[]
+          clashes.add(i);
+        }
+      }
+    }
+    return clashes;
+  }, [mappings]);
 
   const summary = useMemo(() => {
     const formantMappings = mappings.filter(m => m.role === 'formant');
@@ -311,11 +336,14 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                         <div className="flex items-center gap-2">
                           <input
                             type="text"
-                            className="text-xs p-1 border border-slate-200 rounded w-36"
+                            className={`text-xs p-1 border rounded w-36 ${reservedClashes.has(idx) ? 'border-red-400 bg-red-50 text-red-700' : 'border-slate-200'}`}
                             value={m.fieldName ?? m.csvHeader}
                             onChange={e => updateMapping(idx, { fieldName: e.target.value })}
                             placeholder="Display name"
                           />
+                          {reservedClashes.has(idx) && (
+                            <span className="text-[10px] text-red-600 font-bold whitespace-nowrap">Reserved name — please rename</span>
+                          )}
                         </div>
                       )}
                       {(m.role === 'speaker' || m.role === 'file_id' || m.role === 'duration') && (
@@ -380,6 +408,11 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
               const emptyField = mappings.filter(m => m.role === 'field' && !m.fieldName?.trim());
               if (emptyField.length > 0) {
                 setValidationError(`${emptyField.length} field(s) have empty names`);
+                return;
+              }
+              if (reservedClashes.size > 0) {
+                const names = [...reservedClashes].map(i => `"${mappings[i].fieldName}"`).join(', ');
+                setValidationError(`Reserved name clash: ${names} — please rename to avoid conflicts`);
                 return;
               }
               onConfirm(mappings);
