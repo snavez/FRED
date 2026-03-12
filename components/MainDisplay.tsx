@@ -37,20 +37,18 @@ const sliderToOpacity = (slider: number) => slider * slider;
 
 /** Pretty label for a field key */
 const prettyLabel = (key: string, meta?: DatasetMeta | null): string => {
-  // Check datasetMeta for user-assigned display names first
+  // Special roles always get their standard display name — avoids confusion
+  // when both speaker and file_id are mapped to the same CSV column
+  if (key === 'speaker') return 'Speaker';
+  if (key === 'file_id') return 'File ID';
+  if (key === 'duration') return 'Duration';
+  if (key === 'xmin') return 'Time (xmin)';
+  // Check datasetMeta for user-assigned display names
   if (meta) {
     for (const m of meta.columnMappings) {
-      if (m.role === 'speaker' && key === 'speaker') return m.fieldName || m.csvHeader;
-      if (m.role === 'file_id' && key === 'file_id') return m.fieldName || m.csvHeader;
-      if (m.role === 'duration' && key === 'duration') return m.fieldName || 'Duration';
       if ((m.role === 'field' || m.role === 'pitch') && (m.fieldName === key || m.csvHeader === key)) return m.fieldName || m.csvHeader;
     }
   }
-  // Fallback defaults
-  if (key === 'speaker') return 'Speaker';
-  if (key === 'file_id') return 'File ID';
-  if (key === 'xmin') return 'Time (xmin)';
-  if (key === 'duration') return 'Duration';
   return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 };
 
