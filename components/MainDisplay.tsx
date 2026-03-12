@@ -467,11 +467,11 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                            if (datasetMeta) {
                              for (const m of datasetMeta.columnMappings) {
                                let key: string | null = null;
-                               // file_id always included; others only if visible in sidebar
+                               // Include all non-formant, non-ignore fields (filter + data)
                                if (m.role === 'file_id') key = 'file_id';
-                               else if (m.role === 'speaker' && m.showInSidebar !== false) key = 'speaker';
-                               else if (m.role === 'duration' && m.showInSidebar !== false) key = 'duration';
-                               else if ((m.role === 'field' || m.role === 'pitch') && m.fieldName && m.showInSidebar !== false) key = m.fieldName;
+                               else if (m.role === 'speaker') key = 'speaker';
+                               else if (m.role === 'duration') key = 'duration';
+                               else if ((m.role === 'field' || m.role === 'pitch') && m.fieldName) key = m.fieldName;
                                if (!key || seen.has(key)) continue;
                                seen.add(key);
                                allFields.push({ key, label: prettyLabel(key, datasetMeta) });
@@ -538,11 +538,11 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                            if (datasetMeta) {
                              for (const m of datasetMeta.columnMappings) {
                                let key: string | null = null;
-                               // file_id always included; others only if visible in sidebar
+                               // Include all non-formant, non-ignore fields (filter + data)
                                if (m.role === 'file_id') key = 'file_id';
-                               else if (m.role === 'speaker' && m.showInSidebar !== false) key = 'speaker';
-                               else if (m.role === 'duration' && m.showInSidebar !== false) key = 'duration';
-                               else if ((m.role === 'field' || m.role === 'pitch') && m.fieldName && m.showInSidebar !== false) key = m.fieldName;
+                               else if (m.role === 'speaker') key = 'speaker';
+                               else if (m.role === 'duration') key = 'duration';
+                               else if ((m.role === 'field' || m.role === 'pitch') && m.fieldName) key = m.fieldName;
                                if (!key || seen.has(key)) continue;
                                seen.add(key);
                                allFields.push({ key, label: prettyLabel(key, datasetMeta) });
