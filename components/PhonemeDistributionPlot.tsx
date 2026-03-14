@@ -1342,8 +1342,10 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
       );
     }
 
-    // Counts mode legend
+    // Counts mode legend — hide when no data
+    if (!data.length) return null;
     const { colors, textureList, textureMap, isInteraction, colorKey, textureKey, colorCounts, textureCounts } = plotData as any;
+    if (!colorKey && !textureKey) return null;
     return (
         <div className="absolute top-4 right-4 bg-white/95 backdrop-blur p-3 rounded-xl border border-slate-200 text-xs shadow-xl flex flex-col space-y-3 max-h-[85%] overflow-y-auto w-48 pointer-events-auto">
             {colorKey && (

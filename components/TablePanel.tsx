@@ -232,6 +232,10 @@ const BrowseView: React.FC<{
     return cols;
   }, [hasFormants, hasSmooth, expandAll, hasMultipleTimePoints, timePoint, availableTimePoints]);
 
+  if (!data.length) {
+    return <div className="h-full flex items-center justify-center text-slate-400 text-sm italic">No data loaded</div>;
+  }
+
   return (
     <div className="h-full overflow-auto">
       <table className="w-full text-left text-[13px]">
