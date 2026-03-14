@@ -121,6 +121,23 @@ export interface PlotConfig {
   distHistOverlap: 'stacked' | 'overlaid';   // multi-color bar mode (default: 'stacked')
   distHistOpacity: number;                   // bar opacity for overlaid mode (default: 0.6)
 
+  // Table Panel Config
+  tableMode: 'browse' | 'summary' | 'analysis';
+  tableFormantTime: number;                  // shared time dropdown for Browse mode (default: 50)
+  tableExpandTimePoints: boolean;            // show all time points in columns (default: false)
+  tableAnalysisDV: string;                   // dependent variable key (default: 'duration')
+  tableAnalysisGroupBy: string;              // grouping variable key (default: 'none')
+  tableAnalysisFormantTime: number;          // time point for formant DV (default: 50)
+  tableAlpha: number;                        // significance threshold (default: 0.05)
+  tableSummaryGroupBy: string;               // grouping variable for summary mode (default: 'none')
+  tableSummaryMeasures: string[];             // selected numeric measures (default: ['duration'])
+  tableSummaryLayout: 'combined' | 'separate'; // table layout mode (default: 'separate')
+  tableAnalysisType: 'continuous' | 'categorical'; // analysis paradigm (default: 'continuous')
+  tableAnalysisGroupBy2: string;              // second IV / Factor B (default: 'none')
+  tableAnalysisMeasures: string[];            // multi-DV selection (default: ['duration'])
+  tableAnalysisCatVar1: string;               // row variable for contingency (default: 'none')
+  tableAnalysisCatVar2: string;               // column variable for contingency (default: 'none')
+
   // Scatter Plot Visibility
   showPoints: boolean;
   showEllipses: boolean;

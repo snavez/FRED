@@ -8,6 +8,7 @@ import TrajectoryF1F2 from './TrajectoryF1F2';
 import DurationPlot from './DurationPlot';
 import PhonemeDistributionPlot from './PhonemeDistributionPlot';
 import Scatter3DPlot from './Scatter3DPlot';
+import TablePanel from './TablePanel';
 import StyleEditor from './StyleEditor';
 import ExportDialog from './ExportDialog';
 import { Grid, LineChart, Table, Settings2, MoveUpRight, Printer, Check, Download, BarChart2, PieChart, Box, Waves, ArrowDown, ArrowUp, ArrowUpDown, Eye, EyeOff, Plus, X, ChevronUp, ChevronDown, Layers, MessageSquare, HelpCircle } from 'lucide-react';
@@ -109,6 +110,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   const [layerPanelOpen, setLayerPanelOpen] = useState(false);
   const [showPointInfoSettings, setShowPointInfoSettings] = useState(false);
   const [showDurationPointInfoSettings, setShowDurationPointInfoSettings] = useState(false);
+  const [showSummaryMeasureSettings, setShowSummaryMeasureSettings] = useState(false);
+  const [showAnalysisMeasureSettings, setShowAnalysisMeasureSettings] = useState(false);
   const [helpMode, setHelpMode] = useState(false);
 
   // Dynamic variable options: built from datasetMeta column mappings
@@ -1634,6 +1637,283 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
           </div>
         )}
+
+        {/* ═══ Table Tab Config Bar ═══ */}
+        {activeTab === 'table' && (
+          <div className="bg-slate-100 rounded-lg p-3 border border-slate-200 text-xs">
+            <div className="flex flex-wrap items-center gap-4 min-h-[44px]">
+              <div className="flex items-center gap-2 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
+                <Settings2 size={14} />
+                <span>Config</span>
+              </div>
+
+              {/* Mode selector */}
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[9px] font-bold text-slate-500 uppercase">Mode</span>
+                <select className="p-1 border border-slate-300 rounded text-[10px]"
+                  value={currentConfig.tableMode || 'browse'}
+                  onChange={e => handleConfig('tableMode', e.target.value)}>
+                  <option value="browse">Browse</option>
+                  <option value="summary">Summary</option>
+                  <option value="analysis">Analysis</option>
+                </select>
+              </div>
+
+              <div className="h-6 w-px bg-slate-300"></div>
+
+              {/* Browse mode controls */}
+              {(currentConfig.tableMode || 'browse') === 'browse' && availableTimePoints.length > 1 && (
+                <>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase">Time</span>
+                    <select className="p-1 border border-slate-300 rounded text-[10px]"
+                      value={currentConfig.tableFormantTime ?? 50}
+                      onChange={e => handleConfig('tableFormantTime', parseInt(e.target.value))}
+                      disabled={currentConfig.tableExpandTimePoints}>
+                      {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                    </select>
+                  </div>
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input type="checkbox" className="rounded text-sky-700"
+                      checked={currentConfig.tableExpandTimePoints || false}
+                      onChange={e => handleConfig('tableExpandTimePoints', e.target.checked)} />
+                    <span className="text-[10px] font-bold text-slate-600">Expand all time points</span>
+                  </label>
+                </>
+              )}
+
+              {/* Summary mode controls */}
+              {currentConfig.tableMode === 'summary' && (() => {
+                const selectedMeasures = currentConfig.tableSummaryMeasures || ['duration'];
+                const FORMANT_SET = new Set(['f1','f2','f3','f1_smooth','f2_smooth','f3_smooth']);
+                const hasFormantMeasure = selectedMeasures.some(m => FORMANT_SET.has(m));
+                return (
+                <>
+                  {renderVariableSelect('Group By', currentConfig.tableSummaryGroupBy || 'none', v => handleConfig('tableSummaryGroupBy', v))}
+
+                  {/* Measures multi-select popover */}
+                  <div className="relative">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Measures</span>
+                      <button
+                        onClick={() => setShowSummaryMeasureSettings(!showSummaryMeasureSettings)}
+                        className={`px-2 py-1 text-[10px] font-medium border rounded transition-all text-left min-w-[100px] ${
+                          showSummaryMeasureSettings
+                            ? 'bg-sky-50 text-sky-800 border-sky-200 shadow-sm'
+                            : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        {selectedMeasures.length === 1
+                          ? numericVariableOptions.find(o => o.value === selectedMeasures[0])?.label || selectedMeasures[0]
+                          : `${selectedMeasures.length} selected`
+                        }
+                      </button>
+                    </div>
+                    {showSummaryMeasureSettings && (
+                      <div className="absolute top-full mt-1 left-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 min-w-[200px] p-3">
+                        <div className="flex items-center justify-between mb-2 pb-2 border-b border-slate-100">
+                          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Measures</span>
+                          <button onClick={() => setShowSummaryMeasureSettings(false)} className="p-0.5 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600">
+                            <X size={12} />
+                          </button>
+                        </div>
+                        <div className="max-h-[300px] overflow-y-auto space-y-1">
+                          {numericVariableOptions.map(opt => {
+                            const isChecked = selectedMeasures.includes(opt.value);
+                            const isLastChecked = isChecked && selectedMeasures.length === 1;
+                            const atMax = selectedMeasures.length >= 10;
+                            return (
+                              <label
+                                key={opt.value}
+                                className={`flex items-center gap-2 text-[11px] cursor-pointer hover:bg-slate-50 p-1 rounded ${
+                                  isLastChecked ? 'opacity-50 cursor-not-allowed' : !isChecked && atMax ? 'opacity-40 cursor-not-allowed' : ''
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="rounded text-sky-700"
+                                  checked={isChecked}
+                                  disabled={isLastChecked || (!isChecked && atMax)}
+                                  onChange={() => {
+                                    const newMeasures = isChecked
+                                      ? selectedMeasures.filter(m => m !== opt.value)
+                                      : [...selectedMeasures, opt.value];
+                                    handleConfig('tableSummaryMeasures', newMeasures);
+                                  }}
+                                />
+                                <span className="text-slate-700 font-medium">{opt.label}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                        {selectedMeasures.length >= 10 && (
+                          <div className="mt-2 pt-2 border-t border-slate-100 text-[10px] text-slate-400 italic">Max 10 measures</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Layout toggle (only when multiple measures selected) */}
+                  {selectedMeasures.length > 1 && (
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Layout</span>
+                      <select className="p-1 border border-slate-300 rounded text-[10px]"
+                        value={currentConfig.tableSummaryLayout || 'separate'}
+                        onChange={e => handleConfig('tableSummaryLayout', e.target.value)}>
+                        <option value="separate">Separate</option>
+                        <option value="combined">Combined</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Time dropdown (when any formant measure is selected) */}
+                  {hasFormantMeasure && availableTimePoints.length > 1 && (
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase">Time</span>
+                      <select className="p-1 border border-slate-300 rounded text-[10px]"
+                        value={currentConfig.tableFormantTime ?? 50}
+                        onChange={e => handleConfig('tableFormantTime', parseInt(e.target.value))}>
+                        {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                      </select>
+                    </div>
+                  )}
+                </>
+                );
+              })()}
+
+              {/* Analysis mode controls */}
+              {currentConfig.tableMode === 'analysis' && (() => {
+                const analysisType = currentConfig.tableAnalysisType || 'continuous';
+                const selectedAnalysisMeasures = currentConfig.tableAnalysisMeasures || ['duration'];
+                const FORMANT_SET_A = new Set(['f1','f2','f3','f1_smooth','f2_smooth','f3_smooth']);
+                const hasFormantAnalysisMeasure = selectedAnalysisMeasures.some(m => FORMANT_SET_A.has(m));
+                return (
+                <>
+                  {/* Analysis Type Toggle */}
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase">Type</span>
+                    <select className="p-1 border border-slate-300 rounded text-[10px]"
+                      value={analysisType}
+                      onChange={e => handleConfig('tableAnalysisType', e.target.value)}>
+                      <option value="continuous">Continuous</option>
+                      <option value="categorical">Categorical</option>
+                    </select>
+                  </div>
+
+                  {analysisType === 'continuous' && (
+                    <>
+                      {/* Multi-measure popover */}
+                      <div className="relative">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase">Measures</span>
+                          <button
+                            onClick={() => setShowAnalysisMeasureSettings(!showAnalysisMeasureSettings)}
+                            className={`px-2 py-1 text-[10px] font-medium border rounded transition-all text-left min-w-[100px] ${
+                              showAnalysisMeasureSettings
+                                ? 'bg-sky-50 text-sky-800 border-sky-200 shadow-sm'
+                                : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                            }`}
+                          >
+                            {selectedAnalysisMeasures.length === 1
+                              ? numericVariableOptions.find(o => o.value === selectedAnalysisMeasures[0])?.label || selectedAnalysisMeasures[0]
+                              : `${selectedAnalysisMeasures.length} selected`
+                            }
+                          </button>
+                        </div>
+                        {showAnalysisMeasureSettings && (
+                          <div className="absolute top-full mt-1 left-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 min-w-[200px] p-3">
+                            <div className="flex items-center justify-between mb-2 pb-2 border-b border-slate-100">
+                              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Measures</span>
+                              <button onClick={() => setShowAnalysisMeasureSettings(false)} className="p-0.5 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-600">
+                                <X size={12} />
+                              </button>
+                            </div>
+                            <div className="max-h-[300px] overflow-y-auto space-y-1">
+                              {numericVariableOptions.map(opt => {
+                                const isChecked = selectedAnalysisMeasures.includes(opt.value);
+                                const isLastChecked = isChecked && selectedAnalysisMeasures.length === 1;
+                                const atMax = selectedAnalysisMeasures.length >= 10;
+                                return (
+                                  <label
+                                    key={opt.value}
+                                    className={`flex items-center gap-2 text-[11px] cursor-pointer hover:bg-slate-50 p-1 rounded ${
+                                      isLastChecked ? 'opacity-50 cursor-not-allowed' : !isChecked && atMax ? 'opacity-40 cursor-not-allowed' : ''
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      className="rounded text-sky-700"
+                                      checked={isChecked}
+                                      disabled={isLastChecked || (!isChecked && atMax)}
+                                      onChange={() => {
+                                        const newMeasures = isChecked
+                                          ? selectedAnalysisMeasures.filter(m => m !== opt.value)
+                                          : [...selectedAnalysisMeasures, opt.value];
+                                        handleConfig('tableAnalysisMeasures', newMeasures);
+                                      }}
+                                    />
+                                    <span className="text-slate-700 font-medium">{opt.label}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                            {selectedAnalysisMeasures.length >= 10 && (
+                              <div className="mt-2 pt-2 border-t border-slate-100 text-[10px] text-slate-400 italic">Max 10 measures</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Time dropdown (when any formant measure is selected) */}
+                      {hasFormantAnalysisMeasure && availableTimePoints.length > 1 && (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase">Time</span>
+                          <select className="p-1 border border-slate-300 rounded text-[10px]"
+                            value={currentConfig.tableAnalysisFormantTime ?? 50}
+                            onChange={e => handleConfig('tableAnalysisFormantTime', parseInt(e.target.value))}>
+                            {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                          </select>
+                        </div>
+                      )}
+
+                      {/* Factor A */}
+                      {renderVariableSelect('Factor A', currentConfig.tableAnalysisGroupBy || 'none', v => handleConfig('tableAnalysisGroupBy', v))}
+
+                      {/* Factor B (only when Factor A is set) */}
+                      {currentConfig.tableAnalysisGroupBy && currentConfig.tableAnalysisGroupBy !== 'none' &&
+                        renderVariableSelect('Factor B', currentConfig.tableAnalysisGroupBy2 || 'none', v => handleConfig('tableAnalysisGroupBy2', v))
+                      }
+                    </>
+                  )}
+
+                  {analysisType === 'categorical' && (
+                    <>
+                      {renderVariableSelect('Row Var', currentConfig.tableAnalysisCatVar1 || 'none', v => handleConfig('tableAnalysisCatVar1', v))}
+                      {renderVariableSelect('Col Var', currentConfig.tableAnalysisCatVar2 || 'none', v => handleConfig('tableAnalysisCatVar2', v))}
+                    </>
+                  )}
+                </>
+                );
+              })()}
+            </div>
+
+            {/* Row 2: Alpha threshold */}
+            {currentConfig.tableMode === 'analysis' && (
+              (currentConfig.tableAnalysisType === 'categorical'
+                ? (currentConfig.tableAnalysisCatVar1 && currentConfig.tableAnalysisCatVar1 !== 'none' && currentConfig.tableAnalysisCatVar2 && currentConfig.tableAnalysisCatVar2 !== 'none')
+                : (currentConfig.tableAnalysisGroupBy && currentConfig.tableAnalysisGroupBy !== 'none')
+              )
+            ) && (
+              <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2 mt-2 min-h-[28px]">
+                <span className="text-[9px] font-bold text-slate-500 uppercase">α =</span>
+                <input type="number" min="0.001" max="0.1" step="0.01"
+                  className="w-14 p-0.5 border rounded text-[10px]"
+                  value={currentConfig.tableAlpha ?? 0.05}
+                  onChange={e => handleConfig('tableAlpha', parseFloat(e.target.value) || 0.05)} />
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Plot Area */}
@@ -1699,66 +1979,16 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             styleOverrides={styleOverrides}
           />
         )}
-        {activeTab === 'table' && (() => {
-           // Build dynamic table columns from datasetMeta
-           const tableCols: { key: string; label: string; accessor: (t: SpeechToken) => string }[] = [];
-           if (datasetMeta) {
-             const seen = new Set<string>();
-             for (const m of datasetMeta.columnMappings) {
-               if (m.role === 'speaker' && !seen.has('speaker')) {
-                 seen.add('speaker');
-                 tableCols.push({ key: 'speaker', label: 'Speaker', accessor: t => t.speaker });
-               } else if (m.role === 'file_id' && !seen.has('file_id')) {
-                 seen.add('file_id');
-                 tableCols.push({ key: 'file_id', label: 'File ID', accessor: t => t.file_id });
-               } else if (m.role === 'field' && m.fieldName && !seen.has(m.fieldName)) {
-                 const fn = m.fieldName;
-                 seen.add(fn);
-                 tableCols.push({ key: fn, label: prettyLabel(fn, datasetMeta), accessor: t => t.fields[fn] ?? '' });
-               }
-             }
-           }
-           return (
-           <div className="h-full overflow-auto">
-             <table className="w-full text-left text-[13px]">
-                <thead className="sticky top-0 bg-slate-50/90 backdrop-blur border-b border-slate-200 z-10">
-                  <tr>
-                    {tableCols.map(col => (
-                      <th key={col.key} className="px-4 py-3 font-bold text-slate-500 uppercase tracking-tighter">{col.label}</th>
-                    ))}
-                    <th className="px-4 py-3 font-bold text-slate-500 uppercase tracking-tighter text-right">Duration (s)</th>
-                    <th className="px-4 py-3 font-bold text-slate-500 uppercase tracking-tighter text-right">F1 (Avg)</th>
-                    <th className="px-4 py-3 font-bold text-slate-500 uppercase tracking-tighter text-right">F2 (Avg)</th>
-                    <th className="px-4 py-3 font-bold text-slate-500 uppercase tracking-tighter text-right">F3 (Avg)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {activeData.slice(0, 1000).map(token => {
-                    const f1_mean = token.trajectory.length > 0 ? token.trajectory.reduce((acc, p) => acc + (currentConfig.useSmoothing ? (p.f1_smooth ?? p.f1) : p.f1), 0) / token.trajectory.length : 0;
-                    const f2_mean = token.trajectory.length > 0 ? token.trajectory.reduce((acc, p) => acc + (currentConfig.useSmoothing ? (p.f2_smooth ?? p.f2) : p.f2), 0) / token.trajectory.length : 0;
-                    const f3_mean = token.trajectory.length > 0 ? token.trajectory.reduce((acc, p) => acc + (currentConfig.useSmoothing ? (p.f3_smooth ?? p.f3) : p.f3), 0) / token.trajectory.length : 0;
-                    return (
-                      <tr key={token.id} className="hover:bg-sky-50/40 transition-colors">
-                        {tableCols.map(col => (
-                          <td key={col.key} className="px-4 py-2 text-slate-700 font-medium">{col.accessor(token)}</td>
-                        ))}
-                        <td className="px-4 py-2 text-slate-600 text-right font-mono">{token.duration.toFixed(3)}</td>
-                        <td className="px-4 py-2 text-slate-600 text-right font-mono">{Math.round(f1_mean)}</td>
-                        <td className="px-4 py-2 text-slate-600 text-right font-mono">{Math.round(f2_mean)}</td>
-                        <td className="px-4 py-2 text-slate-600 text-right font-mono">{Math.round(f3_mean)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-             </table>
-             {activeData.length > 1000 && (
-                <div className="p-4 text-center text-slate-400 italic text-xs">
-                  Showing first 1,000 of {activeData.length.toLocaleString()} tokens.
-                </div>
-             )}
-           </div>
-           );
-        })()}
+        {activeTab === 'table' && (
+          <TablePanel
+            data={activeData}
+            config={currentConfig}
+            datasetMeta={datasetMeta}
+            availableTimePoints={availableTimePoints}
+            variableOptions={variableOptions}
+            numericVariableOptions={numericVariableOptions}
+          />
+        )}
       </div>
 
       {editingItem && (
@@ -1784,8 +2014,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
       />
 
       {/* Close dropdowns on click outside */}
-      {(showAddMenu || layerPanelOpen || showPointInfoSettings || showDurationPointInfoSettings) && (
-        <div className="fixed inset-0 z-40" onClick={() => { setShowAddMenu(false); setLayerPanelOpen(false); setShowPointInfoSettings(false); setShowDurationPointInfoSettings(false); }}></div>
+      {(showAddMenu || layerPanelOpen || showPointInfoSettings || showDurationPointInfoSettings || showSummaryMeasureSettings || showAnalysisMeasureSettings) && (
+        <div className="fixed inset-0 z-40" onClick={() => { setShowAddMenu(false); setLayerPanelOpen(false); setShowPointInfoSettings(false); setShowDurationPointInfoSettings(false); setShowSummaryMeasureSettings(false); setShowAnalysisMeasureSettings(false); }}></div>
       )}
     </div>
   );
