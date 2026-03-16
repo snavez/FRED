@@ -172,6 +172,11 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     return [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
   }, [datasetMeta]);
 
+  // Helper: get display label for a timepoint (uses named labels if available, else "N%")
+  const tpLabel = useCallback((t: number) => {
+    return datasetMeta?.timePointLabels?.[t] ?? `${t}%`;
+  }, [datasetMeta]);
+
   // Style overrides derived from active layer (no local state needed)
   const styleOverrides = useMemo(() => {
     const layer = layers.find(l => l.id === activeLayerId);
@@ -725,7 +730,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         onChange={e => handleConfig('timePoint', parseInt(e.target.value))}
                       >
                         {availableTimePoints.map(t => (
-                          <option key={t} value={t}>{t}%</option>
+                          <option key={t} value={t}>{tpLabel(t)}</option>
                         ))}
                       </select>
                     </div>
@@ -735,11 +740,11 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         <span className="text-[9px] font-bold text-slate-500 uppercase">Range</span>
                         <div className="flex items-center gap-1">
                           <select className="p-0.5 border rounded text-[10px] w-12" value={currentConfig.trajectoryOnset ?? 0} onChange={e => handleConfig('trajectoryOnset', parseInt(e.target.value))}>
-                            {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                            {availableTimePoints.map(t => <option key={t} value={t}>{tpLabel(t)}</option>)}
                           </select>
                           <span className="text-slate-400">-</span>
                           <select className="p-0.5 border rounded text-[10px] w-12" value={currentConfig.trajectoryOffset ?? 100} onChange={e => handleConfig('trajectoryOffset', parseInt(e.target.value))}>
-                            {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                            {availableTimePoints.map(t => <option key={t} value={t}>{tpLabel(t)}</option>)}
                           </select>
                         </div>
                       </div>
@@ -1048,11 +1053,11 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       <span className="text-[9px] font-bold text-slate-500 uppercase">Range</span>
                       <div className="flex items-center gap-1">
                         <select className="p-0.5 border rounded text-[10px] w-12" value={currentConfig.trajectoryOnset ?? 0} onChange={e => handleConfig('trajectoryOnset', parseInt(e.target.value))}>
-                          {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                          {availableTimePoints.map(t => <option key={t} value={t}>{tpLabel(t)}</option>)}
                         </select>
                         <span className="text-slate-400">-</span>
                         <select className="p-0.5 border rounded text-[10px] w-12" value={currentConfig.trajectoryOffset ?? 100} onChange={e => handleConfig('trajectoryOffset', parseInt(e.target.value))}>
-                          {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                          {availableTimePoints.map(t => <option key={t} value={t}>{tpLabel(t)}</option>)}
                         </select>
                       </div>
                     </div>
@@ -1074,7 +1079,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                           <select className="p-0.5 border rounded text-[10px]"
                             value={currentConfig.durationFormantTimePoint ?? 50}
                             onChange={e => handleConfig('durationFormantTimePoint', parseInt(e.target.value))}>
-                            {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                            {availableTimePoints.map(t => <option key={t} value={t}>{tpLabel(t)}</option>)}
                           </select>
                         </div>
                       )}
@@ -1194,7 +1199,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                           <select className="p-1 border border-slate-300 rounded text-[10px]"
                             value={currentConfig.distHistTimePoint ?? 50}
                             onChange={e => handleConfig('distHistTimePoint', parseInt(e.target.value))}>
-                            {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                            {availableTimePoints.map(t => <option key={t} value={t}>{tpLabel(t)}</option>)}
                           </select>
                         </div>
                       )}
@@ -1670,7 +1675,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       value={currentConfig.tableFormantTime ?? 50}
                       onChange={e => handleConfig('tableFormantTime', parseInt(e.target.value))}
                       disabled={currentConfig.tableExpandTimePoints}>
-                      {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                      {availableTimePoints.map(t => <option key={t} value={t}>{tpLabel(t)}</option>)}
                     </select>
                   </div>
                   <label className="flex items-center gap-1 cursor-pointer">
@@ -1773,7 +1778,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       <select className="p-1 border border-slate-300 rounded text-[10px]"
                         value={currentConfig.tableFormantTime ?? 50}
                         onChange={e => handleConfig('tableFormantTime', parseInt(e.target.value))}>
-                        {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                        {availableTimePoints.map(t => <option key={t} value={t}>{tpLabel(t)}</option>)}
                       </select>
                     </div>
                   )}
@@ -1871,7 +1876,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                           <select className="p-1 border border-slate-300 rounded text-[10px]"
                             value={currentConfig.tableAnalysisFormantTime ?? 50}
                             onChange={e => handleConfig('tableAnalysisFormantTime', parseInt(e.target.value))}>
-                            {availableTimePoints.map(t => <option key={t} value={t}>{t}%</option>)}
+                            {availableTimePoints.map(t => <option key={t} value={t}>{tpLabel(t)}</option>)}
                           </select>
                         </div>
                       )}

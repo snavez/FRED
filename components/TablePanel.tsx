@@ -173,7 +173,7 @@ const BrowseView: React.FC<{
         for (const f of ['f1', 'f2', 'f3'] as const) {
           cols.push({
             key: `${f}_${tp}`,
-            label: `${f.toUpperCase()} (${tp}%)`,
+            label: `${f.toUpperCase()} (${datasetMeta?.timePointLabels?.[tp] ?? `${tp}%`})`,
             accessor: (t: SpeechToken) => {
               const nearest = findNearestTimePoint(t.trajectory, tp);
               if (nearest === undefined) return '';
@@ -187,7 +187,7 @@ const BrowseView: React.FC<{
             const base = f.replace('_smooth', '').toUpperCase();
             cols.push({
               key: `${f}_${tp}`,
-              label: `${base} sm (${tp}%)`,
+              label: `${base} sm (${datasetMeta?.timePointLabels?.[tp] ?? `${tp}%`})`,
               accessor: (t: SpeechToken) => {
                 const nearest = findNearestTimePoint(t.trajectory, tp);
                 if (nearest === undefined) return '';

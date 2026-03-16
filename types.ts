@@ -301,6 +301,7 @@ export interface ColumnMapping {
   formant?: 'f1' | 'f2' | 'f3';
   isSmooth?: boolean;
   formantLabel?: string;
+  formantTarget?: string;       // Named target (e.g. "onset", "midpoint") for non-numeric timepoints
   showInSidebar?: boolean;
   isDataField?: boolean;      // true = data/plot value (no sidebar), false/undefined = filter/label
 }
@@ -309,6 +310,7 @@ export interface DatasetMeta {
   fileName: string;
   columnMappings: ColumnMapping[];
   timePoints: number[];
+  timePointLabels?: Record<number, string>;  // Maps numeric index → display label (e.g. 0→"onset", 50→"50%")
   rowCount: number;
   formantVariants?: string[];
 }

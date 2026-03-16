@@ -156,7 +156,8 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     if (FORMANT_VARS.has(field)) {
       const tp = config.durationFormantTimePoint ?? 50;
       const name = field.replace('_smooth', ' smooth').toUpperCase().replace(' SMOOTH', ' (smooth)');
-      return `${name} @ ${tp}% (Hz)`;
+      const tpLabel = datasetMeta?.timePointLabels?.[tp] ?? `${tp}%`;
+      return `${name} @ ${tpLabel} (Hz)`;
     }
     // Look up user-assigned field name from datasetMeta
     if (datasetMeta) {

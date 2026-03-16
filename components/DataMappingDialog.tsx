@@ -325,16 +325,25 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                             <option value="f2">F2</option>
                             <option value="f3">F3</option>
                           </select>
-                          <span className="text-[11px] text-slate-400">@</span>
-                          <input
-                            type="number"
-                            className="text-xs p-1 border border-slate-200 rounded w-14"
-                            value={m.timePoint ?? 50}
-                            onChange={e => updateMapping(idx, { timePoint: parseInt(e.target.value) || 0 })}
-                            min={0}
-                            max={100}
-                          />
-                          <span className="text-[11px] text-slate-400">%</span>
+                          {m.formantTarget ? (
+                            <>
+                              <span className="text-[11px] text-slate-400">@</span>
+                              <span className="text-xs bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded font-bold">{m.formantTarget}</span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-[11px] text-slate-400">@</span>
+                              <input
+                                type="number"
+                                className="text-xs p-1 border border-slate-200 rounded w-14"
+                                value={m.timePoint ?? 50}
+                                onChange={e => updateMapping(idx, { timePoint: parseInt(e.target.value) || 0 })}
+                                min={0}
+                                max={100}
+                              />
+                              <span className="text-[11px] text-slate-400">%</span>
+                            </>
+                          )}
                           {m.formantLabel && (
                             <span className="text-[11px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">{m.formantLabel}</span>
                           )}

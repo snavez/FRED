@@ -46,8 +46,14 @@ addAliases(['file_id', 'fileid', 'filename', 'file'], 'file_id');
 addAliases(['duration', 'dur', 'seg_dur'], 'duration');
 addAliases(['pitch', 'f0', 'voice_pitch'], 'pitch');
 
-const FORMANT_REGEX = /^(f[123])_(\d+)(?:_(.+))?$/i;
-const PITCH_REGEX = /^f0_(\d+)(?:_(.+))?$/i;
+// Formant patterns (case-insensitive):
+//   f1_50, f1_50%, f1_50_smooth, f1_50%_smooth   → numeric timepoint
+//   f1, f2, f3                                      → bare (single measurement, timepoint=0)
+//   f1_onset, f1_midpoint_smooth                    → named target
+const FORMANT_NUMERIC_REGEX = /^(f[123])_(\d+)%?(?:_(.+))?$/i;
+const FORMANT_BARE_REGEX = /^(f[123])$/i;
+const FORMANT_NAMED_REGEX = /^(f[123])_([a-z][a-z0-9]*)(?:_(.+))?$/i;
+const PITCH_REGEX = /^f0_(\d+)%?(?:_(.+))?$/i;
 
 /** Names that should populate SpeechToken.xmin (now detected as regular fields) */
 const XMIN_NAMES = new Set(['xmin', 'onset', 'start', 'start_time']);
@@ -55,12 +61,38 @@ const XMIN_NAMES = new Set(['xmin', 'onset', 'start', 'start_time']);
 /**
  * Auto-detect column mappings from CSV headers + sample data.
  * Special roles (speaker, file_id, duration, pitch) detected via alias table.
- * Formant columns detected via regex (f1_50, f2_75_smooth, etc.).
+ * Formant columns detected via regex:
+ *   - Numeric: f1_50, f1_50%, f2_75_smooth, F1_0%  → timePoint = numeric value
+ *   - Bare:    f1, F2, f3                           → timePoint = 0 (single measurement)
+ *   - Named:   f1_onset, f2_midpoint_smooth         → timePoint = sequential index
  * Pitch time-point columns detected via regex (f0_50, f0_80_smooth, etc.).
  * xmin-like columns detected as regular data fields.
  * Everything else: categorical (≤50 unique, not mostly numeric) → field; else → ignore.
  */
 export const autoDetectMappings = (headers: string[], sampleRows: string[][]): ColumnMapping[] => {
+  // Pass 1: collect unique named formant targets in order of first appearance
+  const namedTargetOrder: string[] = [];
+  const namedTargetSet = new Set<string>();
+  headers.forEach(header => {
+    const lower = header.toLowerCase().trim();
+    // Skip if it matches alias table, xmin, numeric formant, bare formant, or pitch first
+    if (ALIAS_TABLE[lower] || XMIN_NAMES.has(lower)) return;
+    if (FORMANT_NUMERIC_REGEX.test(lower) || FORMANT_BARE_REGEX.test(lower)) return;
+    if (PITCH_REGEX.test(lower)) return;
+    const namedMatch = lower.match(FORMANT_NAMED_REGEX);
+    if (namedMatch) {
+      const target = namedMatch[2];
+      if (!namedTargetSet.has(target)) {
+        namedTargetSet.add(target);
+        namedTargetOrder.push(target);
+      }
+    }
+  });
+  // Build target → numeric index map
+  const namedTargetIndex: Record<string, number> = {};
+  namedTargetOrder.forEach((t, i) => { namedTargetIndex[t] = i; });
+
+  // Pass 2: build mappings
   return headers.map(header => {
     const lower = header.toLowerCase().trim();
 
@@ -88,18 +120,41 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
       };
     }
 
-    // 2. Check formant pattern (f1_50, f2_75_smooth, etc.)
-    const formantMatch = lower.match(FORMANT_REGEX);
-    if (formantMatch) {
-      const formant = formantMatch[1].toLowerCase() as 'f1' | 'f2' | 'f3';
-      const timePoint = parseInt(formantMatch[2], 10);
-      const suffix = formantMatch[3];
+    // 2a. Check numeric formant pattern (f1_50, f1_50%, f2_75_smooth, etc.)
+    const numericMatch = lower.match(FORMANT_NUMERIC_REGEX);
+    if (numericMatch) {
+      const formant = numericMatch[1].toLowerCase() as 'f1' | 'f2' | 'f3';
+      const timePoint = parseInt(numericMatch[2], 10);
+      const suffix = numericMatch[3];
       const isSmooth = !!suffix;
       const formantLabel = suffix || undefined;
       return { csvHeader: header, role: 'formant' as ColumnRole, formant, timePoint, isSmooth, formantLabel, isDataField: true };
     }
 
-    // 2b. Check pitch time-point pattern (f0_50, f0_80_smooth, etc.)
+    // 2b. Check bare formant (f1, F2, f3 — single measurement)
+    const bareMatch = lower.match(FORMANT_BARE_REGEX);
+    if (bareMatch) {
+      const formant = bareMatch[1].toLowerCase() as 'f1' | 'f2' | 'f3';
+      return { csvHeader: header, role: 'formant' as ColumnRole, formant, timePoint: 0, isSmooth: false, isDataField: true };
+    }
+
+    // 2c. Check named formant target (f1_onset, f2_midpoint_smooth, etc.)
+    const namedMatch = lower.match(FORMANT_NAMED_REGEX);
+    if (namedMatch) {
+      const formant = namedMatch[1].toLowerCase() as 'f1' | 'f2' | 'f3';
+      const target = namedMatch[2];
+      const suffix = namedMatch[3];
+      const isSmooth = !!suffix;
+      const formantLabel = suffix || undefined;
+      return {
+        csvHeader: header, role: 'formant' as ColumnRole, formant,
+        timePoint: namedTargetIndex[target],
+        formantTarget: target,
+        isSmooth, formantLabel, isDataField: true,
+      };
+    }
+
+    // 2d. Check pitch time-point pattern (f0_50, f0_50%, f0_80_smooth, etc.)
     const pitchMatch = lower.match(PITCH_REGEX);
     if (pitchMatch) {
       return {
@@ -271,10 +326,24 @@ export const parseWithMappings = (
     formantVariants = hasRaw ? ['Original', ...namedLabels] : namedLabels;
   }
 
+  // Build timePointLabels from formant mappings
+  // If any mapping has a named target, use those labels; otherwise omit (UI defaults to %)
+  const hasNamedTargets = mappings.some(m => m.role === 'formant' && m.formantTarget);
+  let timePointLabels: Record<number, string> | undefined;
+  if (hasNamedTargets) {
+    timePointLabels = {};
+    mappings.forEach(m => {
+      if (m.role === 'formant' && m.timePoint !== undefined && m.formantTarget) {
+        timePointLabels![m.timePoint] = m.formantTarget;
+      }
+    });
+  }
+
   const meta: DatasetMeta = {
     fileName,
     columnMappings: mappings,
     timePoints: sortedTimePoints,
+    timePointLabels,
     rowCount: tokens.length,
     formantVariants
   };
