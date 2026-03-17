@@ -70,15 +70,28 @@ const XMIN_NAMES = new Set(['xmin', 'onset', 'start', 'start_time']);
  * Everything else: categorical (≤50 unique, not mostly numeric) → field; else → ignore.
  */
 export const autoDetectMappings = (headers: string[], sampleRows: string[][]): ColumnMapping[] => {
-  // Pass 1: collect unique named formant targets in order of first appearance
+  // Pass 1: collect all numeric formant timepoints AND named targets in order of first appearance
+  const numericTimePoints = new Set<number>();
   const namedTargetOrder: string[] = [];
   const namedTargetSet = new Set<string>();
   headers.forEach(header => {
     const lower = header.toLowerCase().trim();
-    // Skip if it matches alias table, xmin, numeric formant, bare formant, or pitch first
+    // Skip if it matches alias table, xmin, or pitch
     if (ALIAS_TABLE[lower] || XMIN_NAMES.has(lower)) return;
-    if (FORMANT_NUMERIC_REGEX.test(lower) || FORMANT_BARE_REGEX.test(lower)) return;
     if (PITCH_REGEX.test(lower)) return;
+
+    // Collect numeric timepoints (including bare formant → 0)
+    const numericMatch = lower.match(FORMANT_NUMERIC_REGEX);
+    if (numericMatch) {
+      numericTimePoints.add(parseInt(numericMatch[2], 10));
+      return;
+    }
+    if (FORMANT_BARE_REGEX.test(lower)) {
+      numericTimePoints.add(0);
+      return;
+    }
+
+    // Collect named targets
     const namedMatch = lower.match(FORMANT_NAMED_REGEX);
     if (namedMatch) {
       const target = namedMatch[2];
@@ -88,9 +101,10 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
       }
     }
   });
-  // Build target → numeric index map
+  // Build target → numeric index map, starting ABOVE all numeric timepoints to avoid collisions
+  const namedTargetBase = numericTimePoints.size > 0 ? Math.max(...numericTimePoints) + 1000 : 0;
   const namedTargetIndex: Record<string, number> = {};
-  namedTargetOrder.forEach((t, i) => { namedTargetIndex[t] = i; });
+  namedTargetOrder.forEach((t, i) => { namedTargetIndex[t] = namedTargetBase + i; });
 
   // Pass 2: build mappings
   return headers.map(header => {
@@ -170,7 +184,18 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
     const values = sampleRows.map(row => row[colIdx] || '').filter(v => v !== '');
     const unique = new Set(values);
 
-    if (unique.size > 0 && unique.size <= 50) {
+    // If no values in sample rows, default to field (not ignore) — full data may have values
+    if (unique.size === 0) {
+      return {
+        csvHeader: header,
+        role: 'field' as ColumnRole,
+        fieldName: header,
+        showInSidebar: false,
+        isDataField: false,
+      };
+    }
+
+    if (unique.size <= 50) {
       const numericCount = values.filter(v => !isNaN(parseFloat(v))).length;
       const mostlyNumeric = values.length > 0 && numericCount / values.length > 0.8;
       if (mostlyNumeric && unique.size > 20) {

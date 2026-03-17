@@ -270,11 +270,14 @@ const App: React.FC = () => {
     const f3Range = computeNormalizedRange(tokens, 'f3', method, initStats, smooth);
     const tsFreqRange: [number, number] = [Math.min(f1Range[0], f2Range[0]), Math.max(f1Range[1], f2Range[1])];
 
-    setLayers(prev => prev.map(l => ({
-      ...l,
+    // Reset to a single background layer with fresh config + filters (clears old layers/plots)
+    setLayers([{
+      ...createBackgroundLayer(),
       filters: allFilters,
-      config: { ...l.config, f1Range, f2Range, f3Range, timeSeriesFrequencyRange: tsFreqRange, trajectoryOnset: 0, trajectoryOffset: 100 },
-    })));
+      config: { ...INITIAL_CONFIG, f1Range, f2Range, f3Range, timeSeriesFrequencyRange: tsFreqRange },
+    }]);
+    setActiveLayerId('bg');
+    setLayerCounters({ point: 1, trajectory: 1 });
     setMappingDialog(null);
     setIsLoading(false);
   }, [mappingDialog]);
