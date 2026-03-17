@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, VariableType, StyleOverrides, Layer, DatasetMeta, NormalizationMethod } from '../types';
-import { SpeakerStatsMap, getRangeStep, getAxisLabel } from '../utils/normalization';
+import { SpeakerStatsMap, getRangeStep, getAxisLabel, computeNormalizedRange } from '../utils/normalization';
 import CanvasPlot from './CanvasPlot';
 import TrajectoryTimeSeries from './TrajectoryTimeSeries';
 import TrajectoryF1F2 from './TrajectoryF1F2';
@@ -204,6 +204,22 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   const handleConfig = (key: keyof PlotConfig, val: any) => {
       updateLayerConfig(activeLayerId, key, val);
   };
+
+  const handleFitToData = useCallback(() => {
+    const bgData = layerData['bg'] || [];
+    if (bgData.length === 0) return;
+    const method = bgConfig.normalization || 'hz' as NormalizationMethod;
+    const smooth = bgConfig.useSmoothing;
+    const bgId = layers[0].id;
+    const f1Range = computeNormalizedRange(bgData, 'f1', method, speakerStats || {}, smooth);
+    const f2Range = computeNormalizedRange(bgData, 'f2', method, speakerStats || {}, smooth);
+    const f3Range = computeNormalizedRange(bgData, 'f3', method, speakerStats || {}, smooth);
+    const tsFreqRange: [number, number] = [Math.min(f1Range[0], f2Range[0]), Math.max(f1Range[1], f2Range[1])];
+    updateLayerConfig(bgId, 'f1Range', f1Range);
+    updateLayerConfig(bgId, 'f2Range', f2Range);
+    updateLayerConfig(bgId, 'f3Range', f3Range);
+    updateLayerConfig(bgId, 'timeSeriesFrequencyRange', tsFreqRange);
+  }, [layerData, bgConfig.normalization, bgConfig.useSmoothing, layers, speakerStats, updateLayerConfig]);
 
   const toggleReferenceVowel = (vowel: string) => {
     setActiveConfig(prev => {
@@ -1929,6 +1945,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             layers={layers}
             layerData={layerData}
             onLegendClick={handleLegendClick}
+            onFitToData={handleFitToData}
             datasetMeta={datasetMeta}
             speakerStats={speakerStats}
           />

@@ -8,6 +8,7 @@ interface CanvasPlotProps {
   layers: Layer[];
   layerData: Record<string, SpeechToken[]>;
   onLegendClick?: (category: string, currentStyles: any, event: React.MouseEvent, layerId?: string) => void;
+  onFitToData?: () => void;
   datasetMeta?: DatasetMeta | null;
   speakerStats?: SpeakerStatsMap;
 }
@@ -296,7 +297,7 @@ const Legend = ({ layers, allMappings, onLegendClick }: {
   );
 };
 
-const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData, onLegendClick, datasetMeta, speakerStats }, ref) => {
+const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData, onLegendClick, onFitToData, datasetMeta, speakerStats }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
@@ -1229,6 +1230,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         <button onClick={() => setTransform(t => ({ ...t, scale: t.scale * 1.2 }))} className="w-8 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 font-bold">+</button>
         <button onClick={() => setTransform(t => ({ ...t, scale: t.scale * 0.8 }))} className="w-8 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 font-bold">-</button>
         <button onClick={() => setTransform({ x: 0, y: 0, scale: 1 })} className="px-3 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 text-[10px] font-bold">RESET VIEW</button>
+        {onFitToData && <button onClick={() => { setTransform({ x: 0, y: 0, scale: 1 }); onFitToData(); }} className="px-3 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 text-[10px] font-bold">FIT</button>}
       </div>
       {hoveredToken && (() => {
         const hoveredLayer = hoveredLayerId ? layers.find(l => l.id === hoveredLayerId) : layers[0];
