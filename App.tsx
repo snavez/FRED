@@ -73,6 +73,7 @@ const INITIAL_CONFIG: PlotConfig = {
   durationBoxGap: 0.4,
 
   // Distribution defaults
+  distPlotBy: 'none',
   separatePlots: false,
   distGroupOrder: 'count',
   distGroupDir: 'desc',

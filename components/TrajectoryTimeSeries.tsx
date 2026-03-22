@@ -11,6 +11,20 @@ interface TrajectoryTimeSeriesProps {
   speakerStats?: SpeakerStatsMap;
 }
 
+/** Get effective duration for a token, falling back to duration-like fields */
+const getTokenDuration = (t: SpeechToken): number => {
+  if (t.duration > 0) return t.duration;
+  // Fallback: check fields for a duration-like key
+  for (const [key, val] of Object.entries(t.fields)) {
+    const k = key.toLowerCase();
+    if (k === 'duration' || k === 'dur' || k.startsWith('dur_') || k.endsWith('_dur') || k.endsWith('_duration')) {
+      const n = parseFloat(val);
+      if (!isNaN(n) && n > 0) return n;
+    }
+  }
+  return 0;
+};
+
 const COLORS = [
   '#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', 
   '#ec4899', '#06b6d4', '#84cc16', '#64748b', '#dc2626', 
@@ -59,14 +73,14 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     if (config.colorBy !== 'none') {
       const uniqueKeys = new Set<string>();
       data.forEach(t => {
-        const k = getLabel(t, config.colorBy);
-        if (k) uniqueKeys.add(k);
+        const k = getLabel(t, config.colorBy) || 'Undefined';
+        uniqueKeys.add(k);
         if (!grps[k]) grps[k] = [];
         grps[k].push(t);
       });
       const keys = Array.from(uniqueKeys).sort();
-      keys.forEach((k, i) => { 
-          map[k] = styleOverrides?.colors?.[k] || palette[i % palette.length]; 
+      keys.forEach((k, i) => {
+          map[k] = styleOverrides?.colors?.[k] || palette[i % palette.length];
       });
     } else {
       grps['All'] = data;
@@ -97,8 +111,8 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
 
     // Create Combined Groups for Mean Calculation
     data.forEach(t => {
-        const cKey = config.colorBy !== 'none' ? getLabel(t, config.colorBy) : 'All';
-        const lKey = config.lineTypeBy !== 'none' ? getLabel(t, config.lineTypeBy) : 'Default';
+        const cKey = config.colorBy !== 'none' ? (getLabel(t, config.colorBy) || 'Undefined') : 'All';
+        const lKey = config.lineTypeBy !== 'none' ? (getLabel(t, config.lineTypeBy) || 'Undefined') : 'Default';
         const compKey = `${cKey}|${lKey}`;
         if (!combined[compKey]) combined[compKey] = [];
         combined[compKey].push(t);
@@ -131,7 +145,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
       const f1Sums = new Array(binCount).fill(0);
       const f2Sums = new Array(binCount).fill(0);
       const counts = new Array(binCount).fill(0);
-      const maxDur = Math.max(...tks.map(t => t.duration));
+      const maxDur = Math.max(...tks.map(t => getTokenDuration(t)));
       const binSize = config.timeNormalized ? (sortedNormTimes.length > 1 ? sortedNormTimes[1] - sortedNormTimes[0] : 10) : maxDur / binCount;
 
       const normM = (config.normalization || 'hz') as NormalizationMethod;
@@ -151,8 +165,9 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
              // For non-normalized time
              for(let i=0; i<binCount; i++) {
                  const time = i * binSize;
-                 if(time > t.duration) continue;
-                 const normTime = (time/t.duration)*100;
+                 const tDur = getTokenDuration(t);
+                 if(tDur <= 0 || time > tDur) continue;
+                 const normTime = (time/tDur)*100;
                  if (normTime < onset || normTime > offset) continue;
                  // Find bracketing trajectory points
                  let p0Idx = -1, p1Idx = -1;
@@ -201,7 +216,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     
     ctx.scale(scale, scale);
 
-    const xMax = config.timeNormalized ? 100 : Math.max(0.1, ...data.map(t => t.duration));
+    const xMax = config.timeNormalized ? 100 : Math.max(0.1, ...data.map(t => getTokenDuration(t)));
     // Use specific frequency range for time series
     const [yMin, yMax] = config.timeSeriesFrequencyRange || [0, 4000];
 
@@ -283,15 +298,15 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     data.forEach(token => {
       let color = '#64748b';
       if (config.colorBy !== 'none') {
-        const k = getLabel(token, config.colorBy);
+        const k = getLabel(token, config.colorBy) || 'Undefined';
         if (colorMap[k]) color = colorMap[k];
       }
-      
+
       let dashPattern: number[] = [];
       let isF1Solid = true;
 
       if (config.lineTypeBy !== 'none') {
-          const lVal = getLabel(token, config.lineTypeBy);
+          const lVal = getLabel(token, config.lineTypeBy) || 'Undefined';
           dashPattern = lineStyles[lVal] || [];
           isF1Solid = false;
       }
@@ -331,7 +346,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
                   return;
               }
 
-              const tVal = config.timeNormalized ? p.time : (p.time / 100) * token.duration;
+              const tVal = config.timeNormalized ? p.time : (p.time / 100) * getTokenDuration(token);
               const x = mapX(tVal);
               const y = mapY(val);
 
@@ -786,7 +801,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     const width = containerRef.current.clientWidth;
     const height = containerRef.current.clientHeight;
 
-    const xMax = config.timeNormalized ? 100 : Math.max(0.1, ...data.map(t => t.duration));
+    const xMax = config.timeNormalized ? 100 : Math.max(0.1, ...data.map(t => getTokenDuration(t)));
     const [yMin, yMax] = config.timeSeriesFrequencyRange || [0, 4000]; 
     const mapX = (val: number) => (val / xMax) * width;
     const mapY = (val: number) => height - ((val - yMin) / (yMax - yMin)) * height;
@@ -797,7 +812,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     for (const t of data) {
        const mid = t.trajectory[Math.floor(t.trajectory.length / 2)];
        if (!mid) continue;
-       const tVal = config.timeNormalized ? mid.time : (mid.time / 100) * t.duration;
+       const tVal = config.timeNormalized ? mid.time : (mid.time / 100) * getTokenDuration(t);
        const px = mapX(tVal);
        
        if (Math.abs(px - x) < 20) {

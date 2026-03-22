@@ -43,7 +43,7 @@ const addAliases = (aliases: string[], role: ColumnRole) => {
 };
 addAliases(['speaker', 'speaker_id', 'participant', 'subject'], 'speaker');
 addAliases(['file_id', 'fileid', 'filename', 'file'], 'file_id');
-addAliases(['duration', 'dur', 'seg_dur'], 'duration');
+addAliases(['duration', 'dur', 'seg_dur', 'dur_phonemic', 'dur_phoneme', 'phone_dur', 'phon_dur', 'vowel_dur', 'seg_duration', 'segment_dur', 'segment_duration'], 'duration');
 addAliases(['pitch', 'f0', 'voice_pitch'], 'pitch');
 
 // Formant patterns (case-insensitive):
@@ -120,6 +120,15 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
         fieldName: role === 'pitch' ? header : undefined,
         showInSidebar: !isData && (role === 'speaker' || role === 'file_id'),
         isDataField: isData,
+      };
+    }
+
+    // 1a. Fuzzy duration detection: columns containing "dur" as a component (e.g. dur_phonemic, vowel_dur)
+    if (/^dur[_]|[_]dur$|[_]dur[_]|^duration[_]|[_]duration$/.test(lower)) {
+      return {
+        csvHeader: header,
+        role: 'duration' as ColumnRole,
+        isDataField: true,
       };
     }
 

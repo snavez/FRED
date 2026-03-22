@@ -136,34 +136,56 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
   // Numeric variable options (for Duration Y-axis selector)
   const numericVariableOptions = useMemo(() => {
-    const options: { label: string; value: string }[] = [{ label: 'Duration', value: 'duration' }];
-    if (!datasetMeta) return options;
-    const seen = new Set<string>(['duration']);
-    // Add xmin (always numeric) — use the user's field name from datasetMeta
-    options.push({ label: prettyLabel('xmin', datasetMeta), value: 'xmin' });
-    seen.add('xmin');
+    const options: { label: string; value: string }[] = [];
+    if (!datasetMeta) return [{ label: 'Duration', value: 'duration' }];
+    const seen = new Set<string>();
     for (const m of datasetMeta.columnMappings) {
       const key = m.fieldName || m.csvHeader;
-      if (seen.has(key)) continue;
+      if (!key || seen.has(key)) continue;
+      // Include duration-role columns
+      if (m.role === 'duration') {
+        seen.add(key);
+        // Use 'duration' as value key (maps to SpeechToken.duration)
+        if (!seen.has('duration')) {
+          seen.add('duration');
+          options.push({ label: prettyLabel(key, datasetMeta) || key, value: 'duration' });
+        }
+      }
       // Include pitch-role columns
-      if (m.role === 'pitch' && key) {
+      if (m.role === 'pitch') {
         seen.add(key);
         options.push({ label: prettyLabel(key, datasetMeta), value: key });
       }
       // Include data fields (isDataField: true) — these are numeric plot values
-      if (m.role === 'field' && m.isDataField && key) {
+      if (m.role === 'field' && m.isDataField) {
         seen.add(key);
         options.push({ label: prettyLabel(key, datasetMeta), value: key });
       }
     }
-    // Add formant options
-    for (const f of [
-      { label: 'F1', value: 'f1' }, { label: 'F2', value: 'f2' }, { label: 'F3', value: 'f3' },
-      { label: 'F1 (smooth)', value: 'f1_smooth' }, { label: 'F2 (smooth)', value: 'f2_smooth' }, { label: 'F3 (smooth)', value: 'f3_smooth' },
-    ]) {
-      if (!seen.has(f.value)) { seen.add(f.value); options.push(f); }
+    // Add formant options from actual dataset columns
+    for (const m of datasetMeta.columnMappings) {
+      if (m.role !== 'formant' || !m.formant) continue;
+      const key = m.formant + (m.isSmooth ? '_smooth' : '');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const label = m.isSmooth
+        ? `${m.formant.toUpperCase()} (smooth)`
+        : m.formant.toUpperCase();
+      options.push({ label, value: key });
     }
-    return options;
+    return options.length > 0 ? options : [{ label: 'Duration', value: 'duration' }];
+  }, [datasetMeta]);
+
+  // Set of formant value keys present in the dataset (for conditional time-point selectors)
+  const formantValueKeys = useMemo(() => {
+    const keys = new Set<string>();
+    if (!datasetMeta) return keys;
+    for (const m of datasetMeta.columnMappings) {
+      if (m.role === 'formant' && m.formant) {
+        keys.add(m.formant + (m.isSmooth ? '_smooth' : ''));
+      }
+    }
+    return keys;
   }, [datasetMeta]);
 
   // Dynamic time-points (from dataset or default 0-100 by 10)
@@ -313,7 +335,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             <button onClick={() => setActiveTab('vowel')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'vowel' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Grid size={16} /><span>F1/F2</span></button>
             <button onClick={() => setActiveTab('3d')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === '3d' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Box size={16} /><span>3D F1/F2/F3</span></button>
             <button onClick={() => setActiveTab('traj_series')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'traj_series' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><LineChart size={16} /><span>Time Series</span></button>
-            <button onClick={() => setActiveTab('duration')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'duration' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><BarChart2 size={16} /><span>Duration</span></button>
+            <button onClick={() => setActiveTab('duration')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'duration' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><BarChart2 size={16} /><span>Data Summaries</span></button>
             <button onClick={() => setActiveTab('dist')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'dist' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><PieChart size={16} /><span>Distributions</span></button>
             <button onClick={() => setActiveTab('table')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'table' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Table size={16} /><span>Table</span></button>
           </div>
@@ -1077,6 +1099,19 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         </select>
                       </div>
                     </div>
+                    <div className="flex flex-col justify-center">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">X-Axis</span>
+                      <div className="flex rounded border border-slate-300 overflow-hidden">
+                        <button
+                          className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${currentConfig.timeNormalized !== false ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                          onClick={() => handleConfig('timeNormalized', true)}
+                        >Normalised</button>
+                        <button
+                          className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${currentConfig.timeNormalized === false ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                          onClick={() => handleConfig('timeNormalized', false)}
+                        >Absolute</button>
+                      </div>
+                    </div>
                     </>
                   )}
                   {activeTab === 'duration' && (
@@ -1089,7 +1124,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         </select>
                       </div>
                       </HelpTooltip>
-                      {['f1','f2','f3','f1_smooth','f2_smooth','f3_smooth'].includes(currentConfig.durationYField || '') && (
+                      {formantValueKeys.has(currentConfig.durationYField || '') && (
                         <div className="flex flex-col justify-center">
                           <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Time</span>
                           <select className="p-0.5 border rounded text-[10px]"
@@ -1195,21 +1230,14 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         <select className="p-1 border border-slate-300 rounded text-[10px]"
                           value={currentConfig.distHistXVar || 'duration'}
                           onChange={e => handleConfig('distHistXVar', e.target.value)}>
-                          {[...numericVariableOptions,
-                            { label: 'F1', value: 'f1' },
-                            { label: 'F2', value: 'f2' },
-                            { label: 'F3', value: 'f3' },
-                            { label: 'F1 (smooth)', value: 'f1_smooth' },
-                            { label: 'F2 (smooth)', value: 'f2_smooth' },
-                            { label: 'F3 (smooth)', value: 'f3_smooth' },
-                          ].map(opt => (
+                          {numericVariableOptions.map(opt => (
                             <option key={opt.value} value={opt.value}>{opt.label}</option>
                           ))}
                         </select>
                       </div>
 
                       {/* Time point selector (only for formant variables) */}
-                      {['f1','f2','f3','f1_smooth','f2_smooth','f3_smooth'].includes(currentConfig.distHistXVar || '') && (
+                      {formantValueKeys.has(currentConfig.distHistXVar || '') && (
                         <div className="flex flex-col gap-0.5">
                           <span className="text-[9px] font-bold text-slate-500 uppercase">Time</span>
                           <select className="p-1 border border-slate-300 rounded text-[10px]"
@@ -1237,6 +1265,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             {/* Distribution Counts: ordering controls in Row 1 */}
             {activeTab === 'dist' && currentConfig.distMode !== 'histogram' && (
                 <>
+                    <HelpTooltip helpMode={helpMode} text="Sort the top-level groups on the X-axis. Count = by total frequency. Alpha = alphabetically. Arrow toggles ascending/descending.">
                     <div className="flex flex-col gap-0.5">
                       <span className="text-[9px] font-bold text-slate-500 uppercase">Group Order</span>
                       <div className="flex items-center gap-1">
@@ -1249,7 +1278,9 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         </button>
                       </div>
                     </div>
+                    </HelpTooltip>
 
+                    <HelpTooltip helpMode={helpMode} text="Sort individual bars within each group. Count = by value. Alpha = alphabetically. Arrow toggles ascending/descending.">
                     <div className="flex flex-col gap-0.5">
                       <span className="text-[9px] font-bold text-slate-500 uppercase">Bar Order</span>
                       <div className="flex items-center gap-1">
@@ -1262,9 +1293,11 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         </button>
                       </div>
                     </div>
+                    </HelpTooltip>
 
                     <div className="h-6 w-px bg-slate-300"></div>
 
+                    <HelpTooltip helpMode={helpMode} text="Grouped = bars side by side for each category. Stacked = bars stacked vertically within each group.">
                     <div className="flex flex-col gap-0.5">
                       <span className="text-[9px] font-bold text-slate-500 uppercase">Bar Mode</span>
                       <select className="p-1 border border-slate-300 rounded text-[10px]" value={currentConfig.distBarMode || 'grouped'} onChange={e => handleConfig('distBarMode', e.target.value)}>
@@ -1272,8 +1305,10 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         <option value="stacked">Stacked</option>
                       </select>
                     </div>
+                    </HelpTooltip>
 
                     {currentConfig.textureBy !== 'none' && currentConfig.textureBy !== currentConfig.colorBy && (
+                      <HelpTooltip helpMode={helpMode} text="When both Colour and Texture are set to different variables, choose which variable forms the primary grouping level.">
                       <div className="flex flex-col gap-0.5 animate-in fade-in slide-in-from-left-2 duration-300">
                         <span className="text-[9px] font-bold text-slate-500 uppercase">Cluster By</span>
                         <select className="p-1 border border-slate-300 rounded text-[10px] max-w-[80px]" value={currentConfig.distPrimaryVar || 'color'} onChange={e => handleConfig('distPrimaryVar', e.target.value)}>
@@ -1281,8 +1316,10 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                           <option value="texture">Pattern ({currentConfig.textureBy})</option>
                         </select>
                       </div>
+                      </HelpTooltip>
                     )}
 
+                    <HelpTooltip helpMode={helpMode} text="Count = show raw token counts. Percent = show percentages. In stacked+percentage mode, the 100% button normalises each stack to fill 100%.">
                     <div className="flex flex-col gap-0.5">
                       <span className="text-[9px] font-bold text-slate-500 uppercase">Values</span>
                       <div className="flex items-center gap-1">
@@ -1295,6 +1332,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         )}
                       </div>
                     </div>
+                    </HelpTooltip>
                 </>
             )}
 
@@ -1583,6 +1621,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             {/* ── Dist Counts: Row 2 — Colour, Texture, Layout ── */}
             {activeTab === 'dist' && currentConfig.distMode !== 'histogram' && (
               <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2 min-h-[40px]">
+                {renderVariableSelect('Plot By', currentConfig.distPlotBy || 'none', v => handleConfig('distPlotBy', v))}
                 {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
                 {renderVariableSelect('Texture By', currentConfig.textureBy, v => handleConfig('textureBy', v))}
 
@@ -1614,6 +1653,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             {/* ── Dist Histogram: Row 2 — Colour, Overlap, Opacity, Bins ── */}
             {activeTab === 'dist' && currentConfig.distMode === 'histogram' && (
               <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2 min-h-[40px]">
+                {renderVariableSelect('Plot By', currentConfig.distPlotBy || 'none', v => handleConfig('distPlotBy', v))}
                 {renderVariableSelect('Colour', currentConfig.distHistColorBy || 'none', v => handleConfig('distHistColorBy', v))}
 
                 {/* Overlap mode (only when colouring) */}
@@ -1706,8 +1746,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
               {/* Summary mode controls */}
               {currentConfig.tableMode === 'summary' && (() => {
                 const selectedMeasures = currentConfig.tableSummaryMeasures || ['duration'];
-                const FORMANT_SET = new Set(['f1','f2','f3','f1_smooth','f2_smooth','f3_smooth']);
-                const hasFormantMeasure = selectedMeasures.some(m => FORMANT_SET.has(m));
+                const hasFormantMeasure = selectedMeasures.some(m => formantValueKeys.has(m));
                 return (
                 <>
                   {renderVariableSelect('Group By', currentConfig.tableSummaryGroupBy || 'none', v => handleConfig('tableSummaryGroupBy', v))}
@@ -1806,8 +1845,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
               {currentConfig.tableMode === 'analysis' && (() => {
                 const analysisType = currentConfig.tableAnalysisType || 'continuous';
                 const selectedAnalysisMeasures = currentConfig.tableAnalysisMeasures || ['duration'];
-                const FORMANT_SET_A = new Set(['f1','f2','f3','f1_smooth','f2_smooth','f3_smooth']);
-                const hasFormantAnalysisMeasure = selectedAnalysisMeasures.some(m => FORMANT_SET_A.has(m));
+                const hasFormantAnalysisMeasure = selectedAnalysisMeasures.some(m => formantValueKeys.has(m));
                 return (
                 <>
                   {/* Analysis Type Toggle */}

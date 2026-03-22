@@ -100,6 +100,7 @@ export interface PlotConfig {
   durationBoxGap: number;                   // additional slot units between boxes (0 = no gap, default 0.4)
 
   // Distribution Plot Config
+  distPlotBy: string;                        // 'none' or field key — faceting variable for distributions
   separatePlots: boolean;
   distGroupOrder: 'count' | 'alpha';
   distGroupDir: 'asc' | 'desc';

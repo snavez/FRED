@@ -79,90 +79,63 @@ const COLORS = [
 
 import { getLabel } from '../utils/getLabel';
 
-const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({ data, config, datasetMeta, styleOverrides, onLegendClick }, ref) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  // Histogram hover state
-  const [hoveredBin, setHoveredBin] = useState<HistBin | null>(null);
-  const [mousePos, setMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-
-  const plotData = useMemo(() => {
-    // 1. Group by Top Level (Group By)
+// Helper: compute counts plot data for a token subset (reused for faceting)
+function computeCountsPlotData(tokens: SpeechToken[], config: PlotConfig, styleOverrides?: StyleOverrides) {
     const groups: Record<string, SpeechToken[]> = {};
-    data.forEach(t => {
+    tokens.forEach(t => {
        const gKey = getLabel(t, config.groupBy || 'phoneme') || 'Undefined';
        if (!groups[gKey]) groups[gKey] = [];
        groups[gKey].push(t);
     });
-    
-    // Sort Groups based on config
+
     const groupKeys = Object.keys(groups);
     const sortedGroups = groupKeys.sort((a,b) => {
         let cmp = 0;
-        if (config.distGroupOrder === 'alpha') {
-            cmp = a.localeCompare(b);
-        } else {
-            // Count
-            cmp = groups[a].length - groups[b].length;
-        }
+        if (config.distGroupOrder === 'alpha') { cmp = a.localeCompare(b); }
+        else { cmp = groups[a].length - groups[b].length; }
         return config.distGroupDir === 'asc' ? cmp : -cmp;
     });
 
-    // 2. Identify Interaction Mode
-    const colorKey = config.colorBy !== 'none' ? config.colorBy : 'phoneme'; // Default fallback
+    const colorKey = config.colorBy !== 'none' ? config.colorBy : 'phoneme';
     const textureKey = config.textureBy !== 'none' ? config.textureBy : null;
     const isInteraction = textureKey && colorKey !== textureKey;
 
-    // 3. Process Sub-Data
     const processedGroups: Record<string, any> = {};
     const globalColors: Record<string, string> = {};
     const colorDomain = new Set<string>();
     const textureDomain = new Set<string>();
-    
-    // Counts for Legend
     const colorCounts: Record<string, number> = {};
     const textureCounts: Record<string, number> = {};
 
     Object.keys(groups).forEach(gKey => {
-        const tokens = groups[gKey];
+        const gTokens = groups[gKey];
         if (isInteraction) {
-            // Nested: Group -> PrimaryVar -> SecondaryVar -> Count
-            // distPrimaryVar determines the first level of nesting
             const primaryKey = config.distPrimaryVar === 'texture' ? textureKey! : colorKey;
             const secondaryKey = config.distPrimaryVar === 'texture' ? colorKey : textureKey!;
-
             const nested: Record<string, Record<string, number>> = {};
-            tokens.forEach(t => {
+            gTokens.forEach(t => {
                 const pVal = getLabel(t, primaryKey);
                 const sVal = getLabel(t, secondaryKey);
-                
                 if (!nested[pVal]) nested[pVal] = {};
                 nested[pVal][sVal] = (nested[pVal][sVal] || 0) + 1;
-                
-                // Track domains and counts
                 if (config.distPrimaryVar === 'texture') {
-                    textureDomain.add(pVal);
-                    colorDomain.add(sVal);
+                    textureDomain.add(pVal); colorDomain.add(sVal);
                     textureCounts[pVal] = (textureCounts[pVal] || 0) + 1;
                     colorCounts[sVal] = (colorCounts[sVal] || 0) + 1;
                 } else {
-                    colorDomain.add(pVal);
-                    textureDomain.add(sVal);
+                    colorDomain.add(pVal); textureDomain.add(sVal);
                     colorCounts[pVal] = (colorCounts[pVal] || 0) + 1;
                     textureCounts[sVal] = (textureCounts[sVal] || 0) + 1;
                 }
             });
             processedGroups[gKey] = nested;
         } else {
-            // Stacked: Group -> ColorVar -> Count
             const counts: Record<string, number> = {};
-            tokens.forEach(t => {
+            gTokens.forEach(t => {
                 const cVal = getLabel(t, colorKey);
                 counts[cVal] = (counts[cVal] || 0) + 1;
                 colorDomain.add(cVal);
                 colorCounts[cVal] = (colorCounts[cVal] || 0) + 1;
-                
                 if (config.textureBy === colorKey) textureDomain.add(cVal);
             });
             processedGroups[gKey] = counts;
@@ -182,11 +155,95 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
         if (styleOverrides?.textures[t] !== undefined) {
             textureMap[t] = styleOverrides.textures[t];
         } else {
-            textureMap[t] = i; // 0..N
+            textureMap[t] = i;
         }
     });
 
     return { groups: sortedGroups, data: processedGroups, colors: globalColors, colorCounts, textureCounts, textureMap, textureList, isInteraction, colorKey, textureKey };
+}
+
+// Helper: compute histogram data for a token subset (reused for faceting)
+function computeHistogramBins(
+  tokens: SpeechToken[], config: PlotConfig,
+  getHistValue: (t: SpeechToken) => number,
+  styleOverrides?: StyleOverrides
+): HistogramData {
+    const values: { val: number; token: SpeechToken }[] = [];
+    tokens.forEach(t => {
+      const val = getHistValue(t);
+      if (!isNaN(val) && isFinite(val)) values.push({ val, token: t });
+    });
+    if (values.length === 0) {
+      return { bins: [], min: 0, max: 0, maxY: 0, binWidth: 1, categories: [], colors: {}, totalCount: 0 };
+    }
+    let dataMin = Infinity, dataMax = -Infinity;
+    values.forEach(v => { if (v.val < dataMin) dataMin = v.val; if (v.val > dataMax) dataMax = v.val; });
+    const min = dataMax === dataMin ? dataMin - 0.5 : dataMin;
+    const max = dataMax === dataMin ? dataMax + 0.5 : dataMax;
+    const binCount = Math.max(1, config.distHistBinCount || 30);
+    const binWidth = (max - min) / binCount;
+    const colorByKey = (config.distHistColorBy && config.distHistColorBy !== 'none') ? config.distHistColorBy : null;
+    const categorySet = new Set<string>();
+    const bins: HistBin[] = Array.from({ length: binCount }, (_, i) => ({
+      x0: min + i * binWidth, x1: min + (i + 1) * binWidth, counts: {}, total: 0,
+    }));
+    values.forEach(({ val, token }) => {
+      let binIdx = Math.floor((val - min) / binWidth);
+      if (binIdx >= binCount) binIdx = binCount - 1;
+      if (binIdx < 0) binIdx = 0;
+      const category = colorByKey ? (getLabel(token, colorByKey) || 'Undefined') : 'all';
+      categorySet.add(category);
+      bins[binIdx].counts[category] = (bins[binIdx].counts[category] || 0) + 1;
+      bins[binIdx].total++;
+    });
+    const isDensity = config.distHistYMode === 'density';
+    const isStacked = config.distHistOverlap === 'stacked' || !colorByKey;
+    let maxY = 0;
+    bins.forEach(bin => {
+      if (isStacked) {
+        const stackTotal = isDensity ? bin.total / (values.length * binWidth) : bin.total;
+        if (stackTotal > maxY) maxY = stackTotal;
+      } else {
+        Object.values(bin.counts).forEach(c => {
+          const v = isDensity ? c / (values.length * binWidth) : c;
+          if (v > maxY) maxY = v;
+        });
+      }
+    });
+    const categories = Array.from(categorySet).sort();
+    const bwOverlaid = config.bwMode && config.distHistOverlap === 'overlaid' && colorByKey;
+    const palette = config.bwMode
+      ? (bwOverlaid ? ['#b0b0b0', '#404040', '#d0d0d0', '#707070', '#909090'] : ['#525252', '#94a3b8', '#cbd5e1'])
+      : COLORS;
+    const colors: Record<string, string> = {};
+    categories.forEach((c, i) => {
+      const ov = styleOverrides?.colors[c];
+      colors[c] = (ov && (!config.bwMode || isGreyHex(ov))) ? ov : palette[i % palette.length];
+    });
+    return { bins, min, max, maxY, binWidth, categories, colors, totalCount: values.length };
+}
+
+const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({ data, config, datasetMeta, styleOverrides, onLegendClick }, ref) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Histogram hover state
+  const [hoveredBin, setHoveredBin] = useState<HistBin | null>(null);
+  const [mousePos, setMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Facet groups — split data by distPlotBy variable
+  const facetGroups = useMemo(() => {
+    if (!config.distPlotBy || config.distPlotBy === 'none') return null;
+    const groups: Record<string, SpeechToken[]> = {};
+    data.forEach(t => {
+      const k = getLabel(t, config.distPlotBy!) || '(empty)';
+      (groups[k] || (groups[k] = [])).push(t);
+    });
+    return Object.entries(groups).sort(([a],[b]) => a.localeCompare(b));
+  }, [data, config.distPlotBy]);
+
+  const plotData = useMemo(() => {
+    return computeCountsPlotData(data, config, styleOverrides);
   }, [data, config, styleOverrides]);
 
   // ── Histogram data pipeline ──
@@ -215,92 +272,15 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
 
   const histogramData = useMemo((): HistogramData | null => {
     if (config.distMode !== 'histogram') return null;
-
-    // 1. Extract numeric values, filter NaN
-    const values: { val: number; token: SpeechToken }[] = [];
-    data.forEach(t => {
-      const val = getHistValue(t);
-      if (!isNaN(val) && isFinite(val)) values.push({ val, token: t });
-    });
-
-    if (values.length === 0) {
-      return { bins: [], min: 0, max: 0, maxY: 0, binWidth: 1, categories: [], colors: {}, totalCount: 0 };
-    }
-
-    // 2. Compute range
-    let dataMin = Infinity, dataMax = -Infinity;
-    values.forEach(v => { if (v.val < dataMin) dataMin = v.val; if (v.val > dataMax) dataMax = v.val; });
-
-    // Single-value edge case
-    const min = dataMax === dataMin ? dataMin - 0.5 : dataMin;
-    const max = dataMax === dataMin ? dataMax + 0.5 : dataMax;
-
-    const binCount = Math.max(1, config.distHistBinCount || 30);
-    const binWidth = (max - min) / binCount;
-
-    // 3. Color categories
-    const colorByKey = (config.distHistColorBy && config.distHistColorBy !== 'none') ? config.distHistColorBy : null;
-    const categorySet = new Set<string>();
-
-    // 4. Create bins
-    const bins: HistBin[] = Array.from({ length: binCount }, (_, i) => ({
-      x0: min + i * binWidth,
-      x1: min + (i + 1) * binWidth,
-      counts: {},
-      total: 0,
-    }));
-
-    // 5. Assign tokens to bins
-    values.forEach(({ val, token }) => {
-      let binIdx = Math.floor((val - min) / binWidth);
-      if (binIdx >= binCount) binIdx = binCount - 1;
-      if (binIdx < 0) binIdx = 0;
-
-      const category = colorByKey ? (getLabel(token, colorByKey) || 'Undefined') : 'all';
-      categorySet.add(category);
-      bins[binIdx].counts[category] = (bins[binIdx].counts[category] || 0) + 1;
-      bins[binIdx].total++;
-    });
-
-    // 6. Compute maxY
-    const isDensity = config.distHistYMode === 'density';
-    const isStacked = config.distHistOverlap === 'stacked' || !colorByKey;
-    let maxY = 0;
-
-    bins.forEach(bin => {
-      if (isStacked) {
-        const stackTotal = isDensity ? bin.total / (values.length * binWidth) : bin.total;
-        if (stackTotal > maxY) maxY = stackTotal;
-      } else {
-        // Overlaid: max of individual categories
-        Object.values(bin.counts).forEach(c => {
-          const v = isDensity ? c / (values.length * binWidth) : c;
-          if (v > maxY) maxY = v;
-        });
-      }
-    });
-
-    // 7. Build color map
-    const categories = Array.from(categorySet).sort();
-    // B&W palette: wider spread for overlaid mode so overlaps are distinguishable
-    const bwOverlaid = config.bwMode && config.distHistOverlap === 'overlaid' && colorByKey;
-    const palette = config.bwMode
-      ? (bwOverlaid ? ['#b0b0b0', '#404040', '#d0d0d0', '#707070', '#909090'] : ['#525252', '#94a3b8', '#cbd5e1'])
-      : COLORS;
-    const colors: Record<string, string> = {};
-    categories.forEach((c, i) => {
-      const ov = styleOverrides?.colors[c];
-      colors[c] = (ov && (!config.bwMode || isGreyHex(ov))) ? ov : palette[i % palette.length];
-    });
-
-    return { bins, min, max, maxY, binWidth, categories, colors, totalCount: values.length };
+    return computeHistogramBins(data, config, getHistValue, styleOverrides);
   }, [data, config.distMode, config.distHistXVar, config.distHistTimePoint, config.distHistBinCount,
       config.distHistColorBy, config.distHistYMode, config.distHistOverlap,
       config.bwMode, styleOverrides, getHistValue]);
 
   // ── Histogram rendering helper ──
-  const renderHistogram = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number, scale: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
-    if (!histogramData || histogramData.bins.length === 0) {
+  const renderHistogram = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number, scale: number, drawScale: number = 1, exportConfig?: ExportConfig, histDataOverride?: HistogramData | null) => {
+    const hData = histDataOverride !== undefined ? histDataOverride : histogramData;
+    if (!hData || hData.bins.length === 0) {
       ctx.fillStyle = '#94a3b8';
       ctx.font = `${14 / scale}px Inter`;
       ctx.textAlign = 'center';
@@ -308,7 +288,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
       return;
     }
 
-    const { bins, min, max, maxY, binWidth, categories, colors, totalCount } = histogramData;
+    const { bins, min, max, maxY, binWidth, categories, colors, totalCount } = hData;
     const isExport = !!exportConfig;
     const isDensity = config.distHistYMode === 'density';
     const isOverlaid = config.distHistOverlap === 'overlaid' && categories.length > 1 && categories[0] !== 'all';
@@ -516,6 +496,153 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
     ctx.scale(scale, scale);
+
+    // ── Faceted rendering (Plot By) ──
+    if (facetGroups && facetGroups.length > 1) {
+      const cols = Math.ceil(Math.sqrt(facetGroups.length));
+      const rows = Math.ceil(facetGroups.length / cols);
+      const cellW = (width / scale) / cols;
+      const cellH = (height / scale) / rows;
+      const titleH = 20 * drawScale;
+
+      facetGroups.forEach(([fKey, fTokens], i) => {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const cx = col * cellW;
+        const cy = row * cellH;
+
+        // Draw facet title
+        ctx.fillStyle = '#0f172a';
+        ctx.font = `bold ${(13 * drawScale) / scale}px Inter`;
+        ctx.textAlign = 'center';
+        ctx.fillText(fKey, cx + cellW / 2, cy + titleH * 0.7);
+
+        // Clip and render sub-chart
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(cx, cy + titleH, cellW, cellH - titleH);
+        ctx.clip();
+        ctx.translate(cx, cy + titleH);
+
+        const subW = cellW;
+        const subH = cellH - titleH;
+
+        if (config.distMode === 'histogram') {
+          const facetHist = computeHistogramBins(fTokens, config, getHistValue, styleOverrides);
+          renderHistogram(ctx, subW, subH, 1, drawScale, undefined, facetHist);
+        } else {
+          // Compute per-facet counts data
+          const facetPlot = computeCountsPlotData(fTokens, config, styleOverrides);
+          const { groups: fGroups, data: fPData, colors: fColors, textureMap: fTextureMap, isInteraction: fIsInteraction } = facetPlot;
+
+          // Render a mini counts chart
+          const margin = { top: 10 * drawScale, right: 10 * drawScale, bottom: 60 * drawScale, left: 50 * drawScale };
+          const chartW = subW - margin.left - margin.right;
+          const chartH = subH - margin.top - margin.bottom;
+          if (chartW > 0 && chartH > 0) {
+            // Calculate maxY
+            const isPercentage = config.distValueMode === 'percentage';
+            const isStacked = config.distBarMode === 'stacked';
+            let maxY = 0;
+            const groupTotals: Record<string, number> = {};
+            fGroups.forEach((g: string) => {
+              let sum = 0;
+              if (fIsInteraction) {
+                const nested = fPData[g];
+                Object.values(nested).forEach((sub: any) => { Object.values(sub).forEach((v: any) => sum += Number(v)); });
+              } else {
+                sum = Object.values(fPData[g]).reduce((a: any,b: any) => a+b, 0) as number;
+              }
+              groupTotals[g] = sum;
+            });
+            if (isPercentage) { maxY = 100; }
+            else if (isStacked) { maxY = Math.max(...Object.values(groupTotals), 1); }
+            else {
+              fGroups.forEach((g: string) => {
+                if (fIsInteraction) {
+                  Object.values(fPData[g]).forEach((sub: any) => { Object.values(sub).forEach((v: any) => { if (Number(v) > maxY) maxY = Number(v); }); });
+                } else {
+                  Object.values(fPData[g]).forEach((v: any) => { if (Number(v) > maxY) maxY = Number(v); });
+                }
+              });
+            }
+            if (maxY === 0) maxY = 10;
+
+            // Y-axis
+            ctx.strokeStyle = '#e2e8f0';
+            ctx.lineWidth = (1 * drawScale) / scale;
+            ctx.fillStyle = '#64748b';
+            ctx.font = `${(9 * drawScale) / scale}px Inter`;
+            ctx.textAlign = 'right';
+            for (let yi = 0; yi <= 4; yi++) {
+              const val = maxY * (yi / 4);
+              const y = margin.top + chartH - (val / maxY) * chartH;
+              ctx.beginPath(); ctx.moveTo(margin.left, y); ctx.lineTo(margin.left + chartW, y); ctx.stroke();
+              const label = isPercentage ? `${Math.round(val)}%` : Math.round(val).toString();
+              ctx.fillText(label, margin.left - 4 * drawScale, y + 3 * drawScale);
+            }
+
+            // Bars
+            const cfgGroupGap = (config.distGroupGap || 0) * drawScale;
+            const cfgBarGap = (config.distBarGap || 0) * drawScale;
+            const totalGroupGaps = fGroups.length > 1 ? (fGroups.length - 1) * cfgGroupGap : 0;
+            const groupW = (chartW - totalGroupGaps) / Math.max(fGroups.length, 1);
+
+            fGroups.forEach((g: string, gi: number) => {
+              const gx = margin.left + gi * (groupW + cfgGroupGap);
+              const total = groupTotals[g];
+              if (!fIsInteraction) {
+                const counts = fPData[g];
+                const items = Object.entries(counts).map(([k, v]) => ({
+                  key: k, val: v as number, color: fColors[k] || '#666',
+                  tex: config.textureBy !== 'none' ? (fTextureMap[k] || 0) : 0
+                }));
+                items.sort((a, b) => config.distBarOrder === 'alpha' ? a.key.localeCompare(b.key) : a.val - b.val);
+                if (config.distBarDir === 'desc') items.reverse();
+
+                if (isStacked) {
+                  const barW = groupW * 0.6;
+                  const bx = gx + (groupW - barW) / 2;
+                  let curY = margin.top + chartH;
+                  items.forEach(item => {
+                    const dispVal = isPercentage ? (total > 0 ? (item.val / total * 100) : 0) : item.val;
+                    const h = (dispVal / maxY) * chartH;
+                    curY -= h;
+                    const fill = generateTexture(ctx, item.tex, item.color, '#fff') as string | CanvasPattern;
+                    ctx.fillStyle = fill;
+                    ctx.fillRect(bx, curY, barW, h);
+                    ctx.strokeStyle = 'white'; ctx.lineWidth = 1 * drawScale;
+                    ctx.strokeRect(bx, curY, barW, h);
+                  });
+                } else {
+                  const innerGaps = items.length > 1 ? (items.length - 1) * cfgBarGap : 0;
+                  const barW = (groupW * 0.9 - innerGaps) / Math.max(items.length, 1);
+                  const startX = gx + groupW * 0.05;
+                  items.forEach((item, idx) => {
+                    const dispVal = isPercentage ? (total > 0 ? (item.val / total * 100) : 0) : item.val;
+                    const h = (dispVal / maxY) * chartH;
+                    const bx = startX + idx * (barW + cfgBarGap);
+                    const by = margin.top + chartH - h;
+                    const fill = generateTexture(ctx, item.tex, item.color, '#fff') as string | CanvasPattern;
+                    ctx.fillStyle = fill;
+                    ctx.fillRect(bx, by, barW, h);
+                    ctx.strokeStyle = 'white'; ctx.lineWidth = 1 * drawScale;
+                    ctx.strokeRect(bx, by, barW, h);
+                  });
+                }
+              }
+              // Group label
+              ctx.fillStyle = '#0f172a';
+              ctx.font = `bold ${(8 * drawScale) / scale}px Inter`;
+              ctx.textAlign = 'center';
+              ctx.fillText(`/${g}/`, gx + groupW / 2, margin.top + chartH + 12 * drawScale);
+            });
+          }
+        }
+        ctx.restore();
+      });
+      return;
+    }
 
     // ── Histogram mode ──
     if (config.distMode === 'histogram') {
@@ -1032,7 +1159,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
         });
     }
 
-  }, [plotData, config, renderHistogram]);
+  }, [plotData, config, renderHistogram, facetGroups, getHistValue, styleOverrides]);
 
   const drawLegend = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
     // Histogram mode legend
