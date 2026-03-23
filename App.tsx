@@ -5,7 +5,7 @@ import MainDisplay from './components/MainDisplay';
 import Header from './components/Header';
 import { detectDelimiter, splitRow, autoDetectMappings, parseWithMappings } from './services/csvParser';
 import { getLabel } from './utils/getLabel';
-import { SpeechToken, PlotConfig, FilterState, ReferenceCentroid, Layer, LayerCounters, StyleOverrides, ColumnMapping, DatasetMeta, NormalizationMethod } from './types';
+import { SpeechToken, PlotConfig, FilterState, ReferenceCentroid, Layer, LayerCounters, StyleOverrides, ColumnMapping, DatasetMeta, NormalizationMethod, UNDEFINED_LABEL } from './types';
 import { computeSpeakerStats, computeNormalizedRange, SpeakerStatsMap } from './utils/normalization';
 import DataMappingDialog from './components/DataMappingDialog';
 
@@ -151,17 +151,27 @@ const computeSelectAllFilters = (tokens: SpeechToken[], meta: DatasetMeta | null
 
   for (const m of meta.columnMappings) {
     if (m.role === 'speaker') {
-      filters['speaker'] = Array.from(new Set(tokens.map(t => t.speaker).filter(Boolean)));
+      const vals = Array.from(new Set(tokens.map(t => t.speaker)));
+      const hasEmpty = vals.some(v => !v);
+      filters['speaker'] = [...vals.filter(Boolean), ...(hasEmpty ? [UNDEFINED_LABEL] : [])];
     } else if (m.role === 'file_id') {
-      filters['file_id'] = Array.from(new Set(tokens.map(t => t.file_id).filter(Boolean)));
+      const vals = Array.from(new Set(tokens.map(t => t.file_id)));
+      const hasEmpty = vals.some(v => !v);
+      filters['file_id'] = [...vals.filter(Boolean), ...(hasEmpty ? [UNDEFINED_LABEL] : [])];
     } else if (m.role === 'duration' && m.isDataField !== true) {
       filters['duration'] = Array.from(new Set(tokens.map(t => t.duration.toString()).filter(v => v !== 'NaN')));
     } else if (m.role === 'pitch' && m.fieldName && m.isDataField !== true) {
       const key = m.fieldName;
-      if (!filters[key]) filters[key] = Array.from(new Set(tokens.map(t => t.fields[key] ?? '').filter(v => v !== '')));
+      if (!filters[key]) {
+        const vals = Array.from(new Set(tokens.map(t => t.fields[key] ?? '')));
+        const hasEmpty = vals.some(v => v === '');
+        filters[key] = [...vals.filter(v => v !== ''), ...(hasEmpty ? [UNDEFINED_LABEL] : [])];
+      }
     } else if (m.role === 'field' && m.fieldName) {
       const key = m.fieldName;
-      filters[key] = Array.from(new Set(tokens.map(t => t.fields[key] ?? '').filter(v => v !== '')));
+      const vals = Array.from(new Set(tokens.map(t => t.fields[key] ?? '')));
+      const hasEmpty = vals.some(v => v === '');
+      filters[key] = [...vals.filter(v => v !== ''), ...(hasEmpty ? [UNDEFINED_LABEL] : [])];
     }
   }
 
@@ -307,9 +317,9 @@ const App: React.FC = () => {
     return sourceData.filter(token => {
       for (const { accessor, set } of filterEntries) {
         const val = accessor(token);
-        // Empty/missing values always pass — only non-empty values get checked
-        if (val === '') continue;
-        if (!set.has(val)) return false;
+        // Empty/missing values are checked against the UNDEFINED_LABEL sentinel
+        const effectiveVal = val === '' ? UNDEFINED_LABEL : val;
+        if (!set.has(effectiveVal)) return false;
       }
       return true;
     });

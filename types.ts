@@ -1,4 +1,7 @@
 
+/** Sentinel value for tokens with empty/missing field values, visible in sidebar filters */
+export const UNDEFINED_LABEL = '(Undefined)';
+
 export interface TrajectoryPoint {
   time: number;
   f1: number;

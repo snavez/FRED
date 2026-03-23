@@ -1,7 +1,7 @@
 
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { Filter, Database, Upload, Search, Settings2 } from 'lucide-react';
-import { PlotConfig, FilterState, SpeechToken, DatasetMeta } from '../types';
+import { PlotConfig, FilterState, SpeechToken, DatasetMeta, UNDEFINED_LABEL } from '../types';
 
 interface SidebarProps {
   config: PlotConfig;
@@ -108,13 +108,22 @@ const Sidebar: React.FC<SidebarProps> = ({
         if (entry.key === key) continue;
         subset = subset.filter(t => {
           const val = getTokenValue(t, entry.key);
-          // Empty/missing values always pass — only non-empty values get checked
-          return val === '' || entry.set.has(val);
+          // Map empty values to UNDEFINED_LABEL for checking
+          const effectiveVal = val === '' ? UNDEFINED_LABEL : val;
+          return entry.set.has(effectiveVal);
         });
       }
 
-      const values = subset.map(t => getTokenValue(t, key)).filter(v => v !== '');
-      result[key] = Array.from(new Set<string>(values)).sort();
+      const values = subset.map(t => {
+        const val = getTokenValue(t, key);
+        return val === '' ? UNDEFINED_LABEL : val;
+      });
+      result[key] = Array.from(new Set<string>(values)).sort((a, b) => {
+        // Sort UNDEFINED_LABEL to the end
+        if (a === UNDEFINED_LABEL) return 1;
+        if (b === UNDEFINED_LABEL) return -1;
+        return a.localeCompare(b);
+      });
     }
 
     return result;
@@ -206,15 +215,20 @@ const Sidebar: React.FC<SidebarProps> = ({
 
         <div className={`overflow-y-auto border border-slate-200 rounded p-1.5 flex flex-wrap gap-1 ${showSearch ? 'max-h-32' : 'max-h-24'}`}>
           {filteredOptions.length > 0 ? (
-            filteredOptions.slice(0, 200).map(v => (
-              <button
-                key={v}
-                onClick={() => toggleFilterValue(key, v)}
-                className={`px-2 py-0.5 rounded text-[11px] border ${selected.includes(v) ? 'bg-slate-600 text-white border-slate-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
-              >
-                {v}
-              </button>
-            ))
+            filteredOptions.slice(0, 200).map(v => {
+              const isUndef = v === UNDEFINED_LABEL;
+              return (
+                <button
+                  key={v}
+                  onClick={() => toggleFilterValue(key, v)}
+                  className={`px-2 py-0.5 rounded text-[11px] border ${isUndef ? 'italic' : ''} ${selected.includes(v)
+                    ? isUndef ? 'bg-amber-500 text-white border-amber-500' : 'bg-slate-600 text-white border-slate-600'
+                    : isUndef ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
+                >
+                  {v}
+                </button>
+              );
+            })
           ) : (
             <span className="text-[10px] text-slate-400 p-1">No values{searchTerm ? ' match' : ''}</span>
           )}
