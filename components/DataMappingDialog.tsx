@@ -319,11 +319,13 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                           <select
                             className="text-xs p-1 border border-slate-200 rounded w-14"
                             value={m.formant || 'f1'}
-                            onChange={e => updateMapping(idx, { formant: e.target.value as 'f1' | 'f2' | 'f3' })}
+                            onChange={e => updateMapping(idx, { formant: e.target.value as 'f1' | 'f2' | 'f3' | 'f4' | 'f5' })}
                           >
                             <option value="f1">F1</option>
                             <option value="f2">F2</option>
                             <option value="f3">F3</option>
+                            <option value="f4">F4</option>
+                            <option value="f5">F5</option>
                           </select>
                           {m.formantTarget ? (
                             <>

@@ -50,9 +50,9 @@ addAliases(['pitch', 'f0', 'voice_pitch'], 'pitch');
 //   f1_50, f1_50%, f1_50_smooth, f1_50%_smooth   → numeric timepoint
 //   f1, f2, f3                                      → bare (single measurement, timepoint=0)
 //   f1_onset, f1_midpoint_smooth                    → named target
-const FORMANT_NUMERIC_REGEX = /^(f[123])_(\d+)%?(?:_(.+))?$/i;
-const FORMANT_BARE_REGEX = /^(f[123])$/i;
-const FORMANT_NAMED_REGEX = /^(f[123])_([a-z][a-z0-9]*)(?:_(.+))?$/i;
+const FORMANT_NUMERIC_REGEX = /^(f[12345])_(\d+)%?(?:_(.+))?$/i;
+const FORMANT_BARE_REGEX = /^(f[12345])$/i;
+const FORMANT_NAMED_REGEX = /^(f[12345])_([a-z][a-z0-9]*)(?:_(.+))?$/i;
 const PITCH_REGEX = /^f0_(\d+)%?(?:_(.+))?$/i;
 
 /** Names that should populate SpeechToken.xmin (now detected as regular fields) */
@@ -117,7 +117,7 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
       return {
         csvHeader: header,
         role,
-        fieldName: role === 'pitch' ? header : undefined,
+        fieldName: (role === 'pitch' || role === 'duration') ? header : undefined,
         showInSidebar: !isData && (role === 'speaker' || role === 'file_id'),
         isDataField: isData,
       };
@@ -128,6 +128,7 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
       return {
         csvHeader: header,
         role: 'duration' as ColumnRole,
+        fieldName: header,
         isDataField: true,
       };
     }
@@ -246,7 +247,7 @@ export const parseWithMappings = (
   let speakerIdx: number | undefined;
   let fileIdIdx: number | undefined;
   let durationIdx: number | undefined;
-  const formantMappings: { colIdx: number, formant: 'f1' | 'f2' | 'f3', timePoint: number, isSmooth: boolean }[] = [];
+  const formantMappings: { colIdx: number, formant: 'f1' | 'f2' | 'f3' | 'f4' | 'f5', timePoint: number, isSmooth: boolean }[] = [];
   const fieldMappings: { colIdx: number, fieldName: string }[] = [];
 
   mappings.forEach(m => {
@@ -256,10 +257,21 @@ export const parseWithMappings = (
     switch (m.role) {
       case 'speaker': speakerIdx = colIdx; break;
       case 'file_id': fileIdIdx = colIdx; break;
-      case 'duration': durationIdx = colIdx; break;
+      case 'duration':
+        if (durationIdx === undefined) durationIdx = colIdx;
+        // Also store as named field so all duration columns appear in token.fields
+        if (m.fieldName || m.csvHeader) {
+          fieldMappings.push({ colIdx, fieldName: m.fieldName || m.csvHeader });
+        }
+        break;
       case 'formant':
         if (m.formant !== undefined && m.timePoint !== undefined) {
           formantMappings.push({ colIdx, formant: m.formant, timePoint: m.timePoint, isSmooth: m.isSmooth || false });
+          // F4/F5 can't be stored in TrajectoryPoint (only f1-f3), so also store as named fields
+          if (m.formant === 'f4' || m.formant === 'f5') {
+            const fFieldName = m.csvHeader || `${m.formant}_${m.timePoint}`;
+            fieldMappings.push({ colIdx, fieldName: fFieldName });
+          }
         }
         break;
       case 'pitch':

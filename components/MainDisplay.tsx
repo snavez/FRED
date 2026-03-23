@@ -142,14 +142,10 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     for (const m of datasetMeta.columnMappings) {
       const key = m.fieldName || m.csvHeader;
       if (!key || seen.has(key)) continue;
-      // Include duration-role columns
+      // Include duration-role columns — each as a separate named option
       if (m.role === 'duration') {
         seen.add(key);
-        // Use 'duration' as value key (maps to SpeechToken.duration)
-        if (!seen.has('duration')) {
-          seen.add('duration');
-          options.push({ label: prettyLabel(key, datasetMeta) || key, value: 'duration' });
-        }
+        options.push({ label: prettyLabel(key, datasetMeta) || key, value: key });
       }
       // Include pitch-role columns
       if (m.role === 'pitch') {
@@ -342,8 +338,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
           {activeTab !== 'table' && (
              <div className="flex items-center gap-2">
-               {/* Layer Panel Button for F1/F2 Tab */}
-               {activeTab === 'vowel' && (
+               {/* Layer Panel Button — visible on all tabs */}
+               {(
                  <div className="relative">
                    <button
                      onClick={() => setLayerPanelOpen(!layerPanelOpen)}

@@ -222,8 +222,8 @@ const Sidebar: React.FC<SidebarProps> = ({
                   key={v}
                   onClick={() => toggleFilterValue(key, v)}
                   className={`px-2 py-0.5 rounded text-[11px] border ${isUndef ? 'italic' : ''} ${selected.includes(v)
-                    ? isUndef ? 'bg-amber-500 text-white border-amber-500' : 'bg-slate-600 text-white border-slate-600'
-                    : isUndef ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
+                    ? isUndef ? 'bg-stone-400 text-white border-stone-400' : 'bg-slate-600 text-white border-slate-600'
+                    : isUndef ? 'bg-stone-100 border-stone-200 text-stone-500' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
                 >
                   {v}
                 </button>

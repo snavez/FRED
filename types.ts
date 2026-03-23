@@ -302,7 +302,7 @@ export interface ColumnMapping {
   role: ColumnRole;
   fieldName?: string;         // Display name for 'field' role columns (defaults to csvHeader)
   timePoint?: number;
-  formant?: 'f1' | 'f2' | 'f3';
+  formant?: 'f1' | 'f2' | 'f3' | 'f4' | 'f5';
   isSmooth?: boolean;
   formantLabel?: string;
   formantTarget?: string;       // Named target (e.g. "onset", "midpoint") for non-numeric timepoints
