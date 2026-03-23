@@ -444,7 +444,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                          ))}
                        </div>
 
-                       {/* Add Layer Button */}
+                       {/* Add Layer Button — only on F1/F2 tab */}
+                       {activeTab === 'vowel' && (
                        <div className="mt-2 pt-2 border-t border-slate-100">
                          <div className="relative">
                            <button
@@ -475,6 +476,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                            )}
                          </div>
                        </div>
+                       )}
                      </div>
                    )}
                  </div>
@@ -2070,8 +2072,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
       />
 
       {/* Close dropdowns on click outside */}
-      {(showAddMenu || layerPanelOpen || showPointInfoSettings || showDurationPointInfoSettings || showSummaryMeasureSettings || showAnalysisMeasureSettings) && (
-        <div className="fixed inset-0 z-40" onClick={() => { setShowAddMenu(false); setLayerPanelOpen(false); setShowPointInfoSettings(false); setShowDurationPointInfoSettings(false); setShowSummaryMeasureSettings(false); setShowAnalysisMeasureSettings(false); }}></div>
+      {(showAddMenu || layerPanelOpen || showPointInfoSettings || showDurationPointInfoSettings || showSummaryMeasureSettings || showAnalysisMeasureSettings || editingItem) && (
+        <div className="fixed inset-0 z-40" onClick={() => { setShowAddMenu(false); setLayerPanelOpen(false); setShowPointInfoSettings(false); setShowDurationPointInfoSettings(false); setShowSummaryMeasureSettings(false); setShowAnalysisMeasureSettings(false); setEditingItem(null); }}></div>
       )}
     </div>
   );

@@ -860,7 +860,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                             ctx.font = `${(subLabelFont * drawScale) / scale}px Inter`;
                             ctx.textAlign = 'center';
                             const labelX = bx + barW/2 + xTickOffsetX;
-                            const labelY = margin.top + chartH + (subLabelFont * 1.5 * drawScale) + xTickOffsetY;
+                            const labelY = cy + ch + (subLabelFont * 1.2 * drawScale) + xTickOffsetY;
                             ctx.fillText(pk, labelX, labelY);
                          }
 
@@ -868,19 +868,19 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                          // Grouped: Secondary Keys side-by-side within Primary Key area
                          const barW = (primaryGroupW * 0.9) / sKeys.length;
                          const innerStartX = pBx + (primaryGroupW * 0.05);
-                         
+
                          sKeys.forEach((sk, si) => {
                              const val = sMap[sk];
                              const dispVal = isPercentage ? (total > 0 ? (val / total * 100) : 0) : val;
                              const h = (dispVal / maxY) * ch;
                              const label = isPercentage ? `${dispVal.toFixed(0)}%` : val.toString();
-                             
+
                              const bx = innerStartX + si * barW;
                              const by = cy + ch - h;
-                             
+
                              const color = isPrimaryTexture ? (colors[sk] || '#999') : (colors[pk] || '#999');
                              const tex = isPrimaryTexture ? (textureMap[pk] || 0) : (textureMap[sk] || 0);
-                             
+
                              drawBar(bx, by, barW, h, color, tex, dispVal, label);
                          });
 
@@ -890,7 +890,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                             ctx.font = `${(subLabelFont * drawScale) / scale}px Inter`;
                             ctx.textAlign = 'center';
                             const labelX = pBx + primaryGroupW/2 + xTickOffsetX;
-                            const labelY = margin.top + chartH + (subLabelFont * 1.5 * drawScale) + xTickOffsetY;
+                            const labelY = cy + ch + (subLabelFont * 1.2 * drawScale) + xTickOffsetY;
                             ctx.fillText(pk, labelX, labelY);
                          }
                      }
@@ -931,7 +931,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                         const dispVal = isPercentage ? (total > 0 ? (rawVal / total * 100) : 0) : rawVal;
                         const h = (dispVal / maxY) * ch;
                         const label = isPercentage ? `${dispVal.toFixed(1)}%` : rawVal.toString();
-                        
+
                         currentY -= h;
                         drawBar(bx, currentY, barW, h, item.color, item.tex, dispVal, label);
                     });
@@ -946,11 +946,19 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                         const dispVal = isPercentage ? (total > 0 ? (rawVal / total * 100) : 0) : rawVal;
                         const h = (dispVal / maxY) * ch;
                         const label = isPercentage ? `${dispVal.toFixed(0)}%` : rawVal.toString();
-                        
+
                         const bx = startX + idx * barW;
                         const by = cy + ch - h;
-                        
+
                         drawBar(bx, by, barW, h, item.color, item.tex, dispVal, label);
+
+                        // X-axis label per bar in faceted grouped mode
+                        if (barW > (14 * drawScale)) {
+                            ctx.fillStyle = '#475569';
+                            ctx.font = `${(subLabelFont * drawScale) / scale}px Inter`;
+                            ctx.textAlign = 'center';
+                            ctx.fillText(item.key, bx + barW/2 + xTickOffsetX, cy + ch + (subLabelFont * 1.2 * drawScale) + xTickOffsetY);
+                        }
                     });
                 }
             }
