@@ -82,8 +82,9 @@ import { getLabel } from '../utils/getLabel';
 // Helper: compute counts plot data for a token subset (reused for faceting)
 function computeCountsPlotData(tokens: SpeechToken[], config: PlotConfig, styleOverrides?: StyleOverrides) {
     const groups: Record<string, SpeechToken[]> = {};
+    const effectiveGroupBy = (!config.groupBy || config.groupBy === 'none') ? null : config.groupBy;
     tokens.forEach(t => {
-       const gKey = getLabel(t, config.groupBy || 'phoneme') || 'Undefined';
+       const gKey = effectiveGroupBy ? (getLabel(t, effectiveGroupBy) || 'Undefined') : 'All';
        if (!groups[gKey]) groups[gKey] = [];
        groups[gKey].push(t);
     });
@@ -588,10 +589,82 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
             const totalGroupGaps = fGroups.length > 1 ? (fGroups.length - 1) * cfgGroupGap : 0;
             const groupW = (chartW - totalGroupGaps) / Math.max(fGroups.length, 1);
 
+            const isPrimaryTexture = config.distPrimaryVar === 'texture';
+            const labelFontSize = Math.max(7, Math.min(9, 200 / Math.max(fGroups.length, 1)));
+
             fGroups.forEach((g: string, gi: number) => {
               const gx = margin.left + gi * (groupW + cfgGroupGap);
               const total = groupTotals[g];
-              if (!fIsInteraction) {
+
+              const drawFacetBar = (bx: number, by: number, bw: number, bh: number, color: string, texIdx: number) => {
+                const fill = generateTexture(ctx, texIdx, color, '#fff') as string | CanvasPattern;
+                ctx.fillStyle = fill;
+                ctx.fillRect(bx, by, bw, bh);
+                ctx.strokeStyle = 'white'; ctx.lineWidth = 1 * drawScale;
+                ctx.strokeRect(bx, by, bw, bh);
+              };
+
+              if (fIsInteraction) {
+                // Interaction mode: colour + texture
+                const nested = fPData[g];
+                const primaryKey = isPrimaryTexture ? (facetPlot.textureKey!) : (facetPlot.colorKey);
+                let pKeys = Object.keys(nested);
+                pKeys.sort((a, b) => {
+                  let cmp = config.distBarOrder === 'alpha' ? a.localeCompare(b)
+                    : ((Object.values(nested[a]) as number[]).reduce((s, n) => s + n, 0)) - ((Object.values(nested[b]) as number[]).reduce((s, n) => s + n, 0));
+                  return config.distBarDir === 'asc' ? cmp : -cmp;
+                });
+
+                const numPrimary = pKeys.length;
+                const primaryGroupW = (groupW * 0.9) / Math.max(numPrimary, 1);
+                const startX = gx + groupW * 0.05;
+
+                pKeys.forEach((pk, pi) => {
+                  const sMap = nested[pk];
+                  const sKeys = Object.keys(sMap).sort();
+                  const stackTotal = (Object.values(sMap) as number[]).reduce((a, b) => a + b, 0);
+                  const referenceTotal = (config.distNormalize && isStacked) ? stackTotal : total;
+                  const pBx = startX + pi * primaryGroupW;
+
+                  if (isStacked) {
+                    const barW = primaryGroupW * 0.7;
+                    const bx = pBx + (primaryGroupW - barW) / 2;
+                    let currentY = margin.top + chartH;
+                    sKeys.forEach(sk => {
+                      const val = sMap[sk];
+                      const dispVal = isPercentage ? (referenceTotal > 0 ? (val / referenceTotal * 100) : 0) : val;
+                      const h = (dispVal / maxY) * chartH;
+                      currentY -= h;
+                      const color = isPrimaryTexture ? (fColors[sk] || '#999') : (fColors[pk] || '#999');
+                      const tex = isPrimaryTexture ? (fTextureMap[pk] || 0) : (fTextureMap[sk] || 0);
+                      drawFacetBar(bx, currentY, barW, h, color, tex);
+                    });
+                  } else {
+                    const barW = (primaryGroupW * 0.9) / Math.max(sKeys.length, 1);
+                    const innerStartX = pBx + primaryGroupW * 0.05;
+                    sKeys.forEach((sk, si) => {
+                      const val = sMap[sk];
+                      const dispVal = isPercentage ? (total > 0 ? (val / total * 100) : 0) : val;
+                      const h = (dispVal / maxY) * chartH;
+                      const bx = innerStartX + si * barW;
+                      const by = margin.top + chartH - h;
+                      const color = isPrimaryTexture ? (fColors[sk] || '#999') : (fColors[pk] || '#999');
+                      const tex = isPrimaryTexture ? (fTextureMap[pk] || 0) : (fTextureMap[sk] || 0);
+                      drawFacetBar(bx, by, barW, h, color, tex);
+                    });
+                  }
+
+                  // Per-primary-key x-axis label
+                  if (primaryGroupW > (12 * drawScale)) {
+                    ctx.fillStyle = '#475569';
+                    ctx.font = `${(labelFontSize * drawScale) / scale}px Inter`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(pk, pBx + primaryGroupW / 2, margin.top + chartH + (labelFontSize * 1.3 * drawScale));
+                  }
+                });
+
+              } else {
+                // Standard mode: colour only
                 const counts = fPData[g];
                 const items = Object.entries(counts).map(([k, v]) => ({
                   key: k, val: v as number, color: fColors[k] || '#666',
@@ -608,11 +681,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                     const dispVal = isPercentage ? (total > 0 ? (item.val / total * 100) : 0) : item.val;
                     const h = (dispVal / maxY) * chartH;
                     curY -= h;
-                    const fill = generateTexture(ctx, item.tex, item.color, '#fff') as string | CanvasPattern;
-                    ctx.fillStyle = fill;
-                    ctx.fillRect(bx, curY, barW, h);
-                    ctx.strokeStyle = 'white'; ctx.lineWidth = 1 * drawScale;
-                    ctx.strokeRect(bx, curY, barW, h);
+                    drawFacetBar(bx, curY, barW, h, item.color, item.tex);
                   });
                 } else {
                   const innerGaps = items.length > 1 ? (items.length - 1) * cfgBarGap : 0;
@@ -623,19 +692,26 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                     const h = (dispVal / maxY) * chartH;
                     const bx = startX + idx * (barW + cfgBarGap);
                     const by = margin.top + chartH - h;
-                    const fill = generateTexture(ctx, item.tex, item.color, '#fff') as string | CanvasPattern;
-                    ctx.fillStyle = fill;
-                    ctx.fillRect(bx, by, barW, h);
-                    ctx.strokeStyle = 'white'; ctx.lineWidth = 1 * drawScale;
-                    ctx.strokeRect(bx, by, barW, h);
+                    drawFacetBar(bx, by, barW, h, item.color, item.tex);
+
+                    // Per-bar x-axis label
+                    if (barW > (12 * drawScale)) {
+                      ctx.fillStyle = '#475569';
+                      ctx.font = `${(labelFontSize * drawScale) / scale}px Inter`;
+                      ctx.textAlign = 'center';
+                      ctx.fillText(item.key, bx + barW / 2, margin.top + chartH + (labelFontSize * 1.3 * drawScale));
+                    }
                   });
                 }
               }
-              // Group label
-              ctx.fillStyle = '#0f172a';
-              ctx.font = `bold ${(8 * drawScale) / scale}px Inter`;
-              ctx.textAlign = 'center';
-              ctx.fillText(`/${g}/`, gx + groupW / 2, margin.top + chartH + 12 * drawScale);
+
+              // Group label — only show if multiple groups or group name differs from facet title
+              if (fGroups.length > 1 && g !== 'All') {
+                ctx.fillStyle = '#0f172a';
+                ctx.font = `bold ${(8 * drawScale) / scale}px Inter`;
+                ctx.textAlign = 'center';
+                ctx.fillText(`/${g}/`, gx + groupW / 2, margin.top + chartH + (fIsInteraction || !isStacked ? 22 : 12) * drawScale);
+              }
             });
           }
         }
@@ -685,11 +761,11 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
     const isStacked = config.distBarMode === 'stacked'; 
 
     // Determine if we should show primary labels (to avoid redundancy)
-    const groupKey = config.groupBy || 'phoneme';
+    const groupKey = (!config.groupBy || config.groupBy === 'none') ? null : config.groupBy;
     const colorKey = config.colorBy !== 'none' ? config.colorBy : 'phoneme';
     const textureKey = config.textureBy !== 'none' ? config.textureBy : null;
     const primaryKey = config.distPrimaryVar === 'texture' ? textureKey : colorKey;
-    const showPrimaryLabel = primaryKey !== groupKey;
+    const showPrimaryLabel = !groupKey || primaryKey !== groupKey;
 
     if (isPercentage) {
         maxY = 100;
@@ -1154,9 +1230,9 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                 }
             }
 
-             // Group Label
-             const showGroupLabel = groups.length > 1 || !isInteraction || !showPrimaryLabel;
-             if (showGroupLabel && (!isExport || isStacked)) { 
+             // Group Label — suppress when only one group named 'All' (groupBy=none)
+             const showGroupLabel = g !== 'All' && (groups.length > 1 || !isInteraction || !showPrimaryLabel);
+             if (showGroupLabel && (!isExport || isStacked)) {
                 ctx.fillStyle = '#0f172a';
                 ctx.font = `bold ${(groupLabelFont * drawScale) / scale}px Inter`;
                 ctx.textAlign = 'center';
