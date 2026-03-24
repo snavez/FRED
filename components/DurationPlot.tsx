@@ -126,6 +126,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
 
   // Zoom/pan transform state
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+  const [legendCollapsed, setLegendCollapsed] = useState(false);
   const isDragging = useRef(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
 
@@ -1205,8 +1206,11 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         <div className="absolute top-4 right-4 bg-white/95 backdrop-blur p-3 rounded-xl border border-slate-200 text-xs shadow-xl flex flex-col space-y-3 max-h-[85%] overflow-y-auto w-48 pointer-events-auto">
           {hasColor && (
             <div className="space-y-1">
-              <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1">{config.colorBy}</h4>
-              {Object.entries(colorMap).map(([k, c]) => (
+              <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1 cursor-pointer select-none flex items-center justify-between hover:text-slate-600 transition-colors" onClick={() => setLegendCollapsed(!legendCollapsed)}>
+                <span>{config.colorBy}</span>
+                <span className="text-[8px]">{legendCollapsed ? '▶' : '▼'}</span>
+              </h4>
+              {!legendCollapsed && Object.entries(colorMap).map(([k, c]) => (
                 <div key={k} className="flex items-center gap-2 justify-between cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(k, 'color', e)}>
                   <div className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: c }}></div>
@@ -1215,12 +1219,16 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
                   <span className="text-slate-400 text-[10px] font-mono">({colorCounts[k] || 0})</span>
                 </div>
               ))}
+              {legendCollapsed && <span className="text-[9px] text-slate-400 italic">({Object.keys(colorMap).length} items)</span>}
             </div>
           )}
           {hasTexture && (
             <div className="space-y-1">
-              <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1">{config.textureBy}</h4>
-              {textureList.map(t => {
+              <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1 cursor-pointer select-none flex items-center justify-between hover:text-slate-600 transition-colors" onClick={() => setLegendCollapsed(!legendCollapsed)}>
+                <span>{config.textureBy}</span>
+                <span className="text-[8px]">{legendCollapsed ? '▶' : '▼'}</span>
+              </h4>
+              {!legendCollapsed && textureList.map(t => {
                 const idx = textureMap[t];
                 return (
                   <div key={t} className="flex items-center gap-2 justify-between cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(t, 'texture', e)}>
@@ -1232,6 +1240,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
                   </div>
                 );
               })}
+              {legendCollapsed && <span className="text-[9px] text-slate-400 italic">({textureList.length} items)</span>}
             </div>
           )}
         </div>
