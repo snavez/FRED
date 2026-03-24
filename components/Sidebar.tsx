@@ -163,8 +163,25 @@ const Sidebar: React.FC<SidebarProps> = ({
     });
   };
 
+  // Full (non-cross-filtered) options for "All" — prevents permanent data loss
+  const fullFieldOptions = useMemo(() => {
+    const result: Record<string, string[]> = {};
+    for (const { key } of visibleFilterFields) {
+      const values = data.map(t => {
+        const val = getTokenValue(t, key);
+        return val === '' ? UNDEFINED_LABEL : val;
+      });
+      result[key] = Array.from(new Set<string>(values)).sort((a, b) => {
+        if (a === UNDEFINED_LABEL) return 1;
+        if (b === UNDEFINED_LABEL) return -1;
+        return a.localeCompare(b);
+      });
+    }
+    return result;
+  }, [data, visibleFilterFields]);
+
   const selectAllForKey = (key: string) => {
-    const options = fieldOptions[key] || [];
+    const options = fullFieldOptions[key] || [];
     setFilters(prev => ({ ...prev, filters: { ...prev.filters, [key]: options } }));
   };
 

@@ -117,7 +117,9 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
   const rotationRef = useRef(rotation);
   rotationRef.current = rotation; // Always keep ref in sync with state
   const [rotationStep, setRotationStep] = useState(15);
-  const [legendCollapsed, setLegendCollapsed] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const toggleSection = (key: string) => setCollapsedSections(prev => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+  const isSectionCollapsed = (key: string) => collapsedSections.has(key);
 
   const animateRotation = useCallback((deltaAlpha: number, deltaBeta: number, deltaGamma: number = 0) => {
     // Cancel any existing animation
@@ -1120,11 +1122,11 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
         <div className="absolute top-4 right-4 bg-white/95 backdrop-blur p-3 rounded-xl border border-slate-200 text-xs shadow-xl flex flex-col space-y-3 max-h-[85%] overflow-y-auto w-56 pointer-events-auto">
             {colorKey && (
                 <div className="space-y-1">
-                    <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1 cursor-pointer select-none flex items-center justify-between hover:text-slate-600 transition-colors" onClick={() => setLegendCollapsed(!legendCollapsed)}>
+                    <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1 cursor-pointer select-none flex items-center justify-between hover:text-slate-600 transition-colors" onClick={() => toggleSection('color')}>
                       <span>{colorKey}</span>
-                      <span className="text-[8px]">{legendCollapsed ? '▶' : '▼'}</span>
+                      <span className="text-[8px]">{isSectionCollapsed('color') ? '▶' : '▼'}</span>
                     </h4>
-                    {!legendCollapsed && Object.entries(colorMap).sort().map(([k, c]) => (
+                    {!isSectionCollapsed('color') && Object.entries(colorMap).sort().map(([k, c]) => (
                         <div key={k} className="flex items-center gap-2 justify-between cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(k, 'color', e)}>
                             <div className="flex items-center gap-2">
                                 {isTrajectory
@@ -1139,16 +1141,16 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                             <span className="text-slate-400 text-[10px]">({colorCounts[k]})</span>
                         </div>
                     ))}
-                    {legendCollapsed && <span className="text-[9px] text-slate-400 italic">({Object.keys(colorMap).length} items)</span>}
+                    {isSectionCollapsed('color') && <span className="text-[9px] text-slate-400 italic">({Object.keys(colorMap).length} items)</span>}
                 </div>
             )}
             {!isTrajectory && shapeKey && shapeKey !== colorKey && (
                 <div className="space-y-1">
-                    <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1 cursor-pointer select-none flex items-center justify-between hover:text-slate-600 transition-colors" onClick={() => setLegendCollapsed(!legendCollapsed)}>
+                    <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1 cursor-pointer select-none flex items-center justify-between hover:text-slate-600 transition-colors" onClick={() => toggleSection('shape')}>
                       <span>{shapeKey}</span>
-                      <span className="text-[8px]">{legendCollapsed ? '▶' : '▼'}</span>
+                      <span className="text-[8px]">{isSectionCollapsed('shape') ? '▶' : '▼'}</span>
                     </h4>
-                    {!legendCollapsed && Object.entries(shapeMap).sort().map(([k, s]) => (
+                    {!isSectionCollapsed('shape') && Object.entries(shapeMap).sort().map(([k, s]) => (
                         <div key={k} className="flex items-center gap-2 justify-between cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(k, 'shape', e)}>
                             <div className="flex items-center gap-2">
                                 <ShapeIcon shape={s as string} color="#64748b" />
@@ -1157,16 +1159,16 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                             <span className="text-slate-400 text-[10px]">({shapeCounts[k]})</span>
                         </div>
                     ))}
-                    {legendCollapsed && <span className="text-[9px] text-slate-400 italic">({Object.keys(shapeMap).length} items)</span>}
+                    {isSectionCollapsed('shape') && <span className="text-[9px] text-slate-400 italic">({Object.keys(shapeMap).length} items)</span>}
                 </div>
             )}
             {isTrajectory && lineTypeKey && lineTypeKey !== colorKey && (
                 <div className="space-y-1">
-                    <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1 cursor-pointer select-none flex items-center justify-between hover:text-slate-600 transition-colors" onClick={() => setLegendCollapsed(!legendCollapsed)}>
+                    <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1 cursor-pointer select-none flex items-center justify-between hover:text-slate-600 transition-colors" onClick={() => toggleSection('lineType')}>
                       <span>{lineTypeKey}</span>
-                      <span className="text-[8px]">{legendCollapsed ? '▶' : '▼'}</span>
+                      <span className="text-[8px]">{isSectionCollapsed('lineType') ? '▶' : '▼'}</span>
                     </h4>
-                    {!legendCollapsed && Object.entries(lineTypeMap).sort().map(([k, dash]) => {
+                    {!isSectionCollapsed('lineType') && Object.entries(lineTypeMap).sort().map(([k, dash]) => {
                         const dashName = lineTypeNameMap[k] || 'solid';
                         const svgDash = dashName === 'solid' ? '' :
                             dashName === 'dash' ? '5,5' :
@@ -1185,7 +1187,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                             </div>
                         );
                     })}
-                    {legendCollapsed && <span className="text-[9px] text-slate-400 italic">({Object.keys(lineTypeMap).length} items)</span>}
+                    {isSectionCollapsed('lineType') && <span className="text-[9px] text-slate-400 italic">({Object.keys(lineTypeMap).length} items)</span>}
                 </div>
             )}
         </div>

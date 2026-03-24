@@ -61,7 +61,9 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hoveredToken, setHoveredToken] = useState<SpeechToken | null>(null);
-  const [legendCollapsed, setLegendCollapsed] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  const toggleSection = (key: string) => setCollapsedSections(prev => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+  const isSectionCollapsed = (key: string) => collapsedSections.has(key);
 
   // Group Data, Color Map, and Line Types
   const { colorMap, groups, sortedKeys, lineTypeKeys, combinedGroups, lineStyles, lineTypeCounts } = useMemo(() => {
@@ -904,11 +906,11 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
          {config.colorBy !== 'none' && config.lineTypeBy !== 'none' && config.colorBy === config.lineTypeBy ? (
            /* Combined color + line type legend */
            <div className="space-y-1.5">
-             <h4 className="text-[10px] font-black uppercase text-slate-400 flex justify-between items-center cursor-pointer select-none hover:text-slate-600 transition-colors" onClick={() => setLegendCollapsed(!legendCollapsed)}>
+             <h4 className="text-[10px] font-black uppercase text-slate-400 flex justify-between items-center cursor-pointer select-none hover:text-slate-600 transition-colors" onClick={() => toggleSection('combined')}>
                 <span>{config.colorBy}</span>
-                <span className="text-[8px]">{legendCollapsed ? '▶' : '▼'}</span>
+                <span className="text-[8px]">{isSectionCollapsed('combined') ? '▶' : '▼'}</span>
              </h4>
-             {!legendCollapsed && sortedKeys.map(key => (
+             {!isSectionCollapsed('combined') && sortedKeys.map(key => (
                     <div key={key} className="flex justify-between items-center text-[10px] cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(key, 'color', e)}>
                         <div className="flex items-center space-x-2"><svg width="24" height="6" className="shrink-0"><line x1="0" y1="3" x2="24" y2="3" stroke={colorMap[key] || '#334155'} strokeWidth="2.5" strokeDasharray={lineStyles[key]?.join(',') || ''} /></svg><span className="text-slate-700 font-medium truncate w-24">{key}</span></div><span className="text-slate-700 font-mono">({groups[key]?.length || 0})</span></div>))}
            </div>
@@ -916,27 +918,27 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
            <>
              {config.colorBy !== 'none' && (
                <div className="space-y-1.5">
-                 <h4 className="text-[10px] font-black uppercase text-slate-400 flex justify-between items-center cursor-pointer select-none hover:text-slate-600 transition-colors" onClick={() => setLegendCollapsed(!legendCollapsed)}>
+                 <h4 className="text-[10px] font-black uppercase text-slate-400 flex justify-between items-center cursor-pointer select-none hover:text-slate-600 transition-colors" onClick={() => toggleSection('color')}>
                     <span>{config.colorBy}</span>
-                    <span className="text-[8px]">{legendCollapsed ? '▶' : '▼'}</span>
+                    <span className="text-[8px]">{isSectionCollapsed('color') ? '▶' : '▼'}</span>
                  </h4>
-                 {!legendCollapsed && sortedKeys.map(key => (
+                 {!isSectionCollapsed('color') && sortedKeys.map(key => (
                         <div key={key} className="flex justify-between items-center text-[10px] cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(key, 'color', e)}>
                             <div className="flex items-center space-x-2"><div className="w-3 h-3 rounded-full shadow-sm shrink-0" style={{ backgroundColor: colorMap[key] }}></div><span className="text-slate-700 font-medium truncate w-24">{key}</span></div><span className="text-slate-700 font-mono">({groups[key]?.length || 0})</span></div>))}
-                 {legendCollapsed && <span className="text-[9px] text-slate-400 italic">({sortedKeys.length} items)</span>}
+                 {isSectionCollapsed('color') && <span className="text-[9px] text-slate-400 italic">({sortedKeys.length} items)</span>}
                </div>
              )}
 
              {config.lineTypeBy !== 'none' && (
                <div className="space-y-1.5 pt-2 border-t border-slate-100">
-                 <h4 className="text-[10px] font-black uppercase text-slate-400 flex justify-between items-center cursor-pointer select-none hover:text-slate-600 transition-colors" onClick={() => setLegendCollapsed(!legendCollapsed)}>
+                 <h4 className="text-[10px] font-black uppercase text-slate-400 flex justify-between items-center cursor-pointer select-none hover:text-slate-600 transition-colors" onClick={() => toggleSection('lineType')}>
                     <span>{config.lineTypeBy}</span>
-                    <span className="text-[8px]">{legendCollapsed ? '▶' : '▼'}</span>
+                    <span className="text-[8px]">{isSectionCollapsed('lineType') ? '▶' : '▼'}</span>
                  </h4>
-                 {!legendCollapsed && lineTypeKeys.map(key => (
+                 {!isSectionCollapsed('lineType') && lineTypeKeys.map(key => (
                         <div key={key} className="flex justify-between items-center text-[10px] cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(key, 'lineType', e)}>
                             <div className="flex items-center space-x-2"><svg width="24" height="6" className="shrink-0"><line x1="0" y1="3" x2="24" y2="3" stroke="#334155" strokeWidth="2" strokeDasharray={lineStyles[key]?.join(',') || ''} /></svg><span className="text-slate-700 font-medium truncate w-24">{key}</span></div><span className="text-slate-700 font-mono">({lineTypeCounts[key] || 0})</span></div>))}
-                 {legendCollapsed && <span className="text-[9px] text-slate-400 italic">({lineTypeKeys.length} items)</span>}
+                 {isSectionCollapsed('lineType') && <span className="text-[9px] text-slate-400 italic">({lineTypeKeys.length} items)</span>}
                </div>
              )}
            </>

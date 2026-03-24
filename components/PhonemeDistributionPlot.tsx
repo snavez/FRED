@@ -231,7 +231,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
   // Histogram hover state
   const [hoveredBin, setHoveredBin] = useState<HistBin | null>(null);
   const [mousePos, setMousePos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [legendCollapsed, setLegendCollapsed] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
 
   // Facet groups — split data by distPlotBy variable
   const facetGroups = useMemo(() => {
@@ -1527,6 +1527,9 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
       }
   };
 
+  const toggleSection = (key: string) => setCollapsedSections(prev => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+  const isSectionCollapsed = (key: string) => collapsedSections.has(key);
+
   const renderScreenLegend = () => {
     // Histogram mode legend
     if (config.distMode === 'histogram') {
@@ -1536,11 +1539,11 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
       return (
         <div className="absolute top-4 right-4 bg-white/95 backdrop-blur p-3 rounded-xl border border-slate-200 text-xs shadow-xl flex flex-col space-y-3 max-h-[85%] overflow-y-auto w-48 pointer-events-auto">
           <div className="space-y-1">
-            <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1 cursor-pointer select-none flex items-center justify-between hover:text-slate-600 transition-colors" onClick={() => setLegendCollapsed(!legendCollapsed)}>
+            <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1 cursor-pointer select-none flex items-center justify-between hover:text-slate-600 transition-colors" onClick={() => toggleSection('color')}>
               <span>{config.distHistColorBy}</span>
-              <span className="text-[8px]">{legendCollapsed ? '▶' : '▼'}</span>
+              <span className="text-[8px]">{isSectionCollapsed('color') ? '▶' : '▼'}</span>
             </h4>
-            {!legendCollapsed && histogramData.categories.map(cat => {
+            {!isSectionCollapsed('color') && histogramData.categories.map(cat => {
               const count = histogramData.bins.reduce((s, b) => s + (b.counts[cat] || 0), 0);
               return (
                 <div key={cat} className="flex items-center gap-2 justify-between p-1 rounded hover:bg-slate-100 cursor-pointer" onClick={(e) => onLegendClick?.(cat, { color: histogramData.colors[cat], shape: 'circle', texture: 0, lineType: 'solid' }, e)}>
@@ -1552,7 +1555,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                 </div>
               );
             })}
-            {legendCollapsed && <span className="text-[9px] text-slate-400 italic">({histogramData.categories.length} items)</span>}
+            {isSectionCollapsed('color') && <span className="text-[9px] text-slate-400 italic">({histogramData.categories.length} items)</span>}
           </div>
         </div>
       );
@@ -1566,26 +1569,26 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
         <div className="absolute top-4 right-4 bg-white/95 backdrop-blur p-3 rounded-xl border border-slate-200 text-xs shadow-xl flex flex-col space-y-3 max-h-[85%] overflow-y-auto w-48 pointer-events-auto">
             {colorKey && (
                 <div className="space-y-1">
-                    <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1 cursor-pointer select-none flex items-center justify-between hover:text-slate-600 transition-colors" onClick={() => setLegendCollapsed(!legendCollapsed)}>
+                    <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1 cursor-pointer select-none flex items-center justify-between hover:text-slate-600 transition-colors" onClick={() => toggleSection('color')}>
                       <span>{colorKey}</span>
-                      <span className="text-[8px]">{legendCollapsed ? '▶' : '▼'}</span>
+                      <span className="text-[8px]">{isSectionCollapsed('color') ? '▶' : '▼'}</span>
                     </h4>
-                    {!legendCollapsed && Object.entries(colors).map(([k, c]) => (
+                    {!isSectionCollapsed('color') && Object.entries(colors).map(([k, c]) => (
                         <div key={k} className="flex items-center gap-2 justify-between cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(k, 'color', e)}>
                             <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm" style={{backgroundColor: c as string}}></div><span>{k}</span></div>
                             <span className="text-slate-400 text-[10px] font-mono">({colorCounts[k] || 0})</span>
                         </div>
                     ))}
-                    {legendCollapsed && <span className="text-[9px] text-slate-400 italic">({Object.keys(colors).length} items)</span>}
+                    {isSectionCollapsed('color') && <span className="text-[9px] text-slate-400 italic">({Object.keys(colors).length} items)</span>}
                 </div>
             )}
             {isInteraction && textureKey && (
                 <div className="space-y-1">
-                    <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1 cursor-pointer select-none flex items-center justify-between hover:text-slate-600 transition-colors" onClick={() => setLegendCollapsed(!legendCollapsed)}>
+                    <h4 className="font-bold text-slate-400 uppercase text-[10px] border-b pb-1 mb-1 cursor-pointer select-none flex items-center justify-between hover:text-slate-600 transition-colors" onClick={() => toggleSection('texture')}>
                       <span>{textureKey}</span>
-                      <span className="text-[8px]">{legendCollapsed ? '▶' : '▼'}</span>
+                      <span className="text-[8px]">{isSectionCollapsed('texture') ? '▶' : '▼'}</span>
                     </h4>
-                    {!legendCollapsed && textureList.map((t: string) => {
+                    {!isSectionCollapsed('texture') && textureList.map((t: string) => {
                         const idx = textureMap[t];
                         return (
                             <div key={t} className="flex items-center gap-2 justify-between cursor-pointer hover:bg-slate-100 p-1 rounded" onClick={(e) => handleLegendClickWrapper(t, 'texture', e)}>
@@ -1594,7 +1597,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                             </div>
                         )
                     })}
-                    {legendCollapsed && <span className="text-[9px] text-slate-400 italic">({textureList.length} items)</span>}
+                    {isSectionCollapsed('texture') && <span className="text-[9px] text-slate-400 italic">({textureList.length} items)</span>}
                 </div>
             )}
         </div>
