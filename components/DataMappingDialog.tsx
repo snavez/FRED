@@ -1,7 +1,8 @@
 
 import React, { useState, useMemo } from 'react';
 import { ColumnMapping, ColumnRole } from '../types';
-import { X, Upload, FileText, RefreshCw } from 'lucide-react';
+import { HeaderDetectionResult } from '../services/csvParser';
+import { X, Upload, FileText, RefreshCw, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 
 interface DataMappingDialogProps {
   isOpen: boolean;
@@ -12,6 +13,9 @@ interface DataMappingDialogProps {
   detectedMappings: ColumnMapping[];
   fileName: string;
   isEditMode?: boolean;
+  firstRowIsHeader: boolean;
+  headerDetection: HeaderDetectionResult;
+  onToggleFirstRowIsHeader: (isHeader: boolean) => void;
 }
 
 // Speaker ID & File ID are assigned via the quick-assign dropdowns at the top,
@@ -30,13 +34,15 @@ const ROLE_OPTIONS: { value: ColumnRole, label: string }[] = [
 const RESERVED_FIELD_NAMES = new Set(['duration', 'speaker', 'file_id']);
 
 const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
-  isOpen, onClose, onConfirm, headers, sampleData, detectedMappings, fileName, isEditMode
+  isOpen, onClose, onConfirm, headers, sampleData, detectedMappings, fileName, isEditMode,
+  firstRowIsHeader, headerDetection, onToggleFirstRowIsHeader
 }) => {
   const [mappings, setMappings] = useState<ColumnMapping[]>(detectedMappings);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [sidebarHelpRect, setSidebarHelpRect] = useState<DOMRect | null>(null);
   const [speakerHelpRect, setSpeakerHelpRect] = useState<DOMRect | null>(null);
   const [fileIdHelpRect, setFileIdHelpRect] = useState<DOMRect | null>(null);
+  const [showGuide, setShowGuide] = useState(false);
 
   // Reset mappings when dialog opens with new data
   React.useEffect(() => {
@@ -147,6 +153,27 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
           </button>
         </div>
 
+        {/* Header detection banner */}
+        {!isEditMode && (
+          <div className={`px-5 py-2 border-b shrink-0 flex items-center gap-3 text-xs ${headerDetection.confidence < 0.7 ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-100'}`}>
+            {headerDetection.confidence < 0.7 && <AlertTriangle size={14} className="text-amber-500 shrink-0" />}
+            <span className={`font-semibold ${headerDetection.confidence < 0.7 ? 'text-amber-800' : 'text-slate-600'}`}>
+              {headerDetection.confidence < 0.7 ? 'Does your first row contain column headers?' : 'First row:'}
+            </span>
+            <div className="flex rounded overflow-hidden border border-slate-300">
+              <button
+                onClick={() => onToggleFirstRowIsHeader(true)}
+                className={`px-3 py-1 text-[11px] font-bold transition-colors ${firstRowIsHeader ? 'bg-sky-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+              >Headers</button>
+              <button
+                onClick={() => onToggleFirstRowIsHeader(false)}
+                className={`px-3 py-1 text-[11px] font-bold transition-colors border-l border-slate-300 ${!firstRowIsHeader ? 'bg-sky-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+              >Data</button>
+            </div>
+            {!firstRowIsHeader && <span className="text-slate-500 italic">Column names auto-generated (Col_1, Col_2, ...)</span>}
+          </div>
+        )}
+
         {/* Quick-assign: Speaker & File ID */}
         <div className="px-5 pt-4 pb-3 border-b border-slate-100 bg-slate-50/50 shrink-0">
           <div className="flex gap-6">
@@ -230,6 +257,63 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
           <p className="text-[11px] text-amber-800/70 mt-1 italic">
             Toggle any field between filter and data below. Sidebar visibility can also be changed after import.
           </p>
+        </div>
+
+        {/* Collapsible CSV Format Guide */}
+        <div className="mx-5 mt-1 mb-1 shrink-0">
+          <button
+            onClick={() => setShowGuide(!showGuide)}
+            className="text-[11px] text-sky-700 font-bold hover:text-sky-800 flex items-center gap-1"
+          >
+            {showGuide ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            CSV Format Guide
+          </button>
+          {showGuide && (
+            <div className="mt-2 p-3 bg-sky-50/60 border border-sky-100 rounded-lg text-[11px] text-slate-700 leading-relaxed space-y-1.5">
+              <p>
+                <span className="font-bold text-slate-800">Formants:</span>{' '}
+                Use <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">F1</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">F2</code> ...{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">F5</code> for single measurements.
+                For time-points: <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">F1_50</code> or{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">F1_50%</code>.
+                Named targets: <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">F1_onset</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">F1_midpoint</code>.
+                Smoothed variants: append <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">_smooth</code>.
+              </p>
+              <p>
+                <span className="font-bold text-slate-800">Duration:</span>{' '}
+                Auto-detected from column names containing{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">duration</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">dur</code>, or compounds like{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">vowel_dur</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">dur_phonemic</code>.
+                Multiple duration columns are supported — each appears as a separate plottable variable.
+              </p>
+              <p>
+                <span className="font-bold text-slate-800">Pitch:</span>{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">pitch</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">f0</code>, or time-point variants like{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">f0_50</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">f0_80%</code>.
+              </p>
+              <p>
+                <span className="font-bold text-slate-800">Speaker / File ID:</span>{' '}
+                Auto-detected from{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">speaker</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">participant</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">subject</code> /{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">file_id</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">filename</code>.
+                Also assignable via the dropdowns above.
+              </p>
+              <p>
+                <span className="font-bold text-slate-800">Other columns:</span>{' '}
+                Auto-classified as <span className="font-semibold">Filter</span> (categorical, for sidebar filtering and grouping)
+                or <span className="font-semibold">Data</span> (numeric, for plotting). You can change the role of any column in the table below.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Scrollable table */}

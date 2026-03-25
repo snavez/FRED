@@ -35,6 +35,70 @@ export const splitRow = (line: string, delimiter: string): string[] => {
   return result;
 };
 
+// --- Header detection heuristic ---
+
+export interface HeaderDetectionResult {
+  hasHeaders: boolean;
+  confidence: number;
+}
+
+const isNumericValue = (v: string): boolean => {
+  const trimmed = v.trim();
+  return trimmed !== '' && !isNaN(Number(trimmed));
+};
+
+/**
+ * Detect whether the first row of a CSV looks like column headers or data.
+ * Returns a best guess + confidence score (0–1).
+ */
+export const detectHeaderRow = (firstRow: string[], restRows: string[][]): HeaderDetectionResult => {
+  if (firstRow.length === 0) return { hasHeaders: true, confidence: 0.5 };
+
+  let score = 0;
+  const nonEmpty = firstRow.filter(v => v.trim() !== '');
+
+  // 1. Numeric ratio: headers are usually non-numeric; data rows are often numeric
+  const firstRowNumericRatio = nonEmpty.length > 0
+    ? nonEmpty.filter(isNumericValue).length / nonEmpty.length
+    : 0;
+  const dataNumericRatios = restRows.map(row => {
+    const ne = row.filter(v => v.trim() !== '');
+    return ne.length > 0 ? ne.filter(isNumericValue).length / ne.length : 0;
+  });
+  const avgDataNumericRatio = dataNumericRatios.length > 0
+    ? dataNumericRatios.reduce((a, b) => a + b, 0) / dataNumericRatios.length
+    : 0;
+  if (firstRowNumericRatio < avgDataNumericRatio - 0.2) score += 3;
+  else if (firstRowNumericRatio > 0.5 && firstRowNumericRatio >= avgDataNumericRatio - 0.1) score -= 3;
+
+  // 2. No duplicates in first row (headers should be unique)
+  const uniqueVals = new Set(nonEmpty.map(v => v.toLowerCase()));
+  if (uniqueVals.size === nonEmpty.length) score += 1;
+
+  // 3. Identifier-like pattern (letters, underscores, %, hyphens)
+  const identifierPattern = /^[a-zA-Z_][\w%.#\-\s()]*$/;
+  const identifierCount = nonEmpty.filter(v => identifierPattern.test(v.trim())).length;
+  if (nonEmpty.length > 0 && identifierCount / nonEmpty.length > 0.6) score += 2;
+
+  // 4. Short strings (headers tend to be concise)
+  const avgFirstLen = nonEmpty.reduce((s, v) => s + v.length, 0) / Math.max(nonEmpty.length, 1);
+  const allDataCells = restRows.flat().filter(v => v.trim() !== '');
+  const avgDataLen = allDataCells.reduce((s, v) => s + v.length, 0) / Math.max(allDataCells.length, 1);
+  if (avgFirstLen < 20 && avgFirstLen <= avgDataLen) score += 1;
+
+  // 5. File path or very long values penalty
+  if (nonEmpty.some(v => v.length > 50 || /[/\\]/.test(v))) score -= 2;
+
+  // Confidence mapping
+  const absScore = Math.abs(score);
+  let confidence: number;
+  if (absScore >= 4) confidence = 0.95;
+  else if (absScore >= 2) confidence = 0.7;
+  else confidence = 0.4;
+
+  return { hasHeaders: score > 0, confidence };
+};
+
 // --- Alias table for auto-detection (only special roles) ---
 
 const ALIAS_TABLE: Record<string, ColumnRole> = {};
@@ -231,13 +295,18 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
 export const parseWithMappings = (
   text: string,
   mappings: ColumnMapping[],
-  fileName: string = ''
+  fileName: string = '',
+  firstRowIsData: boolean = false
 ): { tokens: SpeechToken[], meta: DatasetMeta } => {
   const delimiter = detectDelimiter(text);
   const lines = text.split(/\r?\n/);
-  if (lines.length < 2) return { tokens: [], meta: { fileName, columnMappings: mappings, timePoints: [], rowCount: 0 } };
+  const minLines = firstRowIsData ? 1 : 2;
+  if (lines.length < minLines) return { tokens: [], meta: { fileName, columnMappings: mappings, timePoints: [], rowCount: 0 } };
 
-  const headers = splitRow(lines[0], delimiter).map(h => h.trim().replace(/^"|"$/g, ''));
+  // When first row is data, use synthetic headers from mapping csvHeader values
+  const headers = firstRowIsData
+    ? mappings.map(m => m.csvHeader)
+    : splitRow(lines[0], delimiter).map(h => h.trim().replace(/^"|"$/g, ''));
 
   // Build header index map
   const headerIdxMap: Record<string, number> = {};
@@ -294,7 +363,8 @@ export const parseWithMappings = (
 
   const tokens: SpeechToken[] = [];
 
-  for (let i = 1; i < lines.length; i++) {
+  const dataStartLine = firstRowIsData ? 0 : 1;
+  for (let i = dataStartLine; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
     const row = splitRow(line, delimiter);

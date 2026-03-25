@@ -3,7 +3,7 @@ import React, { useState, useMemo, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import MainDisplay from './components/MainDisplay';
 import Header from './components/Header';
-import { detectDelimiter, splitRow, autoDetectMappings, parseWithMappings } from './services/csvParser';
+import { detectDelimiter, splitRow, autoDetectMappings, parseWithMappings, detectHeaderRow, HeaderDetectionResult } from './services/csvParser';
 import { getLabel } from './utils/getLabel';
 import { SpeechToken, PlotConfig, FilterState, ReferenceCentroid, Layer, LayerCounters, StyleOverrides, ColumnMapping, DatasetMeta, NormalizationMethod, UNDEFINED_LABEL } from './types';
 import { computeSpeakerStats, computeNormalizedRange, SpeakerStatsMap } from './utils/normalization';
@@ -219,6 +219,9 @@ const App: React.FC = () => {
     fileName: string;
     isEditMode: boolean;
     dialogKey: number; // embedded key — always in sync with dialog data
+    rawFirstRow: string[];
+    firstRowIsHeader: boolean;
+    headerDetection: HeaderDetectionResult;
   } | null>(null);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -234,8 +237,19 @@ const App: React.FC = () => {
       const lines = text.split(/\r?\n/).filter(l => l.trim());
       if (lines.length < 2) return;
 
-      const headers = splitRow(lines[0], delimiter).map(h => h.trim().replace(/^"|"$/g, ''));
-      const sampleRows = lines.slice(1, 6).map(l => splitRow(l, delimiter));
+      const rawFirstRow = splitRow(lines[0], delimiter).map(h => h.trim().replace(/^"|"$/g, ''));
+      const restRows = lines.slice(1, 6).map(l => splitRow(l, delimiter));
+      const detection = detectHeaderRow(rawFirstRow, restRows);
+
+      let headers: string[];
+      let sampleRows: string[][];
+      if (detection.hasHeaders) {
+        headers = rawFirstRow;
+        sampleRows = restRows;
+      } else {
+        headers = rawFirstRow.map((_, i) => `Col_${i + 1}`);
+        sampleRows = [rawFirstRow, ...lines.slice(1, 5).map(l => splitRow(l, delimiter))];
+      }
       const detected = autoDetectMappings(headers, sampleRows);
 
       const fileData = { rawText: text, headers, sampleData: sampleRows, fileName: file.name };
@@ -245,7 +259,10 @@ const App: React.FC = () => {
         ...fileData,
         detectedMappings: detected,
         isEditMode: false,
-        dialogKey: Date.now(), // unique key, atomic with dialog data
+        dialogKey: Date.now(),
+        rawFirstRow,
+        firstRowIsHeader: detection.hasHeaders,
+        headerDetection: detection,
       });
     };
     reader.readAsText(file);
@@ -255,19 +272,49 @@ const App: React.FC = () => {
 
   const handleReopenMappingDialog = useCallback(() => {
     if (!storedFileData || !datasetMeta) return;
+    const rawFirstRow = splitRow(storedFileData.rawText.split(/\r?\n/)[0] || '', detectDelimiter(storedFileData.rawText)).map(h => h.trim().replace(/^"|"$/g, ''));
     setMappingDialog({
       isOpen: true,
       ...storedFileData,
       detectedMappings: datasetMeta.columnMappings,
       isEditMode: true,
       dialogKey: Date.now(),
+      rawFirstRow,
+      firstRowIsHeader: true, // if we already imported, headers were confirmed
+      headerDetection: { hasHeaders: true, confidence: 1 },
     });
   }, [storedFileData, datasetMeta]);
+
+  const handleToggleFirstRowIsHeader = useCallback((isHeader: boolean) => {
+    if (!mappingDialog) return;
+    const delimiter = detectDelimiter(mappingDialog.rawText);
+    const lines = mappingDialog.rawText.split(/\r?\n/).filter(l => l.trim());
+    const rawFirstRow = mappingDialog.rawFirstRow;
+
+    let newHeaders: string[];
+    let newSampleRows: string[][];
+    if (isHeader) {
+      newHeaders = rawFirstRow;
+      newSampleRows = lines.slice(1, 6).map(l => splitRow(l, delimiter));
+    } else {
+      newHeaders = rawFirstRow.map((_, i) => `Col_${i + 1}`);
+      newSampleRows = [rawFirstRow, ...lines.slice(1, 5).map(l => splitRow(l, delimiter))];
+    }
+    const detected = autoDetectMappings(newHeaders, newSampleRows);
+    setMappingDialog(prev => prev ? {
+      ...prev,
+      headers: newHeaders,
+      sampleData: newSampleRows,
+      detectedMappings: detected,
+      firstRowIsHeader: isHeader,
+      dialogKey: Date.now(),
+    } : null);
+  }, [mappingDialog]);
 
   const handleMappingConfirm = useCallback((mappings: ColumnMapping[]) => {
     if (!mappingDialog) return;
     setIsLoading(true);
-    const { tokens, meta } = parseWithMappings(mappingDialog.rawText, mappings, mappingDialog.fileName);
+    const { tokens, meta } = parseWithMappings(mappingDialog.rawText, mappings, mappingDialog.fileName, !mappingDialog.firstRowIsHeader);
     setData(tokens);
     setDatasetMeta(meta);
     const allFilters = computeSelectAllFilters(tokens, meta);
@@ -620,6 +667,9 @@ const App: React.FC = () => {
           detectedMappings={mappingDialog.detectedMappings}
           fileName={mappingDialog.fileName}
           isEditMode={mappingDialog.isEditMode}
+          firstRowIsHeader={mappingDialog.firstRowIsHeader}
+          headerDetection={mappingDialog.headerDetection}
+          onToggleFirstRowIsHeader={handleToggleFirstRowIsHeader}
         />
       )}
     </div>
