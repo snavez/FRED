@@ -242,19 +242,19 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
               </select>
             </div>
           </div>
-          <p className="text-[11px] text-slate-500 mt-2 leading-relaxed">
+          <p className="text-xs text-slate-500 mt-2 leading-relaxed">
             Both can be None, or point at the same CSV column. Hover over the labels above for more info.
           </p>
         </div>
 
         {/* Filter vs Data explanation */}
         <div className="mx-5 mt-3 mb-1 p-3 bg-amber-50/60 border border-amber-100 rounded-lg shrink-0">
-          <p className="text-[11px] text-amber-900 leading-relaxed">
+          <p className="text-xs text-amber-900 leading-relaxed">
             <span className="font-bold">Filter fields</span> contain categorical labels for filtering your data (e.g. phoneme, stress, gender, speaker). They can appear in the sidebar for interactive filtering.
             <br />
             <span className="font-bold">Data fields</span> contain values to be plotted (e.g. formant measurements, duration). Data fields are not available as sidebar filters.
           </p>
-          <p className="text-[11px] text-amber-800/70 mt-1 italic">
+          <p className="text-xs text-amber-800/70 mt-1 italic">
             Toggle any field between filter and data below. Sidebar visibility can also be changed after import.
           </p>
         </div>
@@ -263,48 +263,51 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
         <div className="mx-5 mt-1 mb-1 shrink-0">
           <button
             onClick={() => setShowGuide(!showGuide)}
-            className="text-[11px] text-sky-700 font-bold hover:text-sky-800 flex items-center gap-1"
+            className="text-xs text-sky-700 font-bold hover:text-sky-800 flex items-center gap-1"
           >
             {showGuide ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
             CSV Format Guide
           </button>
           {showGuide && (
-            <div className="mt-2 p-3 bg-sky-50/60 border border-sky-100 rounded-lg text-[11px] text-slate-700 leading-relaxed space-y-1.5">
+            <div className="mt-2 p-3 bg-sky-50/60 border border-sky-100 rounded-lg text-xs text-slate-700 leading-relaxed space-y-1.5">
               <p>
                 <span className="font-bold text-slate-800">Formants:</span>{' '}
-                Use <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">F1</code>,{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">F2</code> ...{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">F5</code> for single measurements.
-                For time-points: <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">F1_50</code> or{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">F1_50%</code>.
-                Named targets: <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">F1_onset</code>,{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">F1_midpoint</code>.
-                Smoothed variants: append <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">_smooth</code>.
+                Use <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F1</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F2</code> ...{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F5</code> for single measurements.
+                For time-points: <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F1_50</code> or{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F1_50%</code>.
+                Named targets: <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F1_onset</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F1_midpoint</code>.
+                You can tag different versions with{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">_tag</code>, e.g.{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F1_target</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F2_50_smoothed</code>.
               </p>
               <p>
                 <span className="font-bold text-slate-800">Duration:</span>{' '}
                 Auto-detected from column names containing{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">duration</code>,{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">dur</code>, or compounds like{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">vowel_dur</code>,{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">dur_phonemic</code>.
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">duration</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">dur</code>, or compounds like{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">vowel_dur</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">dur_phonemic</code>.
                 Multiple duration columns are supported — each appears as a separate plottable variable.
               </p>
               <p>
                 <span className="font-bold text-slate-800">Pitch:</span>{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">pitch</code>,{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">f0</code>, or time-point variants like{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">f0_50</code>,{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">f0_80%</code>.
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">pitch</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">f0</code>, or time-point variants like{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">f0_50</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">f0_80%</code>.
               </p>
               <p>
                 <span className="font-bold text-slate-800">Speaker / File ID:</span>{' '}
                 Auto-detected from{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">speaker</code>,{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">participant</code>,{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">subject</code> /{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">file_id</code>,{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[10px]">filename</code>.
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">speaker</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">participant</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">subject</code> /{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">file_id</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">filename</code>.
                 Also assignable via the dropdowns above.
               </p>
               <p>
