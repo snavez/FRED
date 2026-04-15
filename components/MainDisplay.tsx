@@ -845,6 +845,14 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                               <span>Arrow</span>
                               <input type="range" min="0" max="8" step="0.5" title="Arrow Size (0 = hidden)" value={currentConfig.meanTrajectoryArrowSize ?? 3} onChange={e => handleConfig('meanTrajectoryArrowSize', parseFloat(e.target.value))} className="w-12 h-1 accent-slate-600" />
                             </div>
+                            <button
+                              onClick={() => handleConfig('snapMeansToGrid', !currentConfig.snapMeansToGrid)}
+                              className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold border transition-colors ${currentConfig.snapMeansToGrid ? 'bg-sky-100 border-sky-300 text-sky-700' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}
+                              title="Snap mean points to grid intervals (fewer, evenly-spaced points)"
+                            >
+                              <Grid size={9} />
+                              Snap
+                            </button>
                           </div>
                         )}
                       </div>
@@ -1994,6 +2002,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             onLegendClick={handleLegendClick}
             styleOverrides={styleOverrides}
             speakerStats={speakerStats}
+            datasetMeta={datasetMeta}
           />
         )}
         {activeTab === 'traj_f1f2' && (
@@ -2005,6 +2014,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             onLegendClick={handleLegendClick}
             styleOverrides={styleOverrides}
             speakerStats={speakerStats}
+            datasetMeta={datasetMeta}
           />
         )}
         {activeTab === 'traj_series' && (
@@ -2015,6 +2025,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             onLegendClick={handleLegendClick}
             styleOverrides={styleOverrides}
             speakerStats={speakerStats}
+            datasetMeta={datasetMeta}
           />
         )}
         {activeTab === 'duration' && (

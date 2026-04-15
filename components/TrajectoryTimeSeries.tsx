@@ -1,6 +1,6 @@
 
 import React, { useRef, useEffect, useMemo, useState, forwardRef, useImperativeHandle, useCallback } from 'react';
-import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, NormalizationMethod } from '../types';
+import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, NormalizationMethod, DatasetMeta } from '../types';
 import { normalizeFormant, SpeakerStatsMap } from '../utils/normalization';
 import { interpolateTrajectoryAt, computeMeanTimeGrid } from '../utils/trajectory';
 
@@ -10,6 +10,7 @@ interface TrajectoryTimeSeriesProps {
   styleOverrides?: StyleOverrides;
   onLegendClick?: (category: string, currentStyles: any, event: React.MouseEvent) => void;
   speakerStats?: SpeakerStatsMap;
+  datasetMeta?: DatasetMeta | null;
 }
 
 /** Get effective duration for a token, falling back to duration-like fields */
@@ -57,7 +58,7 @@ const DASH_NAMES = ['solid', 'dash', 'dot', 'longdash', 'dotdash', 'solid'];
 import { getLabel } from '../utils/getLabel';
 
 
-const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>(({ data, config, styleOverrides, onLegendClick, speakerStats }, ref) => {
+const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>(({ data, config, styleOverrides, onLegendClick, speakerStats, datasetMeta }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hoveredToken, setHoveredToken] = useState<SpeechToken | null>(null);
@@ -140,6 +141,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
 
       const sortedNormTimes = computeMeanTimeGrid(
         tks.map(tk => tk.trajectory), onset, offset,
+        config.snapMeansToGrid ? datasetMeta?.timePoints : undefined,
       );
       const normBinCount = sortedNormTimes.length || 11;
 

@@ -1,6 +1,6 @@
 
 import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
-import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, NormalizationMethod } from '../types';
+import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, NormalizationMethod, DatasetMeta } from '../types';
 import { normalizeFormant, getAxisLabel, SpeakerStatsMap } from '../utils/normalization';
 import { interpolateTrajectoryAt, computeMeanTimeGrid } from '../utils/trajectory';
 import { Layers, Rotate3D, Box, LayoutTemplate, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, RotateCcw, RotateCw } from 'lucide-react';
@@ -11,6 +11,7 @@ interface Scatter3DPlotProps {
   styleOverrides?: StyleOverrides;
   onLegendClick?: (category: string, currentStyles: any, event: React.MouseEvent) => void;
   speakerStats?: SpeakerStatsMap;
+  datasetMeta?: DatasetMeta | null;
 }
 
 const COLORS = [
@@ -99,7 +100,7 @@ const ShapeIcon = ({ shape, color, className }: { shape: string, color: string, 
     );
 };
 
-const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config, styleOverrides, onLegendClick, speakerStats }, ref) => {
+const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config, styleOverrides, onLegendClick, speakerStats, datasetMeta }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -516,6 +517,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
 
           const timeSteps = computeMeanTimeGrid(
             tokens.map(tk => tk.trajectory), onset, offset,
+            config.snapMeansToGrid ? datasetMeta?.timePoints : undefined,
           );
 
           const meanPts = timeSteps.map(time => {

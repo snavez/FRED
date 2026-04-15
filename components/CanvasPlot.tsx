@@ -498,6 +498,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
               tokens.map(tk => tk.trajectory),
               config.trajectoryOnset ?? 0,
               config.trajectoryOffset ?? 100,
+              config.snapMeansToGrid ? datasetMeta?.timePoints : undefined,
             );
             const meanPts = timeSteps.map(t => {
                 let sumF1 = 0, sumF2 = 0, count = 0;

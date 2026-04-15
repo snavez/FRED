@@ -61,6 +61,7 @@ export interface PlotConfig {
   // Trajectory Time Series Config
   timeNormalized: boolean;
   showMeanTrajectories: boolean;
+  snapMeansToGrid: boolean;
 
   // Trajectory F1/F2 Config
   showIndividualLines: boolean;

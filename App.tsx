@@ -33,6 +33,7 @@ const INITIAL_CONFIG: PlotConfig = {
 
   timeNormalized: true,
   showMeanTrajectories: true,
+  snapMeansToGrid: true,
   showIndividualLines: true,
   trajectoryLineOpacity: 0.1,
   trajectoryLineWidth: 1,

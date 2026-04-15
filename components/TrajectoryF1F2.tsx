@@ -1,6 +1,6 @@
 
 import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
-import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, StyleOverrides, ExportConfig, NormalizationMethod } from '../types';
+import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, StyleOverrides, ExportConfig, NormalizationMethod, DatasetMeta } from '../types';
 import { normalizeFormant, getAxisLabel, getTickStep, formatTick, SpeakerStatsMap } from '../utils/normalization';
 import { interpolateTrajectoryAt, computeMeanTimeGrid } from '../utils/trajectory';
 
@@ -11,6 +11,7 @@ interface TrajectoryF1F2Props {
   styleOverrides?: StyleOverrides;
   onLegendClick?: (category: string, currentStyles: any, event: React.MouseEvent) => void;
   speakerStats?: SpeakerStatsMap;
+  datasetMeta?: DatasetMeta | null;
 }
 
 const COLORS = [
@@ -42,7 +43,7 @@ const DASH_PATTERNS = [
 
 const DASH_NAMES = ['solid', 'dash', 'dot', 'longdash', 'dotdash', 'solid'];
 
-const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, config, globalReferences, styleOverrides, onLegendClick, speakerStats }, ref) => {
+const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, config, globalReferences, styleOverrides, onLegendClick, speakerStats, datasetMeta }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Hover state uses refs + lightweight tick to avoid triggering canvas redraws
@@ -102,6 +103,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
         tks.map(tk => tk.trajectory),
         config.trajectoryOnset ?? 0,
         config.trajectoryOffset ?? 100,
+        config.snapMeansToGrid ? datasetMeta?.timePoints : undefined,
       );
 
       for (const t of timeSteps) {

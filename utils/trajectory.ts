@@ -47,14 +47,19 @@ export function interpolateTrajectoryAt(
 
 /**
  * Generate a common time grid for mean trajectory computation.
- * Uses the union of all trajectory timepoints across all tokens, filtered by onset/offset.
- * Falls back to a regular 21-point grid [0, 5, 10, ..., 100] if no trajectories have data.
+ * When snapGrid is provided, uses those fixed intervals (filtered by onset/offset).
+ * Otherwise uses the union of all trajectory timepoints across all tokens.
+ * Falls back to a regular 21-point grid [0, 5, 10, ..., 100] if no data.
  */
 export function computeMeanTimeGrid(
   trajectories: TrajectoryPoint[][],
   onset: number = 0,
   offset: number = 100,
+  snapGrid?: number[],
 ): number[] {
+  if (snapGrid && snapGrid.length > 0) {
+    return snapGrid.filter(t => t >= onset && t <= offset);
+  }
   const allTimes = new Set<number>();
   for (const traj of trajectories) {
     for (const p of traj) {
