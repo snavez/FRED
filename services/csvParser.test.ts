@@ -432,6 +432,38 @@ describe('parseWithMappings – long format', () => {
     expect(tokens[0].duration).toBeCloseTo(164);
   });
 
+  it('wide-format normalizes per-token when tokens have variable-length trajectories', () => {
+    // Token 1 has 3 timepoints, token 2 has 2 — variable length triggers normalization
+    const csv = 'f1_1,f2_1,f1_2,f2_2,f1_3,f2_3\n400,1800,450,1700,500,1600\n300,2200,320,2000,,';
+    const mappings: ColumnMapping[] = [
+      { csvHeader: 'f1_1', role: 'formant', formant: 'f1', timePoint: 1, isSmooth: false },
+      { csvHeader: 'f2_1', role: 'formant', formant: 'f2', timePoint: 1, isSmooth: false },
+      { csvHeader: 'f1_2', role: 'formant', formant: 'f1', timePoint: 2, isSmooth: false },
+      { csvHeader: 'f2_2', role: 'formant', formant: 'f2', timePoint: 2, isSmooth: false },
+      { csvHeader: 'f1_3', role: 'formant', formant: 'f1', timePoint: 3, isSmooth: false },
+      { csvHeader: 'f2_3', role: 'formant', formant: 'f2', timePoint: 3, isSmooth: false },
+    ];
+    const { tokens, meta } = parseWithMappings(csv, mappings);
+
+    expect(tokens).toHaveLength(2);
+
+    // Token 1 (3 points): remapped to 0%, 50%, 100%
+    expect(tokens[0].trajectory).toHaveLength(3);
+    expect(tokens[0].trajectory[0].time).toBeCloseTo(0);
+    expect(tokens[0].trajectory[1].time).toBeCloseTo(50);
+    expect(tokens[0].trajectory[2].time).toBeCloseTo(100);
+
+    // Token 2 (2 points): remapped to 0%, 100%
+    expect(tokens[1].trajectory).toHaveLength(2);
+    expect(tokens[1].trajectory[0].time).toBeCloseTo(0);
+    expect(tokens[1].trajectory[1].time).toBeCloseTo(100);
+
+    // UI timepoints replaced with common grid
+    expect(meta.timePoints).toContain(0);
+    expect(meta.timePoints).toContain(50);
+    expect(meta.timePoints).toContain(100);
+  });
+
   it('wide-format parsing is unaffected by new long-format code', () => {
     const csv = 'f1_00,f2_00,f1_50,f2_50,phoneme\n400,1800,450,1700,a\n300,2200,310,2100,i';
     const mappings: ColumnMapping[] = [

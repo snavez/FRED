@@ -683,6 +683,27 @@ export const parseWithMappings = (
     });
   }
 
+  // Normalize per-token timepoints when tokens have variable-length trajectories.
+  // Detects ordinal/evenly-spaced columns (F1_1, F1_2, ...) where shorter tokens have
+  // fewer filled columns, and remaps each token to 0–100% so means are comparable.
+  if (tokens.length > 1) {
+    const lengths = tokens.filter(t => t.trajectory.length > 0).map(t => t.trajectory.length);
+    const minLen = Math.min(...lengths);
+    const maxLen = Math.max(...lengths);
+    if (minLen !== maxLen) {
+      for (const token of tokens) {
+        const n = token.trajectory.length;
+        if (n < 2) continue;
+        for (let j = 0; j < n; j++) {
+          token.trajectory[j].time = (j / (n - 1)) * 100;
+        }
+      }
+      // Replace column-derived timepoints with the common 0–100% grid for UI
+      sortedTimePoints.length = 0;
+      for (let t = 0; t <= 100; t += 5) sortedTimePoints.push(t);
+    }
+  }
+
   // Compute formant variants from formant-role mappings
   const formantLabelSet = new Set<string | undefined>();
   mappings.forEach(m => {
