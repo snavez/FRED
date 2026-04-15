@@ -24,6 +24,8 @@ const ROLE_OPTIONS: { value: ColumnRole, label: string }[] = [
   { value: 'formant', label: 'Formant Value' },
   { value: 'duration', label: 'Duration Value' },
   { value: 'pitch', label: 'Pitch Value' },
+  { value: 'token_id', label: 'Token ID (groups rows)' },
+  { value: 'timepoint', label: 'Timepoint' },
   { value: 'field', label: 'Custom Field' },
   { value: 'ignore', label: 'Ignore' },
 ];
@@ -247,6 +249,27 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
           </p>
         </div>
 
+        {/* Long-format detection banner */}
+        {mappings.some(m => m.role === 'token_id') && (
+          <div className="mx-5 mt-3 mb-1 p-3 bg-indigo-50/60 border border-indigo-100 rounded-lg shrink-0">
+            <p className="text-xs text-indigo-900 leading-relaxed">
+              <span className="font-bold">Long format detected:</span> Multiple rows per token.
+              Rows will be grouped by{' '}
+              <code className="font-mono bg-indigo-100 px-1 rounded text-[11px] font-bold">
+                {mappings.find(m => m.role === 'token_id')?.csvHeader}
+              </code>{' '}
+              into individual tokens.
+              {mappings.some(m => m.role === 'timepoint') && (
+                <> Timepoint from{' '}
+                  <code className="font-mono bg-indigo-100 px-1 rounded text-[11px] font-bold">
+                    {mappings.find(m => m.role === 'timepoint')?.csvHeader}
+                  </code>, normalized to 0–100%.
+                </>
+              )}
+            </p>
+          </div>
+        )}
+
         {/* Filter vs Data explanation */}
         <div className="mx-5 mt-3 mb-1 p-3 bg-amber-50/60 border border-amber-100 rounded-lg shrink-0">
           <p className="text-xs text-amber-900 leading-relaxed">
@@ -309,6 +332,15 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                 <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">file_id</code>,{' '}
                 <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">filename</code>.
                 Also assignable via the dropdowns above.
+              </p>
+              <p>
+                <span className="font-bold text-slate-800">Long format (multiple rows per token):</span>{' '}
+                If your data has one row per formant measurement (e.g. from R/emuR), assign a{' '}
+                <span className="font-semibold">Token ID</span> column (groups rows into tokens) and a{' '}
+                <span className="font-semibold">Timepoint</span> column (measurement time).
+                Formants use bare <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F1</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F2</code> columns.
+                Timepoints are normalized to 0–100% on import.
               </p>
               <p>
                 <span className="font-bold text-slate-800">Other columns:</span>{' '}
@@ -375,8 +407,8 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                           if (role === 'formant' || role === 'duration' || role === 'pitch') {
                             updates.isDataField = true;
                             updates.showInSidebar = false;
-                          } else if (role === 'ignore') {
-                            updates.isDataField = undefined;
+                          } else if (role === 'ignore' || role === 'token_id' || role === 'timepoint') {
+                            updates.isDataField = false;
                             updates.showInSidebar = false;
                           } else {
                             updates.isDataField = false;
@@ -452,13 +484,13 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                           )}
                         </div>
                       )}
-                      {(m.role === 'speaker' || m.role === 'file_id' || m.role === 'duration') && (
+                      {(m.role === 'speaker' || m.role === 'file_id' || m.role === 'duration' || m.role === 'token_id' || m.role === 'timepoint') && (
                         <span className="text-[11px] text-slate-400 italic">auto-detected</span>
                       )}
                     </td>
                     {/* Type: Filter / Data toggle */}
                     <td className="py-2 text-center">
-                      {!isIgnored && (
+                      {!isIgnored && m.role !== 'token_id' && m.role !== 'timepoint' && (
                         <div className="flex items-center justify-center gap-1">
                           <button
                             onClick={() => updateMapping(idx, { isDataField: false, showInSidebar: true })}
@@ -519,6 +551,12 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
               if (reservedClashes.size > 0) {
                 const names = [...reservedClashes].map(i => `"${mappings[i].fieldName}"`).join(', ');
                 setValidationError(`Reserved name clash: ${names} — please rename to avoid conflicts`);
+                return;
+              }
+              const hasTokenId = mappings.some(m => m.role === 'token_id');
+              const hasTimepoint = mappings.some(m => m.role === 'timepoint');
+              if (hasTokenId !== hasTimepoint) {
+                setValidationError('Token ID and Timepoint must both be assigned for long-format data');
                 return;
               }
               onConfirm(mappings);

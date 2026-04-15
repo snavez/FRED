@@ -2,6 +2,7 @@
 import React, { useRef, useEffect, useMemo, useState, forwardRef, useImperativeHandle, useCallback } from 'react';
 import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, NormalizationMethod } from '../types';
 import { normalizeFormant, SpeakerStatsMap } from '../utils/normalization';
+import { interpolateTrajectoryAt, computeMeanTimeGrid } from '../utils/trajectory';
 
 interface TrajectoryTimeSeriesProps {
   data: SpeechToken[];
@@ -55,7 +56,6 @@ const DASH_NAMES = ['solid', 'dash', 'dot', 'longdash', 'dotdash', 'solid'];
 
 import { getLabel } from '../utils/getLabel';
 
-const lerp = (v0: number, v1: number, t: number) => v0 * (1 - t) + v1 * t;
 
 const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>(({ data, config, styleOverrides, onLegendClick, speakerStats }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -138,63 +138,44 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     Object.entries(combinedGroups).forEach(([compKey, tokens]) => {
       const tks = tokens as SpeechToken[];
 
-      // Derive actual time-points from data for normalized mode (filtered by onset/offset)
-      const allNormTimes = new Set<number>();
-      tks.forEach(tk => tk.trajectory.filter(p => p.time >= onset && p.time <= offset).forEach(p => allNormTimes.add(p.time)));
-      const sortedNormTimes = Array.from(allNormTimes).sort((a, b) => a - b);
+      const sortedNormTimes = computeMeanTimeGrid(
+        tks.map(tk => tk.trajectory), onset, offset,
+      );
       const normBinCount = sortedNormTimes.length || 11;
 
+      const maxDur = Math.max(...tks.map(t => getTokenDuration(t)));
       const binCount = config.timeNormalized ? normBinCount : 50;
+      const binSize = config.timeNormalized ? (sortedNormTimes.length > 1 ? sortedNormTimes[1] - sortedNormTimes[0] : 10) : maxDur / binCount;
       const f1Sums = new Array(binCount).fill(0);
       const f2Sums = new Array(binCount).fill(0);
       const counts = new Array(binCount).fill(0);
-      const maxDur = Math.max(...tks.map(t => getTokenDuration(t)));
-      const binSize = config.timeNormalized ? (sortedNormTimes.length > 1 ? sortedNormTimes[1] - sortedNormTimes[0] : 10) : maxDur / binCount;
 
       const normM = (config.normalization || 'hz') as NormalizationMethod;
       tks.forEach(t => {
          const sts = speakerStats?.[t.speaker || '__all__'];
          if (config.timeNormalized) {
-             t.trajectory.filter(p => p.time >= onset && p.time <= offset).forEach(p => {
-                 // Map trajectory point time to bin index using sorted time-points
-                 const idx = sortedNormTimes.indexOf(p.time);
-                 const f1 = normalizeFormant(config.useSmoothing ? (p.f1_smooth ?? p.f1) : p.f1, 'f1', normM, sts);
-                 const f2 = normalizeFormant(config.useSmoothing ? (p.f2_smooth ?? p.f2) : p.f2, 'f2', normM, sts);
-                 if(idx >= 0 && idx < normBinCount && !isNaN(f1) && !isNaN(f2)) {
-                     f1Sums[idx]+=f1; f2Sums[idx]+=f2; counts[idx]++;
+             for (let idx = 0; idx < sortedNormTimes.length; idx++) {
+                 const pt = interpolateTrajectoryAt(t.trajectory, sortedNormTimes[idx]);
+                 if (!pt) continue;
+                 const f1 = normalizeFormant(config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1, 'f1', normM, sts);
+                 const f2 = normalizeFormant(config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2, 'f2', normM, sts);
+                 if (idx < normBinCount && !isNaN(f1) && !isNaN(f2)) {
+                     f1Sums[idx] += f1; f2Sums[idx] += f2; counts[idx]++;
                  }
-             });
+             }
          } else {
-             // For non-normalized time
-             for(let i=0; i<binCount; i++) {
+             for (let i = 0; i < binCount; i++) {
                  const time = i * binSize;
                  const tDur = getTokenDuration(t);
-                 if(tDur <= 0 || time > tDur) continue;
-                 const normTime = (time/tDur)*100;
+                 if (tDur <= 0 || time > tDur) continue;
+                 const normTime = (time / tDur) * 100;
                  if (normTime < onset || normTime > offset) continue;
-                 // Find bracketing trajectory points
-                 let p0Idx = -1, p1Idx = -1;
-                 for (let j = 0; j < t.trajectory.length - 1; j++) {
-                     if (t.trajectory[j].time <= normTime && t.trajectory[j+1].time >= normTime) {
-                         p0Idx = j; p1Idx = j + 1; break;
-                     }
-                 }
-                 if (p0Idx < 0 || p1Idx < 0) continue;
-                 const p0 = t.trajectory[p0Idx];
-                 const p1 = t.trajectory[p1Idx];
-                 if(p0 && p1) {
-                     const f1_0 = normalizeFormant(config.useSmoothing ? (p0.f1_smooth ?? p0.f1) : p0.f1, 'f1', normM, sts);
-                     const f1_1 = normalizeFormant(config.useSmoothing ? (p1.f1_smooth ?? p1.f1) : p1.f1, 'f1', normM, sts);
-                     const f2_0 = normalizeFormant(config.useSmoothing ? (p0.f2_smooth ?? p0.f2) : p0.f2, 'f2', normM, sts);
-                     const f2_1 = normalizeFormant(config.useSmoothing ? (p1.f2_smooth ?? p1.f2) : p1.f2, 'f2', normM, sts);
-
-                     if (!isNaN(f1_0) && !isNaN(f1_1) && !isNaN(f2_0) && !isNaN(f2_1)) {
-                        const span = p1.time - p0.time;
-                        const alpha = span > 0 ? (normTime - p0.time) / span : 0;
-                        f1Sums[i] += lerp(f1_0, f1_1, alpha);
-                        f2Sums[i] += lerp(f2_0, f2_1, alpha);
-                        counts[i]++;
-                     }
+                 const pt = interpolateTrajectoryAt(t.trajectory, normTime);
+                 if (!pt) continue;
+                 const f1 = normalizeFormant(config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1, 'f1', normM, sts);
+                 const f2 = normalizeFormant(config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2, 'f2', normM, sts);
+                 if (!isNaN(f1) && !isNaN(f2)) {
+                     f1Sums[i] += f1; f2Sums[i] += f2; counts[i]++;
                  }
              }
          }

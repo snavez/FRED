@@ -295,6 +295,7 @@ export interface PlotHandle {
 export type ColumnRole =
   | 'speaker' | 'file_id'
   | 'duration' | 'formant' | 'pitch'
+  | 'token_id' | 'timepoint'
   | 'field' | 'ignore';
 
 export interface ColumnMapping {
@@ -317,4 +318,5 @@ export interface DatasetMeta {
   timePointLabels?: Record<number, string>;  // Maps numeric index → display label (e.g. 0→"onset", 50→"50%")
   rowCount: number;
   formantVariants?: string[];
+  sourceFormat?: 'wide' | 'long';
 }

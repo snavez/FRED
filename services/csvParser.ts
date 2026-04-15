@@ -109,6 +109,8 @@ addAliases(['speaker', 'speaker_id', 'participant', 'subject'], 'speaker');
 addAliases(['file_id', 'fileid', 'filename', 'file'], 'file_id');
 addAliases(['duration', 'dur', 'seg_dur', 'dur_phonemic', 'dur_phoneme', 'phone_dur', 'phon_dur', 'vowel_dur', 'seg_duration', 'segment_dur', 'segment_duration'], 'duration');
 addAliases(['pitch', 'f0', 'voice_pitch'], 'pitch');
+addAliases(['token_id', 'tokenid', 'sl_rowidx', 'row_idx', 'rowidx', 'segment_id', 'segmentid', 'obs_id', 'group_id', 'item_id'], 'token_id');
+addAliases(['times_norm', 'time_norm', 'times_rel', 'time_rel', 'timepoint', 'time_point', 'norm_time', 'prop_time', 'measurement_time'], 'timepoint');
 
 // Formant patterns (case-insensitive):
 //   f1_50, f1_50%, f1_50_smooth, f1_50%_smooth   → numeric timepoint
@@ -171,7 +173,7 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
   namedTargetOrder.forEach((t, i) => { namedTargetIndex[t] = namedTargetBase + i; });
 
   // Pass 2: build mappings
-  return headers.map(header => {
+  const result: ColumnMapping[] = headers.map(header => {
     const lower = header.toLowerCase().trim();
 
     // 1. Check alias table for special roles
@@ -286,7 +288,254 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
 
     return { csvHeader: header, role: 'ignore' as ColumnRole };
   });
+
+  // Post-pass: long-format heuristics
+  const hasBareFormants = result.some(m => m.role === 'formant' && m.timePoint === 0);
+  const timepointIndices = result.reduce<number[]>((acc, m, i) => { if (m.role === 'timepoint') acc.push(i); return acc; }, []);
+  const hasTimepoint = timepointIndices.length > 0;
+  const hasTokenId = result.some(m => m.role === 'token_id');
+
+  // If token_id detected but no timepoint and no bare formants, it's a false positive
+  // (e.g. sl_rowIdx in a wide-format file) — reclassify as field
+  if (hasTokenId && !hasTimepoint && !hasBareFormants) {
+    for (let ci = 0; ci < result.length; ci++) {
+      if (result[ci].role === 'token_id') {
+        result[ci] = { csvHeader: result[ci].csvHeader, role: 'field', fieldName: result[ci].csvHeader, showInSidebar: false, isDataField: false };
+      }
+    }
+  }
+
+  // If multiple timepoint columns detected, keep only the best one (prefer raw ms — most informative)
+  if (timepointIndices.length > 1) {
+    // Score each: prefer raw ms (gives us both normalized trajectories AND duration)
+    let bestIdx = timepointIndices[0];
+    let bestScore = -1;
+    for (const ci of timepointIndices) {
+      const vals = sampleRows.map(row => parseFloat(row[ci] || '')).filter(v => !isNaN(v));
+      const max = Math.max(...vals);
+      // Prefer raw ms (score 2), then 0-100 percent (score 1), then 0-1 fraction (score 0)
+      const score = max > 100 ? 2 : max > 1.0 ? 1 : 0;
+      if (score > bestScore) { bestScore = score; bestIdx = ci; }
+    }
+    for (const ci of timepointIndices) {
+      if (ci !== bestIdx) {
+        result[ci] = { csvHeader: result[ci].csvHeader, role: 'ignore' as ColumnRole };
+      }
+    }
+  }
+
+  // If bare formants + timepoint detected but no token_id, try to find a grouper
+  if (hasBareFormants && hasTimepoint && !hasTokenId) {
+    const totalRows = sampleRows.length;
+    for (let ci = 0; ci < result.length; ci++) {
+      const m = result[ci];
+      if (m.role !== 'field' && m.role !== 'ignore') continue;
+      const vals = sampleRows.map(row => row[ci] || '').filter(v => v !== '');
+      if (vals.length === 0) continue;
+      const allInteger = vals.every(v => /^\d+$/.test(v.trim()));
+      if (!allInteger) continue;
+      const unique = new Set(vals);
+      // High repetition: unique count < 50% of rows (multiple rows per group)
+      if (unique.size < totalRows * 0.5 && unique.size >= 1) {
+        result[ci] = { csvHeader: m.csvHeader, role: 'token_id', showInSidebar: false, isDataField: false };
+        break;
+      }
+    }
+  }
+
+  return result;
 };
+
+/**
+ * Parse long-format CSV where multiple rows belong to one token.
+ * Groups rows by token_id column, reads timepoint + formant values per row,
+ * normalizes timepoints to 0–100%, and emits one SpeechToken per group.
+ */
+function parseLongFormat(
+  lines: string[],
+  delimiter: string,
+  dataStartLine: number,
+  headerIdxMap: Record<string, number>,
+  mappings: ColumnMapping[],
+  tokenIdMapping: ColumnMapping,
+  timepointMapping: ColumnMapping,
+  speakerIdx: number | undefined,
+  fileIdIdx: number | undefined,
+  durationIdx: number | undefined,
+  formantMappings: { colIdx: number, formant: 'f1' | 'f2' | 'f3' | 'f4' | 'f5', timePoint: number, isSmooth: boolean }[],
+  fieldMappings: { colIdx: number, fieldName: string }[],
+  fileName: string,
+): { tokens: SpeechToken[], meta: DatasetMeta } {
+  const tokenIdIdx = headerIdxMap[tokenIdMapping.csvHeader];
+  const timepointIdx = headerIdxMap[timepointMapping.csvHeader];
+  if (tokenIdIdx === undefined || timepointIdx === undefined) {
+    return { tokens: [], meta: { fileName, columnMappings: mappings, timePoints: [], rowCount: 0, sourceFormat: 'long' } };
+  }
+
+  // Group rows by token_id
+  const groups = new Map<string, string[][]>();
+  const groupOrder: string[] = [];
+  for (let i = dataStartLine; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const row = splitRow(line, delimiter);
+    if (row.length === 0) continue;
+    const tid = (row[tokenIdIdx] || '').trim();
+    if (!tid) continue;
+    if (!groups.has(tid)) {
+      groups.set(tid, []);
+      groupOrder.push(tid);
+    }
+    groups.get(tid)!.push(row);
+  }
+
+  // Detect timepoint scale from all timepoint values
+  let maxTP = -Infinity;
+  let minTP = Infinity;
+  for (const rows of groups.values()) {
+    for (const row of rows) {
+      const v = parseFloat(row[timepointIdx]);
+      if (!isNaN(v)) {
+        if (v > maxTP) maxTP = v;
+        if (v < minTP) minTP = v;
+      }
+    }
+  }
+  // fraction (0–1) | percent (1–100) | ms (>100)
+  const scale: 'fraction' | 'percent' | 'ms' = maxTP <= 1.0 ? 'fraction' : maxTP <= 100 ? 'percent' : 'ms';
+
+  const xminFieldMapping = fieldMappings.find(fm => XMIN_NAMES.has(fm.fieldName.toLowerCase()));
+  const tokens: SpeechToken[] = [];
+
+  for (const tid of groupOrder) {
+    const rows = groups.get(tid)!;
+
+    // Sort rows by timepoint value
+    rows.sort((a, b) => parseFloat(a[timepointIdx]) - parseFloat(b[timepointIdx]));
+
+    // Metadata from first row
+    const firstRow = rows[0];
+    const speaker = speakerIdx !== undefined ? (firstRow[speakerIdx] || '') : '';
+    const fileId = fileIdIdx !== undefined ? (firstRow[fileIdIdx] || '') : '';
+
+    // Build fields from first row (metadata columns repeat across rows)
+    const fields: Record<string, string> = {};
+    fieldMappings.forEach(fm => {
+      fields[fm.fieldName] = firstRow[fm.colIdx] || '';
+    });
+
+    // Per-group time range for ms normalization
+    let groupMinT = Infinity, groupMaxT = -Infinity;
+    if (scale === 'ms') {
+      for (const row of rows) {
+        const v = parseFloat(row[timepointIdx]);
+        if (!isNaN(v)) {
+          if (v < groupMinT) groupMinT = v;
+          if (v > groupMaxT) groupMaxT = v;
+        }
+      }
+    }
+
+    // Build trajectory from all rows in the group
+    const trajectory: TrajectoryPoint[] = [];
+    for (const row of rows) {
+      const rawTime = parseFloat(row[timepointIdx]);
+      if (isNaN(rawTime)) continue;
+
+      // Normalize time to 0–100%
+      let time: number;
+      if (scale === 'fraction') {
+        time = rawTime * 100;
+      } else if (scale === 'percent') {
+        time = rawTime;
+      } else {
+        const span = groupMaxT - groupMinT;
+        time = span > 0 ? ((rawTime - groupMinT) / span) * 100 : 0;
+      }
+
+      // Read formant values from this row (bare formants: all have timePoint=0)
+      let f1 = NaN, f2 = NaN, f3 = NaN;
+      let f1s = NaN, f2s = NaN, f3s = NaN;
+      for (const fm of formantMappings) {
+        const val = parseFloat(row[fm.colIdx]);
+        if (isNaN(val)) continue;
+        if (fm.isSmooth) {
+          if (fm.formant === 'f1') f1s = val;
+          else if (fm.formant === 'f2') f2s = val;
+          else if (fm.formant === 'f3') f3s = val;
+        } else {
+          if (fm.formant === 'f1') f1 = val;
+          else if (fm.formant === 'f2') f2 = val;
+          else if (fm.formant === 'f3') f3 = val;
+        }
+      }
+
+      const effF1S = !isNaN(f1s) ? f1s : f1;
+      const effF2S = !isNaN(f2s) ? f2s : f2;
+      const effF3S = !isNaN(f3s) ? f3s : f3;
+      const hasRaw = !isNaN(f1) && !isNaN(f2);
+      const hasSmooth = !isNaN(effF1S) && !isNaN(effF2S);
+
+      if (hasRaw || hasSmooth) {
+        trajectory.push({
+          time,
+          f1, f2, f3: isNaN(f3) ? 0 : f3,
+          f1_smooth: effF1S, f2_smooth: effF2S,
+          f3_smooth: isNaN(effF3S) ? (isNaN(f3) ? 0 : f3) : effF3S,
+        });
+      }
+    }
+
+    if (trajectory.length === 0) continue;
+
+    // Duration: prefer explicit column, otherwise compute from raw time range
+    let duration = 0;
+    if (durationIdx !== undefined) {
+      duration = parseFloat(firstRow[durationIdx]) || 0;
+    } else if (scale === 'ms') {
+      duration = groupMaxT - groupMinT;
+    }
+
+    tokens.push({
+      id: speaker ? `${speaker}_token_${tid}` : (fileId ? `${fileId}_token_${tid}` : `token_${tid}`),
+      speaker,
+      file_id: fileId,
+      xmin: xminFieldMapping ? (parseFloat(firstRow[xminFieldMapping.colIdx]) || 0) : 0,
+      duration,
+      trajectory,
+      fields,
+    });
+  }
+
+  // Compute formant variants
+  const formantLabelSet = new Set<string | undefined>();
+  mappings.forEach(m => {
+    if (m.role === 'formant') formantLabelSet.add(m.formantLabel);
+  });
+  let formantVariants: string[] | undefined;
+  if (formantLabelSet.size >= 2) {
+    const labels = Array.from(formantLabelSet);
+    const hasRaw = labels.includes(undefined);
+    const namedLabels = labels.filter((l): l is string => l !== undefined).sort();
+    formantVariants = hasRaw ? ['Original', ...namedLabels] : namedLabels;
+  }
+
+  // Common time grid for UI (21 points: 0, 5, 10, ..., 100)
+  const commonGrid: number[] = [];
+  for (let t = 0; t <= 100; t += 5) commonGrid.push(t);
+
+  return {
+    tokens,
+    meta: {
+      fileName,
+      columnMappings: mappings,
+      timePoints: commonGrid,
+      rowCount: tokens.length,
+      formantVariants,
+      sourceFormat: 'long',
+    },
+  };
+}
 
 /**
  * Parse file text using user-confirmed column mappings.
@@ -353,6 +602,15 @@ export const parseWithMappings = (
     }
   });
 
+  const dataStartLine = firstRowIsData ? 0 : 1;
+
+  // Detect long-format mode: token_id + timepoint roles both present
+  const tokenIdMapping = mappings.find(m => m.role === 'token_id');
+  const timepointMapping = mappings.find(m => m.role === 'timepoint');
+  if (tokenIdMapping && timepointMapping) {
+    return parseLongFormat(lines, delimiter, dataStartLine, headerIdxMap, mappings, tokenIdMapping, timepointMapping, speakerIdx, fileIdIdx, durationIdx, formantMappings, fieldMappings, fileName);
+  }
+
   // Find xmin-like field for SpeechToken.xmin population
   const xminFieldMapping = fieldMappings.find(fm => XMIN_NAMES.has(fm.fieldName.toLowerCase()));
 
@@ -362,8 +620,6 @@ export const parseWithMappings = (
   const sortedTimePoints = Array.from(timePointSet).sort((a, b) => a - b);
 
   const tokens: SpeechToken[] = [];
-
-  const dataStartLine = firstRowIsData ? 0 : 1;
   for (let i = dataStartLine; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;

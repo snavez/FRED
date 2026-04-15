@@ -3,6 +3,7 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, Layer, DatasetMeta, NormalizationMethod } from '../types';
 import { normalizeFormant, getAxisLabel, getTickStep, formatTick, SpeakerStatsMap } from '../utils/normalization';
+import { interpolateTrajectoryAt, computeMeanTimeGrid } from '../utils/trajectory';
 
 interface CanvasPlotProps {
   layers: Layer[];
@@ -493,15 +494,15 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
                 if (mappings.lineTypeKey) { lineDash = mappings.lineTypeMap[key] || []; }
             }
 
-            // Derive time-steps from data rather than hardcoded 0-100
-            const allTimes = new Set<number>();
-            tokens.forEach(tk => tk.trajectory.forEach(p => allTimes.add(p.time)));
-            const timeSteps = Array.from(allTimes).sort((a, b) => a - b)
-              .filter(t => t >= (config.trajectoryOnset ?? 0) && t <= (config.trajectoryOffset ?? 100));
+            const timeSteps = computeMeanTimeGrid(
+              tokens.map(tk => tk.trajectory),
+              config.trajectoryOnset ?? 0,
+              config.trajectoryOffset ?? 100,
+            );
             const meanPts = timeSteps.map(t => {
                 let sumF1 = 0, sumF2 = 0, count = 0;
                 tokens.forEach(token => {
-                    const pt = token.trajectory.find(p => p.time === t);
+                    const pt = interpolateTrajectoryAt(token.trajectory, t);
                     if (pt) {
                         const f1 = normF1(pt, token, config);
                         const f2 = normF2(pt, token, config);

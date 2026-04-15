@@ -2,6 +2,7 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, NormalizationMethod } from '../types';
 import { normalizeFormant, getAxisLabel, SpeakerStatsMap } from '../utils/normalization';
+import { interpolateTrajectoryAt, computeMeanTimeGrid } from '../utils/trajectory';
 import { Layers, Rotate3D, Box, LayoutTemplate, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, RotateCcw, RotateCw } from 'lucide-react';
 
 interface Scatter3DPlotProps {
@@ -513,16 +514,14 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
             if (mappings.lineTypeKey) lineDash = mappings.lineTypeMap[key] || [];
           }
 
-          // Derive time-steps from data
-          const allTimes = new Set<number>();
-          tokens.forEach(tk => tk.trajectory.forEach(p => allTimes.add(p.time)));
-          const timeSteps = Array.from(allTimes).sort((a, b) => a - b)
-            .filter(t => t >= onset && t <= offset);
+          const timeSteps = computeMeanTimeGrid(
+            tokens.map(tk => tk.trajectory), onset, offset,
+          );
 
           const meanPts = timeSteps.map(time => {
             let sF1 = 0, sF2 = 0, sF3 = 0, cnt = 0;
             tokens.forEach(token => {
-              const pt = token.trajectory.find(p => p.time === time);
+              const pt = interpolateTrajectoryAt(token.trajectory, time);
               if (pt) {
                 const f1 = normF(pt, token, 'f1'), f2 = normF(pt, token, 'f2'), f3 = normF(pt, token, 'f3');
                 if (!isNaN(f1) && !isNaN(f2) && !isNaN(f3)) { sF1 += f1; sF2 += f2; sF3 += f3; cnt++; }

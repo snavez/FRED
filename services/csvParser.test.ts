@@ -247,3 +247,206 @@ describe('parseWithMappings', () => {
     expect(tokens[0].fields['phoneme']).toBe('a');
   });
 });
+
+// ─── Long-format auto-detection ──────────────────────────────────────
+
+describe('autoDetectMappings – long format', () => {
+  it('detects token_id and timepoint aliases', () => {
+    const headers = ['sl_rowIdx', 'vowel', 'speaker', 'file', 'times_norm', 'F1', 'F2'];
+    const sampleRows = [
+      ['1', 'a', 'spk1', 'f001', '0', '400', '1800'],
+      ['1', 'a', 'spk1', 'f001', '0.5', '450', '1700'],
+      ['2', 'i', 'spk1', 'f001', '0', '300', '2200'],
+    ];
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    expect(mappings.find(m => m.csvHeader === 'sl_rowIdx')?.role).toBe('token_id');
+    expect(mappings.find(m => m.csvHeader === 'times_norm')?.role).toBe('timepoint');
+    expect(mappings.find(m => m.csvHeader === 'F1')?.role).toBe('formant');
+    expect(mappings.find(m => m.csvHeader === 'F2')?.role).toBe('formant');
+    expect(mappings.find(m => m.csvHeader === 'speaker')?.role).toBe('speaker');
+    expect(mappings.find(m => m.csvHeader === 'file')?.role).toBe('file_id');
+  });
+
+  it('heuristically finds token_id when bare formants + timepoint exist', () => {
+    const headers = ['group_num', 'vowel', 'time_norm', 'F1', 'F2'];
+    const sampleRows = [
+      ['1', 'a', '0', '400', '1800'],
+      ['1', 'a', '0.5', '450', '1700'],
+      ['1', 'a', '1', '480', '1600'],
+      ['2', 'i', '0', '300', '2200'],
+      ['2', 'i', '0.5', '310', '2100'],
+      ['2', 'i', '1', '320', '2000'],
+    ];
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    // time_norm matches alias → timepoint
+    expect(mappings.find(m => m.csvHeader === 'time_norm')?.role).toBe('timepoint');
+    // group_num is integer with high repetition → heuristic detects as token_id
+    expect(mappings.find(m => m.csvHeader === 'group_num')?.role).toBe('token_id');
+  });
+
+  it('does not apply heuristic when no timepoint column exists', () => {
+    const headers = ['group_num', 'vowel', 'F1_50', 'F2_50'];
+    const sampleRows = [
+      ['1', 'a', '400', '1800'],
+      ['1', 'a', '450', '1700'],
+    ];
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    // F1_50 is numeric formant, not bare → no long format detected
+    expect(mappings.find(m => m.csvHeader === 'group_num')?.role).not.toBe('token_id');
+  });
+
+  it('reclassifies token_id as field when no timepoint or bare formants exist (wide format)', () => {
+    const headers = ['sl_rowIdx', 'vowel', 'speaker', 'F1_1', 'F2_1', 'F1_2', 'F2_2'];
+    const sampleRows = [
+      ['1', 'a', 'spk1', '400', '1800', '450', '1700'],
+      ['2', 'i', 'spk1', '300', '2200', '310', '2100'],
+    ];
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    // sl_rowIdx matches alias but wide format has no timepoint → reclassified to field
+    expect(mappings.find(m => m.csvHeader === 'sl_rowIdx')?.role).toBe('field');
+  });
+
+  it('keeps only the best timepoint column when multiple are detected', () => {
+    const headers = ['sl_rowIdx', 'vowel', 'times_rel', 'times_norm', 'F1', 'F2'];
+    const sampleRows = [
+      ['1', 'a', '0', '0', '400', '1800'],
+      ['1', 'a', '5', '0.5', '450', '1700'],
+      ['2', 'i', '0', '0', '300', '2200'],
+    ];
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    // times_rel (raw ms, most informative) should be preferred over times_norm (0-1)
+    expect(mappings.find(m => m.csvHeader === 'times_rel')?.role).toBe('timepoint');
+    expect(mappings.find(m => m.csvHeader === 'times_norm')?.role).toBe('ignore');
+  });
+});
+
+// ─── Long-format parsing ─────────────────────────────────────────────
+
+describe('parseWithMappings – long format', () => {
+  it('groups rows by token_id and builds trajectories (fraction scale)', () => {
+    const csv = [
+      'tid,vowel,speaker,tp,F1,F2',
+      '1,a,spk1,0,400,1800',
+      '1,a,spk1,0.5,450,1700',
+      '1,a,spk1,1.0,500,1600',
+      '2,i,spk1,0,300,2200',
+      '2,i,spk1,1.0,320,2000',
+    ].join('\n');
+    const mappings: ColumnMapping[] = [
+      { csvHeader: 'tid', role: 'token_id' },
+      { csvHeader: 'vowel', role: 'field', fieldName: 'vowel' },
+      { csvHeader: 'speaker', role: 'speaker' },
+      { csvHeader: 'tp', role: 'timepoint' },
+      { csvHeader: 'F1', role: 'formant', formant: 'f1', timePoint: 0, isSmooth: false },
+      { csvHeader: 'F2', role: 'formant', formant: 'f2', timePoint: 0, isSmooth: false },
+    ];
+    const { tokens, meta } = parseWithMappings(csv, mappings, 'test.csv');
+
+    expect(tokens).toHaveLength(2);
+    expect(meta.sourceFormat).toBe('long');
+    expect(meta.rowCount).toBe(2);
+
+    // Token 1: 3 trajectory points, fraction 0-1 → 0-100%
+    expect(tokens[0].trajectory).toHaveLength(3);
+    expect(tokens[0].trajectory[0].time).toBeCloseTo(0);
+    expect(tokens[0].trajectory[1].time).toBeCloseTo(50);
+    expect(tokens[0].trajectory[2].time).toBeCloseTo(100);
+    expect(tokens[0].trajectory[0].f1).toBe(400);
+    expect(tokens[0].trajectory[1].f1).toBe(450);
+    expect(tokens[0].speaker).toBe('spk1');
+    expect(tokens[0].fields['vowel']).toBe('a');
+
+    // Token 2: 2 trajectory points
+    expect(tokens[1].trajectory).toHaveLength(2);
+    expect(tokens[1].trajectory[0].time).toBeCloseTo(0);
+    expect(tokens[1].trajectory[1].time).toBeCloseTo(100);
+    expect(tokens[1].fields['vowel']).toBe('i');
+  });
+
+  it('handles percentage scale (1-100)', () => {
+    const csv = [
+      'tid,tp,F1,F2',
+      '1,0,400,1800',
+      '1,50,450,1700',
+      '1,100,500,1600',
+    ].join('\n');
+    const mappings: ColumnMapping[] = [
+      { csvHeader: 'tid', role: 'token_id' },
+      { csvHeader: 'tp', role: 'timepoint' },
+      { csvHeader: 'F1', role: 'formant', formant: 'f1', timePoint: 0, isSmooth: false },
+      { csvHeader: 'F2', role: 'formant', formant: 'f2', timePoint: 0, isSmooth: false },
+    ];
+    const { tokens } = parseWithMappings(csv, mappings);
+
+    expect(tokens[0].trajectory[0].time).toBe(0);
+    expect(tokens[0].trajectory[1].time).toBe(50);
+    expect(tokens[0].trajectory[2].time).toBe(100);
+  });
+
+  it('normalizes raw ms timepoints per token', () => {
+    const csv = [
+      'tid,tp,F1,F2',
+      '1,0,400,1800',
+      '1,100,450,1700',
+      '1,200,500,1600',
+      '2,0,300,2200',
+      '2,150,320,2000',
+    ].join('\n');
+    const mappings: ColumnMapping[] = [
+      { csvHeader: 'tid', role: 'token_id' },
+      { csvHeader: 'tp', role: 'timepoint' },
+      { csvHeader: 'F1', role: 'formant', formant: 'f1', timePoint: 0, isSmooth: false },
+      { csvHeader: 'F2', role: 'formant', formant: 'f2', timePoint: 0, isSmooth: false },
+    ];
+    const { tokens } = parseWithMappings(csv, mappings);
+
+    // Token 1: 0ms, 100ms, 200ms → 0%, 50%, 100%
+    expect(tokens[0].trajectory[0].time).toBeCloseTo(0);
+    expect(tokens[0].trajectory[1].time).toBeCloseTo(50);
+    expect(tokens[0].trajectory[2].time).toBeCloseTo(100);
+
+    // Token 2: 0ms, 150ms → 0%, 100%
+    expect(tokens[1].trajectory[0].time).toBeCloseTo(0);
+    expect(tokens[1].trajectory[1].time).toBeCloseTo(100);
+  });
+
+  it('computes duration from raw ms when no duration column', () => {
+    const csv = [
+      'tid,tp,F1,F2',
+      '1,0,400,1800',
+      '1,164,500,1600',
+    ].join('\n');
+    const mappings: ColumnMapping[] = [
+      { csvHeader: 'tid', role: 'token_id' },
+      { csvHeader: 'tp', role: 'timepoint' },
+      { csvHeader: 'F1', role: 'formant', formant: 'f1', timePoint: 0, isSmooth: false },
+      { csvHeader: 'F2', role: 'formant', formant: 'f2', timePoint: 0, isSmooth: false },
+    ];
+    const { tokens } = parseWithMappings(csv, mappings);
+
+    expect(tokens[0].duration).toBeCloseTo(164);
+  });
+
+  it('wide-format parsing is unaffected by new long-format code', () => {
+    const csv = 'f1_00,f2_00,f1_50,f2_50,phoneme\n400,1800,450,1700,a\n300,2200,310,2100,i';
+    const mappings: ColumnMapping[] = [
+      { csvHeader: 'f1_00', role: 'formant', formant: 'f1', timePoint: 0, isSmooth: false },
+      { csvHeader: 'f2_00', role: 'formant', formant: 'f2', timePoint: 0, isSmooth: false },
+      { csvHeader: 'f1_50', role: 'formant', formant: 'f1', timePoint: 50, isSmooth: false },
+      { csvHeader: 'f2_50', role: 'formant', formant: 'f2', timePoint: 50, isSmooth: false },
+      { csvHeader: 'phoneme', role: 'field', fieldName: 'phoneme' },
+    ];
+    const { tokens, meta } = parseWithMappings(csv, mappings);
+
+    expect(tokens).toHaveLength(2);
+    expect(meta.sourceFormat).toBeUndefined();
+    expect(tokens[0].trajectory).toHaveLength(2);
+    expect(tokens[0].trajectory[0]).toMatchObject({ time: 0, f1: 400, f2: 1800 });
+    expect(tokens[0].trajectory[1]).toMatchObject({ time: 50, f1: 450, f2: 1700 });
+  });
+});

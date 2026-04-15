@@ -2,6 +2,7 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, StyleOverrides, ExportConfig, NormalizationMethod } from '../types';
 import { normalizeFormant, getAxisLabel, getTickStep, formatTick, SpeakerStatsMap } from '../utils/normalization';
+import { interpolateTrajectoryAt, computeMeanTimeGrid } from '../utils/trajectory';
 
 interface TrajectoryF1F2Props {
   data: SpeechToken[];
@@ -96,17 +97,17 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
     });
     Object.entries(combinedGroups).forEach(([key, tokens]) => {
       const tks = tokens as SpeechToken[];
-      const path = [];
-      // Derive time-steps from data rather than hardcoded 0-100 by 10
-      const allTimes = new Set<number>();
-      tks.forEach(tk => tk.trajectory.forEach(p => allTimes.add(p.time)));
-      const timeSteps = Array.from(allTimes).sort((a, b) => a - b)
-        .filter(t => t >= (config.trajectoryOnset ?? 0) && t <= (config.trajectoryOffset ?? 100));
+      const path: { f1: number, f2: number }[] = [];
+      const timeSteps = computeMeanTimeGrid(
+        tks.map(tk => tk.trajectory),
+        config.trajectoryOnset ?? 0,
+        config.trajectoryOffset ?? 100,
+      );
 
       for (const t of timeSteps) {
         let sumF1 = 0, sumF2 = 0, count = 0;
         tks.forEach(token => {
-          const pt = token.trajectory.find(p => p.time === t);
+          const pt = interpolateTrajectoryAt(token.trajectory, t);
           if (pt) { const normM = (config.normalization || 'hz') as NormalizationMethod; const sts = speakerStats?.[token.speaker || '__all__']; const vF1 = normalizeFormant(config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1, 'f1', normM, sts); const vF2 = normalizeFormant(config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2, 'f2', normM, sts); if (!isNaN(vF1) && !isNaN(vF2)) { sumF1 += vF1; sumF2 += vF2; count++; } }
         });
         if (count > 0) path.push({ f1: sumF1 / count, f2: sumF2 / count });
