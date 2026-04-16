@@ -298,8 +298,9 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                 Use <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F1</code>,{' '}
                 <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F2</code> ...{' '}
                 <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F5</code> for single measurements.
-                For time-points: <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F1_50</code> or{' '}
-                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F1_50%</code>.
+                For time-points: <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F1_50</code>,{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F1_50%</code>, or{' '}
+                <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F1_50ms</code>.
                 Named targets: <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F1_onset</code>,{' '}
                 <code className="font-mono bg-slate-100 px-1 rounded text-[11px]">F1_midpoint</code>.
                 You can tag different versions with{' '}

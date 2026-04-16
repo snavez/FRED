@@ -89,6 +89,35 @@ describe('autoDetectMappings', () => {
     expect(f2.isSmooth).toBe(true);
   });
 
+  it('detects formant columns with ms/sec unit suffixes', () => {
+    const headers = ['F1_0ms', 'F2_50ms', 'F3_1540ms', 'F1_2sec', 'f1_75%'];
+    const sampleRows = [['400', '1500', '2500', '300', '450']];
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    expect(mappings.find(m => m.csvHeader === 'F1_0ms')?.role).toBe('formant');
+    expect(mappings.find(m => m.csvHeader === 'F1_0ms')?.timePoint).toBe(0);
+    expect(mappings.find(m => m.csvHeader === 'F2_50ms')?.timePoint).toBe(50);
+    expect(mappings.find(m => m.csvHeader === 'F3_1540ms')?.timePoint).toBe(1540);
+    expect(mappings.find(m => m.csvHeader === 'F1_2sec')?.timePoint).toBe(2);
+    expect(mappings.find(m => m.csvHeader === 'f1_75%')?.timePoint).toBe(75);
+  });
+
+  it('detects formant with ms unit plus variant suffix', () => {
+    const headers = ['F1_50ms_smooth', 'F2_100ms_lowpass'];
+    const sampleRows = [['400', '1500']];
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    const f1 = mappings.find(m => m.csvHeader === 'F1_50ms_smooth')!;
+    expect(f1.role).toBe('formant');
+    expect(f1.timePoint).toBe(50);
+    expect(f1.isSmooth).toBe(true);
+    expect(f1.formantLabel).toBe('smooth');
+
+    const f2 = mappings.find(m => m.csvHeader === 'F2_100ms_lowpass')!;
+    expect(f2.timePoint).toBe(100);
+    expect(f2.formantLabel).toBe('lowpass');
+  });
+
   it('classifies low-cardinality unknown columns as field', () => {
     const headers = ['dialect'];
     const sampleRows = [['north'], ['south'], ['north'], ['east']];
@@ -459,6 +488,32 @@ describe('parseWithMappings – long format', () => {
     expect(tokens[1].trajectory[1].time).toBeCloseTo(100);
 
     // UI timepoints replaced with common grid
+    expect(meta.timePoints).toContain(0);
+    expect(meta.timePoints).toContain(50);
+    expect(meta.timePoints).toContain(100);
+  });
+
+  it('wide-format normalizes per-token when timepoints exceed 100 (absolute time)', () => {
+    // Uniform length but timepoints are in ms (0, 500, 1000) — all tokens have 3 points.
+    const csv = 'F1_0ms,F2_0ms,F1_500ms,F2_500ms,F1_1000ms,F2_1000ms\n400,1800,450,1700,500,1600\n300,2200,320,2000,340,1800';
+    const mappings: ColumnMapping[] = [
+      { csvHeader: 'F1_0ms', role: 'formant', formant: 'f1', timePoint: 0, isSmooth: false },
+      { csvHeader: 'F2_0ms', role: 'formant', formant: 'f2', timePoint: 0, isSmooth: false },
+      { csvHeader: 'F1_500ms', role: 'formant', formant: 'f1', timePoint: 500, isSmooth: false },
+      { csvHeader: 'F2_500ms', role: 'formant', formant: 'f2', timePoint: 500, isSmooth: false },
+      { csvHeader: 'F1_1000ms', role: 'formant', formant: 'f1', timePoint: 1000, isSmooth: false },
+      { csvHeader: 'F2_1000ms', role: 'formant', formant: 'f2', timePoint: 1000, isSmooth: false },
+    ];
+    const { tokens, meta } = parseWithMappings(csv, mappings);
+
+    expect(tokens).toHaveLength(2);
+    // Both tokens should be normalized to 0%, 50%, 100% even though lengths are equal
+    expect(tokens[0].trajectory[0].time).toBeCloseTo(0);
+    expect(tokens[0].trajectory[1].time).toBeCloseTo(50);
+    expect(tokens[0].trajectory[2].time).toBeCloseTo(100);
+    expect(tokens[1].trajectory[0].time).toBeCloseTo(0);
+    expect(tokens[1].trajectory[2].time).toBeCloseTo(100);
+
     expect(meta.timePoints).toContain(0);
     expect(meta.timePoints).toContain(50);
     expect(meta.timePoints).toContain(100);

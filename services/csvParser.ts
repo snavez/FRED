@@ -113,13 +113,14 @@ addAliases(['token_id', 'tokenid', 'sl_rowidx', 'row_idx', 'rowidx', 'segment_id
 addAliases(['times_norm', 'time_norm', 'times_rel', 'time_rel', 'timepoint', 'time_point', 'norm_time', 'prop_time', 'measurement_time'], 'timepoint');
 
 // Formant patterns (case-insensitive):
-//   f1_50, f1_50%, f1_50_smooth, f1_50%_smooth   → numeric timepoint
+//   f1_50, f1_50%, f1_50ms, f1_50sec              → numeric timepoint (unit suffix ignored)
+//   f1_50_smooth, f1_50%_smooth, f1_50ms_smooth   → numeric timepoint with named variant
 //   f1, f2, f3                                      → bare (single measurement, timepoint=0)
 //   f1_onset, f1_midpoint_smooth                    → named target
-const FORMANT_NUMERIC_REGEX = /^(f[12345])_(\d+)%?(?:_(.+))?$/i;
+const FORMANT_NUMERIC_REGEX = /^(f[12345])_(\d+)(?:%|ms|sec)?(?:_(.+))?$/i;
 const FORMANT_BARE_REGEX = /^(f[12345])$/i;
 const FORMANT_NAMED_REGEX = /^(f[12345])_([a-z][a-z0-9]*)(?:_(.+))?$/i;
-const PITCH_REGEX = /^f0_(\d+)%?(?:_(.+))?$/i;
+const PITCH_REGEX = /^f0_(\d+)(?:%|ms|sec)?(?:_(.+))?$/i;
 
 /** Names that should populate SpeechToken.xmin (now detected as regular fields) */
 const XMIN_NAMES = new Set(['xmin', 'onset', 'start', 'start_time']);
@@ -683,14 +684,18 @@ export const parseWithMappings = (
     });
   }
 
-  // Normalize per-token timepoints when tokens have variable-length trajectories.
-  // Detects ordinal/evenly-spaced columns (F1_1, F1_2, ...) where shorter tokens have
-  // fewer filled columns, and remaps each token to 0–100% so means are comparable.
+  // Normalize per-token timepoints when timepoints are ordinal/absolute rather than %.
+  // Triggers when:
+  //   - Tokens have variable-length trajectories (ordinal columns, different fill counts), OR
+  //   - Any timepoint exceeds 100 (absolute time like F1_500ms, not a percentage)
+  // Remaps each token's trajectory to 0–100% based on position index.
   if (tokens.length > 1) {
     const lengths = tokens.filter(t => t.trajectory.length > 0).map(t => t.trajectory.length);
-    const minLen = Math.min(...lengths);
-    const maxLen = Math.max(...lengths);
-    if (minLen !== maxLen) {
+    const minLen = lengths.length > 0 ? Math.min(...lengths) : 0;
+    const maxLen = lengths.length > 0 ? Math.max(...lengths) : 0;
+    const maxTimePoint = sortedTimePoints.length > 0 ? sortedTimePoints[sortedTimePoints.length - 1] : 0;
+    const needsNorm = (minLen !== maxLen) || maxTimePoint > 100;
+    if (needsNorm) {
       for (const token of tokens) {
         const n = token.trajectory.length;
         if (n < 2) continue;
