@@ -686,10 +686,13 @@ export const parseWithMappings = (
 
   // Normalize per-token timepoints when timepoints are ordinal/absolute rather than %.
   // Triggers when:
-  //   - Tokens have variable-length trajectories (ordinal columns, different fill counts), OR
-  //   - Any real timepoint exceeds 100 (absolute time like F1_500ms, not a percentage)
-  // Named targets (F1_onset, F1_target, etc.) are excluded from the max-check because
-  // their synthetic timepoints (1000+) are just collision-avoidance indices, not data.
+  //   - Timepoints don't look like percentages (min!=0 or max!=100), AND
+  //     - Tokens have variable-length trajectories, OR any timepoint exceeds 100
+  // Percentage-style columns (F1_0%, F1_10%, ..., F1_100%) are preserved as-is —
+  // tokens missing some timepoints keep a partial trajectory at the actual % values
+  // rather than getting their positions remapped to a different grid.
+  // Named targets (F1_onset, F1_target, etc.) are excluded because their synthetic
+  // timepoints (1000+) are collision-avoidance indices, not data.
   if (tokens.length > 1) {
     const lengths = tokens.filter(t => t.trajectory.length > 0).map(t => t.trajectory.length);
     const minLen = lengths.length > 0 ? Math.min(...lengths) : 0;
@@ -698,7 +701,9 @@ export const parseWithMappings = (
       .filter(m => m.role === 'formant' && !m.formantTarget && m.timePoint !== undefined)
       .map(m => m.timePoint as number);
     const maxTimePoint = nonTargetTimePoints.length > 0 ? Math.max(...nonTargetTimePoints) : 0;
-    const needsNorm = (minLen !== maxLen) || maxTimePoint > 100;
+    const minTimePoint = nonTargetTimePoints.length > 0 ? Math.min(...nonTargetTimePoints) : 0;
+    const looksLikePercentages = minTimePoint === 0 && maxTimePoint === 100;
+    const needsNorm = !looksLikePercentages && ((minLen !== maxLen) || maxTimePoint > 100);
     if (needsNorm) {
       for (const token of tokens) {
         const n = token.trajectory.length;

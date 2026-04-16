@@ -493,6 +493,35 @@ describe('parseWithMappings – long format', () => {
     expect(meta.timePoints).toContain(100);
   });
 
+  it('preserves percentage timepoints when tokens have variable fill counts', () => {
+    // Columns at clean 0%, 50%, 100%. Token 1 fills all three; token 2 is missing 100%.
+    // Percentage timepoints should NOT be remapped even though lengths differ.
+    const csv = 'F1_0%,F2_0%,F1_50%,F2_50%,F1_100%,F2_100%\n400,1800,450,1700,500,1600\n300,2200,310,2100,,';
+    const mappings: ColumnMapping[] = [
+      { csvHeader: 'F1_0%', role: 'formant', formant: 'f1', timePoint: 0, isSmooth: false },
+      { csvHeader: 'F2_0%', role: 'formant', formant: 'f2', timePoint: 0, isSmooth: false },
+      { csvHeader: 'F1_50%', role: 'formant', formant: 'f1', timePoint: 50, isSmooth: false },
+      { csvHeader: 'F2_50%', role: 'formant', formant: 'f2', timePoint: 50, isSmooth: false },
+      { csvHeader: 'F1_100%', role: 'formant', formant: 'f1', timePoint: 100, isSmooth: false },
+      { csvHeader: 'F2_100%', role: 'formant', formant: 'f2', timePoint: 100, isSmooth: false },
+    ];
+    const { tokens, meta } = parseWithMappings(csv, mappings);
+
+    // Token 1 has 3 points at actual percentages
+    expect(tokens[0].trajectory).toHaveLength(3);
+    expect(tokens[0].trajectory[0].time).toBe(0);
+    expect(tokens[0].trajectory[1].time).toBe(50);
+    expect(tokens[0].trajectory[2].time).toBe(100);
+
+    // Token 2 has 2 points at their ACTUAL percentages (0, 50) — NOT remapped to (0, 100)
+    expect(tokens[1].trajectory).toHaveLength(2);
+    expect(tokens[1].trajectory[0].time).toBe(0);
+    expect(tokens[1].trajectory[1].time).toBe(50);
+
+    // meta.timePoints preserves original column-derived values
+    expect(meta.timePoints).toEqual([0, 50, 100]);
+  });
+
   it('does NOT normalize when named targets push synthetic timepoints above 100', () => {
     // Real timepoints 0, 50, 100 plus a named target (F1_target → synthetic 1100).
     // The named target should NOT trigger absolute-time normalization.
