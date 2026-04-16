@@ -493,6 +493,38 @@ describe('parseWithMappings – long format', () => {
     expect(meta.timePoints).toContain(100);
   });
 
+  it('does NOT normalize when named targets push synthetic timepoints above 100', () => {
+    // Real timepoints 0, 50, 100 plus a named target (F1_target → synthetic 1100).
+    // The named target should NOT trigger absolute-time normalization.
+    const csv = 'F1_0%,F1_50%,F1_100%,F1_target,F2_0%,F2_50%,F2_100%,F2_target\n400,450,500,475,1800,1700,1600,1650';
+    const mappings: ColumnMapping[] = [
+      { csvHeader: 'F1_0%', role: 'formant', formant: 'f1', timePoint: 0, isSmooth: false },
+      { csvHeader: 'F1_50%', role: 'formant', formant: 'f1', timePoint: 50, isSmooth: false },
+      { csvHeader: 'F1_100%', role: 'formant', formant: 'f1', timePoint: 100, isSmooth: false },
+      { csvHeader: 'F1_target', role: 'formant', formant: 'f1', timePoint: 1100, formantTarget: 'target', isSmooth: false },
+      { csvHeader: 'F2_0%', role: 'formant', formant: 'f2', timePoint: 0, isSmooth: false },
+      { csvHeader: 'F2_50%', role: 'formant', formant: 'f2', timePoint: 50, isSmooth: false },
+      { csvHeader: 'F2_100%', role: 'formant', formant: 'f2', timePoint: 100, isSmooth: false },
+      { csvHeader: 'F2_target', role: 'formant', formant: 'f2', timePoint: 1100, formantTarget: 'target', isSmooth: false },
+    ];
+    const { tokens, meta } = parseWithMappings(csv, mappings);
+
+    // Original timepoints preserved (NOT replaced with 0, 5, 10, ..., 100 grid)
+    expect(meta.timePoints).toContain(0);
+    expect(meta.timePoints).toContain(50);
+    expect(meta.timePoints).toContain(100);
+    expect(meta.timePoints).toContain(1100); // named target
+
+    // Trajectory times preserved at actual column percentages
+    const traj = tokens[0].trajectory;
+    expect(traj.find(p => p.time === 0)).toBeDefined();
+    expect(traj.find(p => p.time === 50)).toBeDefined();
+    expect(traj.find(p => p.time === 100)).toBeDefined();
+    // No interpolated 5% grid
+    expect(traj.find(p => p.time === 5)).toBeUndefined();
+    expect(traj.find(p => p.time === 25)).toBeUndefined();
+  });
+
   it('wide-format normalizes per-token when timepoints exceed 100 (absolute time)', () => {
     // Uniform length but timepoints are in ms (0, 500, 1000) — all tokens have 3 points.
     const csv = 'F1_0ms,F2_0ms,F1_500ms,F2_500ms,F1_1000ms,F2_1000ms\n400,1800,450,1700,500,1600\n300,2200,320,2000,340,1800';

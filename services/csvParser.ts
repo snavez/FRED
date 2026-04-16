@@ -687,13 +687,17 @@ export const parseWithMappings = (
   // Normalize per-token timepoints when timepoints are ordinal/absolute rather than %.
   // Triggers when:
   //   - Tokens have variable-length trajectories (ordinal columns, different fill counts), OR
-  //   - Any timepoint exceeds 100 (absolute time like F1_500ms, not a percentage)
-  // Remaps each token's trajectory to 0–100% based on position index.
+  //   - Any real timepoint exceeds 100 (absolute time like F1_500ms, not a percentage)
+  // Named targets (F1_onset, F1_target, etc.) are excluded from the max-check because
+  // their synthetic timepoints (1000+) are just collision-avoidance indices, not data.
   if (tokens.length > 1) {
     const lengths = tokens.filter(t => t.trajectory.length > 0).map(t => t.trajectory.length);
     const minLen = lengths.length > 0 ? Math.min(...lengths) : 0;
     const maxLen = lengths.length > 0 ? Math.max(...lengths) : 0;
-    const maxTimePoint = sortedTimePoints.length > 0 ? sortedTimePoints[sortedTimePoints.length - 1] : 0;
+    const nonTargetTimePoints = mappings
+      .filter(m => m.role === 'formant' && !m.formantTarget && m.timePoint !== undefined)
+      .map(m => m.timePoint as number);
+    const maxTimePoint = nonTargetTimePoints.length > 0 ? Math.max(...nonTargetTimePoints) : 0;
     const needsNorm = (minLen !== maxLen) || maxTimePoint > 100;
     if (needsNorm) {
       for (const token of tokens) {
