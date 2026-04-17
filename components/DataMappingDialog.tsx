@@ -69,6 +69,8 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
   // User-confirmed trajectory format/unit (null = use auto-detected)
   const [formatOverride, setFormatOverride] = useState<TrajectoryFormat | null>(null);
   const [unitOverride, setUnitOverride] = useState<TrajectoryUnit | null>(null);
+  // Expanded trajectory-group keys (e.g. "f1", "f2") — collapsed by default
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   // Reset mappings when dialog opens with new data
   React.useEffect(() => {
@@ -76,6 +78,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
     setValidationError(null);
     setFormatOverride(null);
     setUnitOverride(null);
+    setExpandedGroups(new Set());
   }, [detectedMappings]);
 
   // Live auto-detection from current mappings (wide format) or sample data (long format)
@@ -181,6 +184,230 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
       rows: sampleData.length
     };
   }, [mappings, headers]);
+
+  /**
+   * Build display rows for the mapping table. Collapses numeric-trajectory formant
+   * columns (F1_0, F1_10, …, F1_100) into one summary row per formant. Named targets
+   * and other columns render as individual rows.
+   * Order: speaker/file_id/token_id/timepoint → filter fields → trajectory groups
+   *        → named-target formants → data fields → ignored.
+   */
+  type GroupRow = { kind: 'group'; groupKey: string; formant: string; members: { m: ColumnMapping; idx: number }[] };
+  type SingleRow = { kind: 'single'; m: ColumnMapping; idx: number };
+  type DisplayRow = GroupRow | SingleRow;
+  const displayRows: DisplayRow[] = useMemo(() => {
+    const byFormant = new Map<string, { m: ColumnMapping; idx: number }[]>();
+    const singles: { m: ColumnMapping; idx: number }[] = [];
+    mappings.forEach((m, idx) => {
+      if (m.role === 'formant' && !m.formantTarget && m.formant && m.timePoint !== undefined) {
+        if (!byFormant.has(m.formant)) byFormant.set(m.formant, []);
+        byFormant.get(m.formant)!.push({ m, idx });
+      } else {
+        singles.push({ m, idx });
+      }
+    });
+    const groups: GroupRow[] = [];
+    for (const [formant, members] of byFormant) {
+      if (members.length >= TRAJECTORY_MIN_POINTS) {
+        groups.push({ kind: 'group', groupKey: formant, formant, members });
+      } else {
+        members.forEach(mem => singles.push(mem));
+      }
+    }
+    groups.sort((a, b) => a.formant.localeCompare(b.formant));
+
+    const priority = (m: ColumnMapping): number => {
+      if (m.role === 'speaker') return 0;
+      if (m.role === 'file_id') return 1;
+      if (m.role === 'token_id') return 2;
+      if (m.role === 'timepoint') return 3;
+      if (m.role === 'field' && m.isDataField === false) return 4;
+      if (m.role === 'formant' && m.formantTarget) return 6;
+      if (m.role === 'duration') return 7;
+      if (m.role === 'pitch') return 8;
+      if (m.role === 'field' && m.isDataField === true) return 9;
+      if (m.role === 'ignore') return 10;
+      return 11;
+    };
+    singles.sort((a, b) => priority(a.m) - priority(b.m) || a.idx - b.idx);
+
+    const result: DisplayRow[] = [];
+    let groupsInserted = false;
+    for (const s of singles) {
+      if (!groupsInserted && priority(s.m) >= 5) {
+        groups.forEach(g => result.push(g));
+        groupsInserted = true;
+      }
+      result.push({ kind: 'single', ...s });
+    }
+    if (!groupsInserted) groups.forEach(g => result.push(g));
+    return result;
+  }, [mappings]);
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const describeGroup = (members: { m: ColumnMapping; idx: number }[]): string => {
+    const tps = members.map(mem => mem.m.timePoint as number).sort((a, b) => a - b);
+    const min = tps[0], max = tps[tps.length - 1];
+    const unitLabel = effectiveFormat === 'time-slice' ? (effectiveUnit ?? '') : '%';
+    return `${members.length} columns · ${min}${unitLabel} to ${max}${unitLabel}`;
+  };
+
+  /** Render a single mapping row — reused for standalone rows and expanded group members. */
+  const renderMappingRow = (m: ColumnMapping, idx: number, indent: boolean) => {
+    const colIdx = headers.indexOf(m.csvHeader);
+    const samples = sampleData.map(row => row[colIdx] || '').filter(v => v !== '').slice(0, 4);
+    const isIgnored = m.role === 'ignore';
+    const isData = m.isDataField === true;
+
+    return (
+      <tr key={`${m.csvHeader}_${idx}`} className={`border-b border-slate-100 ${isIgnored ? 'opacity-50' : ''}`}>
+        <td className={`py-2 pr-2 ${indent ? 'pl-6' : ''}`}>
+          <span className="font-mono text-xs font-bold text-slate-700">{m.csvHeader}</span>
+        </td>
+        <td className="py-2 pr-2">
+          <div className="flex flex-wrap gap-1">
+            {samples.map((s, i) => (
+              <span key={i} className="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 truncate max-w-[70px]">{s}</span>
+            ))}
+          </div>
+        </td>
+        <td className="py-2 pr-2">
+          {(m.role === 'speaker' || m.role === 'file_id') ? (
+            <span className="text-xs text-slate-500 italic">
+              {m.role === 'speaker' ? 'Speaker ID' : 'File ID'}
+              <span className="text-[10px] text-slate-400 ml-1">↑ set above</span>
+            </span>
+          ) : (
+            <select
+              className="w-full text-xs p-1.5 border border-slate-200 rounded bg-white"
+              value={m.role}
+              onChange={e => {
+                const role = e.target.value as ColumnRole;
+                const updates: Partial<ColumnMapping> = { role };
+                if (role === 'formant' || role === 'duration' || role === 'pitch') {
+                  updates.isDataField = true;
+                  updates.showInSidebar = false;
+                } else if (role === 'ignore' || role === 'token_id' || role === 'timepoint') {
+                  updates.isDataField = false;
+                  updates.showInSidebar = false;
+                } else {
+                  updates.isDataField = false;
+                  updates.showInSidebar = true;
+                }
+                if (role === 'field' || role === 'pitch') {
+                  updates.fieldName = m.fieldName || m.csvHeader;
+                }
+                if (role === 'formant') {
+                  updates.formant = m.formant || 'f1';
+                  updates.timePoint = m.timePoint ?? 50;
+                  updates.isSmooth = m.isSmooth || false;
+                }
+                updateMapping(idx, updates);
+              }}
+            >
+              {ROLE_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          )}
+        </td>
+        <td className="py-2 pr-2">
+          {m.role === 'formant' && (
+            <div className="flex items-center gap-2">
+              <select
+                className="text-xs p-1 border border-slate-200 rounded w-14"
+                value={m.formant || 'f1'}
+                onChange={e => updateMapping(idx, { formant: e.target.value as 'f1' | 'f2' | 'f3' | 'f4' | 'f5' })}
+              >
+                <option value="f1">F1</option>
+                <option value="f2">F2</option>
+                <option value="f3">F3</option>
+                <option value="f4">F4</option>
+                <option value="f5">F5</option>
+              </select>
+              {m.formantTarget ? (
+                <>
+                  <span className="text-[11px] text-slate-400">@</span>
+                  <span className="text-xs bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded font-bold">{m.formantTarget}</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-[11px] text-slate-400">@</span>
+                  <input
+                    type="number"
+                    className="text-xs p-1 border border-slate-200 rounded w-14"
+                    value={m.timePoint ?? 50}
+                    onChange={e => updateMapping(idx, { timePoint: parseInt(e.target.value) || 0 })}
+                    min={0}
+                    max={100}
+                  />
+                  <span className="text-[11px] text-slate-400">%</span>
+                </>
+              )}
+              {m.formantLabel && (
+                <span className="text-[11px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">{m.formantLabel}</span>
+              )}
+            </div>
+          )}
+          {(m.role === 'field' || m.role === 'pitch') && (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                className={`text-xs p-1 border rounded w-36 ${reservedClashes.has(idx) ? 'border-red-400 bg-red-50 text-red-700' : 'border-slate-200'}`}
+                value={m.fieldName ?? m.csvHeader}
+                onChange={e => updateMapping(idx, { fieldName: e.target.value })}
+                placeholder="Display name"
+              />
+              {reservedClashes.has(idx) && (
+                <span className="text-[10px] text-red-600 font-bold whitespace-nowrap">Reserved name — please rename</span>
+              )}
+            </div>
+          )}
+          {(m.role === 'speaker' || m.role === 'file_id' || m.role === 'duration' || m.role === 'token_id' || m.role === 'timepoint') && (
+            <span className="text-[11px] text-slate-400 italic">auto-detected</span>
+          )}
+        </td>
+        <td className="py-2 text-center">
+          {!isIgnored && m.role !== 'token_id' && m.role !== 'timepoint' && (
+            <div className="flex items-center justify-center gap-1">
+              <button
+                onClick={() => updateMapping(idx, { isDataField: false, showInSidebar: true })}
+                className={`text-[11px] px-1.5 py-0.5 rounded border transition-colors ${!isData ? 'bg-sky-100 border-sky-300 text-sky-700 font-bold' : 'border-slate-200 text-slate-400 hover:border-slate-300'}`}
+                title="Filter field: categorical labels for filtering data"
+              >
+                Filter
+              </button>
+              <button
+                onClick={() => updateMapping(idx, { isDataField: true, showInSidebar: false })}
+                className={`text-[11px] px-1.5 py-0.5 rounded border transition-colors ${isData ? 'bg-amber-100 border-amber-300 text-amber-700 font-bold' : 'border-slate-200 text-slate-400 hover:border-slate-300'}`}
+                title="Data field: numeric values to be plotted"
+              >
+                Data
+              </button>
+            </div>
+          )}
+        </td>
+        <td className="py-2 text-center">
+          {!isIgnored && !isData && (
+            <input
+              type="checkbox"
+              checked={m.showInSidebar === true}
+              onChange={e => updateMapping(idx, { showInSidebar: e.target.checked })}
+              className="rounded text-sky-700"
+              title="Show as filter in sidebar"
+            />
+          )}
+        </td>
+      </tr>
+    );
+  };
 
   if (!isOpen) return null;
 
@@ -388,6 +615,73 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
           </div>
         )}
 
+        {/* Trajectory Confirmation panel */}
+        {showTrajectoryPanel && (
+          <div className="mx-5 mt-3 mb-1 p-3 bg-emerald-50/60 border border-emerald-200 rounded-lg shrink-0">
+            <div className="text-xs text-emerald-900 leading-relaxed space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="font-bold">Trajectory data detected —</span>
+                <span>{trajectoryDetection.pointsPerFormant} measurements per formant</span>
+              </div>
+
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="font-semibold">These samples are separated by:</span>
+                <label className="flex items-center gap-1 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="trajFormat"
+                    checked={effectiveFormat === 'percentage'}
+                    onChange={() => { setFormatOverride('percentage'); setUnitOverride(null); }}
+                  />
+                  <span>Percentages of vowel duration</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="trajFormat"
+                    checked={effectiveFormat === 'time-slice'}
+                    onChange={() => setFormatOverride('time-slice')}
+                  />
+                  <span>Time values</span>
+                </label>
+              </div>
+
+              {effectiveFormat === 'time-slice' && (
+                <div className="flex items-center gap-3 flex-wrap pl-4 border-l-2 border-emerald-200">
+                  <span className="font-semibold">Unit:</span>
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="trajUnit"
+                      checked={effectiveUnit === 'ms'}
+                      onChange={() => setUnitOverride('ms')}
+                    />
+                    <span>milliseconds (ms)</span>
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="trajUnit"
+                      checked={effectiveUnit === 'sec'}
+                      onChange={() => setUnitOverride('sec')}
+                    />
+                    <span>seconds</span>
+                  </label>
+                  {effectiveUnit === undefined && (
+                    <span className="text-amber-700 font-semibold flex items-center gap-1">
+                      <AlertTriangle size={11} /> Please choose a unit
+                    </span>
+                  )}
+                </div>
+              )}
+
+              <div className="text-emerald-800/80 italic pl-1">
+                {describeSpacing(trajectoryDetection.spacing, effectiveFormat, effectiveUnit)}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Filter vs Data explanation */}
         <div className="mx-5 mt-3 mb-1 p-3 bg-amber-50/60 border border-amber-100 rounded-lg shrink-0">
           <p className="text-xs text-amber-900 leading-relaxed">
@@ -490,158 +784,35 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
               </tr>
             </thead>
             <tbody>
-              {mappings.map((m, idx) => {
-                const colIdx = headers.indexOf(m.csvHeader);
-                const samples = sampleData.map(row => row[colIdx] || '').filter(v => v !== '').slice(0, 4);
-                const isIgnored = m.role === 'ignore';
-                const isData = m.isDataField === true;
-
-                return (
-                  <tr key={`${m.csvHeader}_${idx}`} className={`border-b border-slate-100 ${isIgnored ? 'opacity-50' : ''}`}>
-                    <td className="py-2 pr-2">
-                      <span className="font-mono text-xs font-bold text-slate-700">{m.csvHeader}</span>
-                    </td>
-                    <td className="py-2 pr-2">
-                      <div className="flex flex-wrap gap-1">
-                        {samples.map((s, i) => (
-                          <span key={i} className="text-[11px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-600 truncate max-w-[70px]">{s}</span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="py-2 pr-2">
-                      {(m.role === 'speaker' || m.role === 'file_id') ? (
-                        <span className="text-xs text-slate-500 italic">
-                          {m.role === 'speaker' ? 'Speaker ID' : 'File ID'}
-                          <span className="text-[10px] text-slate-400 ml-1">↑ set above</span>
-                        </span>
-                      ) : (
-                      <select
-                        className="w-full text-xs p-1.5 border border-slate-200 rounded bg-white"
-                        value={m.role}
-                        onChange={e => {
-                          const role = e.target.value as ColumnRole;
-                          const updates: Partial<ColumnMapping> = { role };
-
-                          // Set isDataField + showInSidebar defaults based on role
-                          if (role === 'formant' || role === 'duration' || role === 'pitch') {
-                            updates.isDataField = true;
-                            updates.showInSidebar = false;
-                          } else if (role === 'ignore' || role === 'token_id' || role === 'timepoint') {
-                            updates.isDataField = false;
-                            updates.showInSidebar = false;
-                          } else {
-                            updates.isDataField = false;
-                            updates.showInSidebar = true;
-                          }
-
-                          if (role === 'field' || role === 'pitch') {
-                            updates.fieldName = m.fieldName || m.csvHeader;
-                          }
-                          if (role === 'formant') {
-                            updates.formant = m.formant || 'f1';
-                            updates.timePoint = m.timePoint ?? 50;
-                            updates.isSmooth = m.isSmooth || false;
-                          }
-                          updateMapping(idx, updates);
-                        }}
-                      >
-                        {ROLE_OPTIONS.map(opt => (
-                          <option key={opt.value} value={opt.value}>{opt.label}</option>
-                        ))}
-                      </select>
-                      )}
-                    </td>
-                    <td className="py-2 pr-2">
-                      {m.role === 'formant' && (
-                        <div className="flex items-center gap-2">
-                          <select
-                            className="text-xs p-1 border border-slate-200 rounded w-14"
-                            value={m.formant || 'f1'}
-                            onChange={e => updateMapping(idx, { formant: e.target.value as 'f1' | 'f2' | 'f3' | 'f4' | 'f5' })}
-                          >
-                            <option value="f1">F1</option>
-                            <option value="f2">F2</option>
-                            <option value="f3">F3</option>
-                            <option value="f4">F4</option>
-                            <option value="f5">F5</option>
-                          </select>
-                          {m.formantTarget ? (
-                            <>
-                              <span className="text-[11px] text-slate-400">@</span>
-                              <span className="text-xs bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded font-bold">{m.formantTarget}</span>
-                            </>
-                          ) : (
-                            <>
-                              <span className="text-[11px] text-slate-400">@</span>
-                              <input
-                                type="number"
-                                className="text-xs p-1 border border-slate-200 rounded w-14"
-                                value={m.timePoint ?? 50}
-                                onChange={e => updateMapping(idx, { timePoint: parseInt(e.target.value) || 0 })}
-                                min={0}
-                                max={100}
-                              />
-                              <span className="text-[11px] text-slate-400">%</span>
-                            </>
-                          )}
-                          {m.formantLabel && (
-                            <span className="text-[11px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">{m.formantLabel}</span>
-                          )}
-                        </div>
-                      )}
-                      {(m.role === 'field' || m.role === 'pitch') && (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            className={`text-xs p-1 border rounded w-36 ${reservedClashes.has(idx) ? 'border-red-400 bg-red-50 text-red-700' : 'border-slate-200'}`}
-                            value={m.fieldName ?? m.csvHeader}
-                            onChange={e => updateMapping(idx, { fieldName: e.target.value })}
-                            placeholder="Display name"
-                          />
-                          {reservedClashes.has(idx) && (
-                            <span className="text-[10px] text-red-600 font-bold whitespace-nowrap">Reserved name — please rename</span>
-                          )}
-                        </div>
-                      )}
-                      {(m.role === 'speaker' || m.role === 'file_id' || m.role === 'duration' || m.role === 'token_id' || m.role === 'timepoint') && (
-                        <span className="text-[11px] text-slate-400 italic">auto-detected</span>
-                      )}
-                    </td>
-                    {/* Type: Filter / Data toggle */}
-                    <td className="py-2 text-center">
-                      {!isIgnored && m.role !== 'token_id' && m.role !== 'timepoint' && (
-                        <div className="flex items-center justify-center gap-1">
+              {displayRows.map(row => {
+                if (row.kind === 'group') {
+                  const isExpanded = expandedGroups.has(row.groupKey);
+                  return (
+                    <React.Fragment key={`group_${row.groupKey}`}>
+                      <tr className="border-b border-slate-100 bg-emerald-50/40">
+                        <td colSpan={6} className="py-1">
                           <button
-                            onClick={() => updateMapping(idx, { isDataField: false, showInSidebar: true })}
-                            className={`text-[11px] px-1.5 py-0.5 rounded border transition-colors ${!isData ? 'bg-sky-100 border-sky-300 text-sky-700 font-bold' : 'border-slate-200 text-slate-400 hover:border-slate-300'}`}
-                            title="Filter field: categorical labels for filtering data"
+                            onClick={() => toggleGroup(row.groupKey)}
+                            className="flex items-center gap-2 hover:bg-emerald-100/50 rounded px-2 py-1 w-full text-left transition-colors"
                           >
-                            Filter
+                            {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                            <span className="font-mono text-xs font-bold text-slate-700">
+                              {row.formant.toUpperCase()} trajectory
+                            </span>
+                            <span className="text-[11px] text-slate-500">
+                              {describeGroup(row.members)}
+                            </span>
+                            <span className="ml-auto text-[11px] px-2 py-0.5 bg-amber-100 text-amber-700 rounded font-bold">
+                              Formant · Data
+                            </span>
                           </button>
-                          <button
-                            onClick={() => updateMapping(idx, { isDataField: true, showInSidebar: false })}
-                            className={`text-[11px] px-1.5 py-0.5 rounded border transition-colors ${isData ? 'bg-amber-100 border-amber-300 text-amber-700 font-bold' : 'border-slate-200 text-slate-400 hover:border-slate-300'}`}
-                            title="Data field: numeric values to be plotted"
-                          >
-                            Data
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                    {/* Sidebar checkbox — visible for any non-ignored Filter field */}
-                    <td className="py-2 text-center">
-                      {!isIgnored && !isData && (
-                        <input
-                          type="checkbox"
-                          checked={m.showInSidebar === true}
-                          onChange={e => updateMapping(idx, { showInSidebar: e.target.checked })}
-                          className="rounded text-sky-700"
-                          title="Show as filter in sidebar"
-                        />
-                      )}
-                    </td>
-                  </tr>
-                );
+                        </td>
+                      </tr>
+                      {isExpanded && row.members.map(mem => renderMappingRow(mem.m, mem.idx, true))}
+                    </React.Fragment>
+                  );
+                }
+                return renderMappingRow(row.m, row.idx, false);
               })}
             </tbody>
           </table>
