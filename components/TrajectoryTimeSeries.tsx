@@ -27,6 +27,20 @@ const getTokenDuration = (t: SpeechToken): number => {
   return 0;
 };
 
+/** Token duration for absolute-time plotting in the chosen x-axis unit (ms or seconds). */
+const getTokenDurationInUnit = (t: SpeechToken, useMs: boolean): number => {
+  if (useMs) {
+    if (t.trajectoryDurationMs && t.trajectoryDurationMs > 0) return t.trajectoryDurationMs;
+    const d = getTokenDuration(t);
+    // Heuristic: large values are already ms, small are seconds
+    return d > 10 ? d : d * 1000;
+  }
+  // seconds
+  if (t.trajectoryDurationMs && t.trajectoryDurationMs > 0) return t.trajectoryDurationMs / 1000;
+  const d = getTokenDuration(t);
+  return d > 10 ? d / 1000 : d;
+};
+
 const COLORS = [
   '#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', 
   '#ec4899', '#06b6d4', '#84cc16', '#64748b', '#dc2626', 
@@ -128,70 +142,90 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
   }, [data, config.colorBy, config.lineTypeBy, config.bwMode, styleOverrides]);
 
 
-  // Compute Mean Paths... (Unchanged logic)
+  /**
+   * Determine the x-axis unit for absolute-time mode.
+   * Prefer ms when the dataset has trajectoryUnit='ms', OR when any token has
+   * trajectoryDurationMs set (time-slice data), OR when duration values look ms-scale (>10).
+   */
+  const useMs = useMemo(() => {
+    if (datasetMeta?.trajectoryUnit === 'ms') return true;
+    if (datasetMeta?.trajectoryUnit === 'sec') return false;
+    if (data.some(t => t.trajectoryDurationMs && t.trajectoryDurationMs > 0)) return true;
+    // Heuristic: duration column values > 10 are probably already ms
+    return data.some(t => getTokenDuration(t) > 10);
+  }, [datasetMeta, data]);
+
+  /** Compute mean trajectories. Uses native-time grids for absolute mode (no 50-bin synthesis). */
   const meanTrajectories = useMemo(() => {
     if (!config.showMeanTrajectories) return null;
     const result: Record<string, { f1: {x:number, y:number}[], f2: {x:number, y:number}[] }> = {};
 
     const onset = config.trajectoryOnset ?? 0;
     const offset = config.trajectoryOffset ?? 100;
+    const normM = (config.normalization || 'hz') as NormalizationMethod;
 
     Object.entries(combinedGroups).forEach(([compKey, tokens]) => {
       const tks = tokens as SpeechToken[];
 
-      const sortedNormTimes = computeMeanTimeGrid(
-        tks.map(tk => tk.trajectory), onset, offset,
-        config.snapMeansToGrid ? datasetMeta?.timePoints : undefined,
-      );
-      const normBinCount = sortedNormTimes.length || 11;
-
-      const maxDur = Math.max(...tks.map(t => getTokenDuration(t)));
-      const binCount = config.timeNormalized ? normBinCount : 50;
-      const binSize = config.timeNormalized ? (sortedNormTimes.length > 1 ? sortedNormTimes[1] - sortedNormTimes[0] : 10) : maxDur / binCount;
-      const f1Sums = new Array(binCount).fill(0);
-      const f2Sums = new Array(binCount).fill(0);
-      const counts = new Array(binCount).fill(0);
-
-      const normM = (config.normalization || 'hz') as NormalizationMethod;
-      tks.forEach(t => {
-         const sts = speakerStats?.[t.speaker || '__all__'];
-         if (config.timeNormalized) {
-             for (let idx = 0; idx < sortedNormTimes.length; idx++) {
-                 const pt = interpolateTrajectoryAt(t.trajectory, sortedNormTimes[idx]);
-                 if (!pt) continue;
-                 const f1 = normalizeFormant(config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1, 'f1', normM, sts);
-                 const f2 = normalizeFormant(config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2, 'f2', normM, sts);
-                 if (idx < normBinCount && !isNaN(f1) && !isNaN(f2)) {
-                     f1Sums[idx] += f1; f2Sums[idx] += f2; counts[idx]++;
-                 }
-             }
-         } else {
-             for (let i = 0; i < binCount; i++) {
-                 const time = i * binSize;
-                 const tDur = getTokenDuration(t);
-                 if (tDur <= 0 || time > tDur) continue;
-                 const normTime = (time / tDur) * 100;
-                 if (normTime < onset || normTime > offset) continue;
-                 const pt = interpolateTrajectoryAt(t.trajectory, normTime);
-                 if (!pt) continue;
-                 const f1 = normalizeFormant(config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1, 'f1', normM, sts);
-                 const f2 = normalizeFormant(config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2, 'f2', normM, sts);
-                 if (!isNaN(f1) && !isNaN(f2)) {
-                     f1Sums[i] += f1; f2Sums[i] += f2; counts[i]++;
-                 }
-             }
-         }
-      });
-
-      const mapPoints = (sums: number[], cnts: number[]) => sums.map((s, i) => ({
-          x: config.timeNormalized ? sortedNormTimes[i] ?? (i * binSize) : i * binSize,
-          y: cnts[i] ? s/cnts[i] : NaN
-      })).filter(p => !isNaN(p.y));
-
-      result[compKey] = { f1: mapPoints(f1Sums, counts), f2: mapPoints(f2Sums, counts) };
+      if (config.timeNormalized) {
+        // ── Normalized mode: sample at each point on the common grid ──
+        const gridTimes = computeMeanTimeGrid(
+          tks.map(tk => tk.trajectory), onset, offset,
+          config.snapMeansToGrid ? datasetMeta?.timePoints : undefined,
+        );
+        const f1Sums = new Array(gridTimes.length).fill(0);
+        const f2Sums = new Array(gridTimes.length).fill(0);
+        const counts = new Array(gridTimes.length).fill(0);
+        tks.forEach(t => {
+          const sts = speakerStats?.[t.speaker || '__all__'];
+          gridTimes.forEach((gridT, idx) => {
+            const pt = interpolateTrajectoryAt(t.trajectory, gridT);
+            if (!pt) return;
+            const f1 = normalizeFormant(config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1, 'f1', normM, sts);
+            const f2 = normalizeFormant(config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2, 'f2', normM, sts);
+            if (!isNaN(f1) && !isNaN(f2)) { f1Sums[idx] += f1; f2Sums[idx] += f2; counts[idx]++; }
+          });
+        });
+        const f1Pts = gridTimes.map((x, i) => ({ x, y: counts[i] ? f1Sums[i] / counts[i] : NaN })).filter(p => !isNaN(p.y));
+        const f2Pts = gridTimes.map((x, i) => ({ x, y: counts[i] ? f2Sums[i] / counts[i] : NaN })).filter(p => !isNaN(p.y));
+        result[compKey] = { f1: f1Pts, f2: f2Pts };
+      } else {
+        // ── Absolute mode: build grid from union of each token's native times ──
+        // For each token, absoluteTime = (trajectoryTime / 100) * tokenDurationInUnit.
+        const absSet = new Set<number>();
+        tks.forEach(t => {
+          const dur = getTokenDurationInUnit(t, useMs);
+          if (dur <= 0) return;
+          t.trajectory.forEach(p => {
+            if (p.time < onset || p.time > offset) return;
+            absSet.add((p.time / 100) * dur);
+          });
+        });
+        const gridTimes = Array.from(absSet).sort((a, b) => a - b);
+        const f1Sums = new Array(gridTimes.length).fill(0);
+        const f2Sums = new Array(gridTimes.length).fill(0);
+        const counts = new Array(gridTimes.length).fill(0);
+        tks.forEach(t => {
+          const dur = getTokenDurationInUnit(t, useMs);
+          if (dur <= 0) return;
+          const sts = speakerStats?.[t.speaker || '__all__'];
+          gridTimes.forEach((gt, idx) => {
+            const pct = (gt / dur) * 100;
+            if (pct < onset || pct > offset) return;
+            const pt = interpolateTrajectoryAt(t.trajectory, pct);
+            if (!pt) return;
+            const f1 = normalizeFormant(config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1, 'f1', normM, sts);
+            const f2 = normalizeFormant(config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2, 'f2', normM, sts);
+            if (!isNaN(f1) && !isNaN(f2)) { f1Sums[idx] += f1; f2Sums[idx] += f2; counts[idx]++; }
+          });
+        });
+        const f1Pts = gridTimes.map((x, i) => ({ x, y: counts[i] ? f1Sums[i] / counts[i] : NaN })).filter(p => !isNaN(p.y));
+        const f2Pts = gridTimes.map((x, i) => ({ x, y: counts[i] ? f2Sums[i] / counts[i] : NaN })).filter(p => !isNaN(p.y));
+        result[compKey] = { f1: f1Pts, f2: f2Pts };
+      }
     });
     return result;
-  }, [combinedGroups, config.timeNormalized, config.showMeanTrajectories, config.useSmoothing, config.trajectoryOnset, config.trajectoryOffset]);
+  }, [combinedGroups, config.timeNormalized, config.showMeanTrajectories, config.useSmoothing, config.trajectoryOnset, config.trajectoryOffset, config.snapMeansToGrid, config.normalization, datasetMeta, speakerStats, useMs]);
 
   // drawScale parameter added
   const renderPlot = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number, scale: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
@@ -202,7 +236,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     
     ctx.scale(scale, scale);
 
-    const xMax = config.timeNormalized ? 100 : Math.max(0.1, ...data.map(t => getTokenDuration(t)));
+    const xMax = config.timeNormalized ? 100 : Math.max(0.1, ...data.map(t => getTokenDurationInUnit(t, useMs)));
     // Use specific frequency range for time series
     const [yMin, yMax] = config.timeSeriesFrequencyRange || [0, 4000];
 
@@ -262,17 +296,26 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
 
     // X Axis (Time)
     const timeStep = config.timeNormalized ? 10 : (xMax / 10);
+    const formatXTick = (t: number): string => {
+      if (config.timeNormalized) return `${Math.round(t)}`;
+      // Absolute mode: ms is integer-like; seconds typically show 1 decimal
+      return useMs ? `${Math.round(t)}` : t.toFixed(2);
+    };
     for (let t = 0; t <= xMax; t += timeStep) {
       const x = mapX(t);
       // Grid line
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
-      
-      // Tick label
+
+      // Tick label (always shown, even on screen)
+      const label = formatXTick(t);
       if (isExport) {
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'top';
-          const label = config.timeNormalized ? `${t}` : t.toFixed(1);
-          ctx.fillText(label, x + xTickOffsetX, height + (10 * drawScale) + xTickOffsetY);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(label, x + xTickOffsetX, height + (10 * drawScale) + xTickOffsetY);
+      } else {
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(label, x, height + (4 * drawScale));
       }
     }
 
@@ -332,7 +375,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
                   return;
               }
 
-              const tVal = config.timeNormalized ? p.time : (p.time / 100) * getTokenDuration(token);
+              const tVal = config.timeNormalized ? p.time : (p.time / 100) * getTokenDurationInUnit(token, useMs);
               const x = mapX(tVal);
               const y = mapY(val);
 
@@ -683,7 +726,8 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
         
         const xLabelX = (plotWidth / 2) + ((exportConfig.xAxisLabelX || 0) * drawScale);
         const xLabelY = plotHeight + (bottomMarginBase * 0.55 * drawScale) + ((exportConfig.xAxisLabelY || 0) * drawScale);
-        ctx.fillText(config.timeNormalized ? "Normalized Time (%)" : "Duration (s)", xLabelX, xLabelY);
+        const xAxisLabel = config.timeNormalized ? "Normalized Time (%)" : (useMs ? "Time (ms)" : "Time (s)");
+        ctx.fillText(xAxisLabel, xLabelX, xLabelY);
 
         ctx.save();
         const yAxisX = -(leftMarginBase * 0.65 * drawScale) + ((exportConfig.yAxisLabelX || 0) * drawScale);
@@ -787,7 +831,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     const width = containerRef.current.clientWidth;
     const height = containerRef.current.clientHeight;
 
-    const xMax = config.timeNormalized ? 100 : Math.max(0.1, ...data.map(t => getTokenDuration(t)));
+    const xMax = config.timeNormalized ? 100 : Math.max(0.1, ...data.map(t => getTokenDurationInUnit(t, useMs)));
     const [yMin, yMax] = config.timeSeriesFrequencyRange || [0, 4000]; 
     const mapX = (val: number) => (val / xMax) * width;
     const mapY = (val: number) => height - ((val - yMin) / (yMax - yMin)) * height;
@@ -798,7 +842,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     for (const t of data) {
        const mid = t.trajectory[Math.floor(t.trajectory.length / 2)];
        if (!mid) continue;
-       const tVal = config.timeNormalized ? mid.time : (mid.time / 100) * getTokenDuration(t);
+       const tVal = config.timeNormalized ? mid.time : (mid.time / 100) * getTokenDurationInUnit(t, useMs);
        const px = mapX(tVal);
        
        if (Math.abs(px - x) < 20) {
