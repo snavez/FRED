@@ -130,13 +130,16 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
         const unit: 'ms' | 'sec' | undefined = format === 'time-slice'
           ? (maxTP > 10 ? 'ms' : 'sec')
           : undefined;
-        // Round to the nearest meaningful tick before measuring intervals:
-        //   - ms data   → round to nearest ms (sub-ms jitter is irrelevant in speech)
-        //   - seconds   → round to nearest 0.001 s (= 1 ms)
-        //   - percent   → round to nearest 1%
-        const round = (v: number): number => {
-          if (unit === 'sec') return Math.round(v * 1000) / 1000;
-          return Math.round(v);
+        // Compute raw intervals, then round the interval itself to the nearest
+        // meaningful tick. This avoids rounding-boundary artefacts where two
+        // values near .5 round in opposite directions and report a false 4 or 6
+        // for what is really a clean 5 ms interval.
+        //   - ms data   → round interval to nearest ms
+        //   - seconds   → round interval to nearest 0.001 s (= 1 ms)
+        //   - percent   → round interval to nearest 1%
+        const roundInterval = (d: number): number => {
+          if (unit === 'sec') return Math.round(d * 1000) / 1000;
+          return Math.round(d);
         };
         const allIntervals: number[] = [];
         let maxPerToken = 0;
@@ -144,7 +147,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
           seq.sort((a, b) => a - b);
           if (seq.length > maxPerToken) maxPerToken = seq.length;
           for (let i = 1; i < seq.length; i++) {
-            const d = round(seq[i]) - round(seq[i - 1]);
+            const d = roundInterval(seq[i] - seq[i - 1]);
             if (d > 0) allIntervals.push(d);
           }
         }
