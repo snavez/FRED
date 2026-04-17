@@ -1,13 +1,20 @@
 
 import React, { useState, useMemo } from 'react';
-import { ColumnMapping, ColumnRole } from '../types';
-import { HeaderDetectionResult } from '../services/csvParser';
+import { ColumnMapping, ColumnRole, TrajectoryFormat, TrajectoryUnit, TrajectorySpacing } from '../types';
+import {
+  HeaderDetectionResult,
+  TrajectoryFormatOverride,
+  collectWideFormatTimepoints,
+  detectTrajectoryFormat,
+  detectUnitHintFromMappings,
+  TRAJECTORY_MIN_POINTS,
+} from '../services/csvParser';
 import { X, Upload, FileText, RefreshCw, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 
 interface DataMappingDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (mappings: ColumnMapping[]) => void;
+  onConfirm: (mappings: ColumnMapping[], trajectoryOverride?: TrajectoryFormatOverride) => void;
   headers: string[];
   sampleData: string[][];
   detectedMappings: ColumnMapping[];
@@ -17,6 +24,20 @@ interface DataMappingDialogProps {
   headerDetection: HeaderDetectionResult;
   onToggleFirstRowIsHeader: (isHeader: boolean) => void;
 }
+
+/** Format a spacing description for the confirmation panel. */
+const describeSpacing = (spacing: TrajectorySpacing, format: TrajectoryFormat, unit?: TrajectoryUnit): string => {
+  const unitLabel = format === 'time-slice' ? (unit === 'sec' ? ' sec' : unit === 'ms' ? ' ms' : '') : '%';
+  if (spacing.kind === 'uniform' && spacing.medianInterval !== undefined) {
+    const v = spacing.medianInterval;
+    const rounded = Math.abs(v - Math.round(v)) < 0.05 ? Math.round(v) : Number(v.toFixed(2));
+    return `Samples ~every ${rounded}${unitLabel}`;
+  }
+  if (spacing.kind === 'listed' && spacing.values) {
+    return `Samples at ${spacing.values.map(v => `${v}${unitLabel}`).join(', ')}`;
+  }
+  return 'Sampled at irregular intervals';
+};
 
 // Speaker ID & File ID are assigned via the quick-assign dropdowns at the top,
 // so they are NOT listed here — the per-row dropdown only shows these roles.
@@ -45,12 +66,42 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
   const [speakerHelpRect, setSpeakerHelpRect] = useState<DOMRect | null>(null);
   const [fileIdHelpRect, setFileIdHelpRect] = useState<DOMRect | null>(null);
   const [showGuide, setShowGuide] = useState(false);
+  // User-confirmed trajectory format/unit (null = use auto-detected)
+  const [formatOverride, setFormatOverride] = useState<TrajectoryFormat | null>(null);
+  const [unitOverride, setUnitOverride] = useState<TrajectoryUnit | null>(null);
 
   // Reset mappings when dialog opens with new data
   React.useEffect(() => {
     setMappings(detectedMappings);
     setValidationError(null);
+    setFormatOverride(null);
+    setUnitOverride(null);
   }, [detectedMappings]);
+
+  // Live auto-detection from current mappings (wide format) or sample data (long format)
+  const trajectoryDetection = useMemo(() => {
+    // Long format: extract timepoints from the assigned timepoint column's sample values
+    const tpMapping = mappings.find(m => m.role === 'timepoint');
+    if (tpMapping) {
+      const tpColIdx = headers.indexOf(tpMapping.csvHeader);
+      if (tpColIdx >= 0) {
+        const values = sampleData
+          .map(row => parseFloat(row[tpColIdx]))
+          .filter(v => !isNaN(v));
+        const byGroup = new Map<string, number[]>([['__long__', values]]);
+        return detectTrajectoryFormat(byGroup);
+      }
+    }
+    // Wide format: derive from column headers / mappings
+    const byFormant = collectWideFormatTimepoints(mappings);
+    const unitHint = detectUnitHintFromMappings(mappings);
+    return detectTrajectoryFormat(byFormant, unitHint);
+  }, [mappings, sampleData, headers]);
+
+  const effectiveFormat: TrajectoryFormat = formatOverride ?? trajectoryDetection.format;
+  const effectiveUnit: TrajectoryUnit | undefined = unitOverride ?? trajectoryDetection.unit;
+  const showTrajectoryPanel = trajectoryDetection.pointsPerFormant >= TRAJECTORY_MIN_POINTS
+    || effectiveFormat === 'time-slice';
 
   const updateMapping = (idx: number, updates: Partial<ColumnMapping>) => {
     setMappings(prev => prev.map((m, i) => i === idx ? { ...m, ...updates } : m));
@@ -267,6 +318,73 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                 </>
               )}
             </p>
+          </div>
+        )}
+
+        {/* Trajectory Confirmation panel */}
+        {showTrajectoryPanel && (
+          <div className="mx-5 mt-3 mb-1 p-3 bg-emerald-50/60 border border-emerald-200 rounded-lg shrink-0">
+            <div className="text-xs text-emerald-900 leading-relaxed space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="font-bold">Trajectory data detected —</span>
+                <span>{trajectoryDetection.pointsPerFormant} measurements per formant</span>
+              </div>
+
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="font-semibold">These samples are separated by:</span>
+                <label className="flex items-center gap-1 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="trajFormat"
+                    checked={effectiveFormat === 'percentage'}
+                    onChange={() => { setFormatOverride('percentage'); setUnitOverride(null); }}
+                  />
+                  <span>Percentages of vowel duration</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="trajFormat"
+                    checked={effectiveFormat === 'time-slice'}
+                    onChange={() => setFormatOverride('time-slice')}
+                  />
+                  <span>Time values</span>
+                </label>
+              </div>
+
+              {effectiveFormat === 'time-slice' && (
+                <div className="flex items-center gap-3 flex-wrap pl-4 border-l-2 border-emerald-200">
+                  <span className="font-semibold">Unit:</span>
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="trajUnit"
+                      checked={effectiveUnit === 'ms'}
+                      onChange={() => setUnitOverride('ms')}
+                    />
+                    <span>milliseconds (ms)</span>
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="trajUnit"
+                      checked={effectiveUnit === 'sec'}
+                      onChange={() => setUnitOverride('sec')}
+                    />
+                    <span>seconds</span>
+                  </label>
+                  {effectiveUnit === undefined && (
+                    <span className="text-amber-700 font-semibold flex items-center gap-1">
+                      <AlertTriangle size={11} /> Please choose a unit
+                    </span>
+                  )}
+                </div>
+              )}
+
+              <div className="text-emerald-800/80 italic pl-1">
+                {describeSpacing(trajectoryDetection.spacing, effectiveFormat, effectiveUnit)}
+              </div>
+            </div>
           </div>
         )}
 
@@ -560,7 +678,15 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                 setValidationError('Token ID and Timepoint must both be assigned for long-format data');
                 return;
               }
-              onConfirm(mappings);
+              // Time-slice must have a unit chosen
+              if (showTrajectoryPanel && effectiveFormat === 'time-slice' && !effectiveUnit) {
+                setValidationError('Please choose a unit (ms or seconds) for your time-slice data');
+                return;
+              }
+              const trajectoryOverride: TrajectoryFormatOverride | undefined = showTrajectoryPanel
+                ? { format: effectiveFormat, unit: effectiveFormat === 'time-slice' ? effectiveUnit : undefined }
+                : undefined;
+              onConfirm(mappings, trajectoryOverride);
             }}
             className="px-6 py-2 text-xs font-bold text-white bg-slate-600 rounded-lg hover:bg-slate-700 transition-colors flex items-center gap-2 shadow-sm"
           >

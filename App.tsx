@@ -3,7 +3,7 @@ import React, { useState, useMemo, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import MainDisplay from './components/MainDisplay';
 import Header from './components/Header';
-import { detectDelimiter, splitRow, autoDetectMappings, parseWithMappings, detectHeaderRow, HeaderDetectionResult } from './services/csvParser';
+import { detectDelimiter, splitRow, autoDetectMappings, parseWithMappings, detectHeaderRow, HeaderDetectionResult, TrajectoryFormatOverride } from './services/csvParser';
 import { getLabel } from './utils/getLabel';
 import { SpeechToken, PlotConfig, FilterState, ReferenceCentroid, Layer, LayerCounters, StyleOverrides, ColumnMapping, DatasetMeta, NormalizationMethod, UNDEFINED_LABEL } from './types';
 import { computeSpeakerStats, computeNormalizedRange, SpeakerStatsMap } from './utils/normalization';
@@ -312,10 +312,10 @@ const App: React.FC = () => {
     } : null);
   }, [mappingDialog]);
 
-  const handleMappingConfirm = useCallback((mappings: ColumnMapping[]) => {
+  const handleMappingConfirm = useCallback((mappings: ColumnMapping[], trajectoryOverride?: TrajectoryFormatOverride) => {
     if (!mappingDialog) return;
     setIsLoading(true);
-    const { tokens, meta } = parseWithMappings(mappingDialog.rawText, mappings, mappingDialog.fileName, !mappingDialog.firstRowIsHeader);
+    const { tokens, meta } = parseWithMappings(mappingDialog.rawText, mappings, mappingDialog.fileName, !mappingDialog.firstRowIsHeader, trajectoryOverride);
     setData(tokens);
     setDatasetMeta(meta);
     const allFilters = computeSelectAllFilters(tokens, meta);
