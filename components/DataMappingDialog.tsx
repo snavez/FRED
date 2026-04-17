@@ -123,38 +123,48 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
             tokenSequences.get(tid)!.push(tp);
           }
         }
-        // Collect intervals within each token
+        // Determine format and unit up front (needed for rounding precision)
+        const format: 'percentage' | 'time-slice' | 'single-point' = maxTP > 100
+          ? 'time-slice'
+          : 'percentage';
+        const unit: 'ms' | 'sec' | undefined = format === 'time-slice'
+          ? (maxTP > 10 ? 'ms' : 'sec')
+          : undefined;
+        // Round to the nearest meaningful tick before measuring intervals:
+        //   - ms data   → round to nearest ms (sub-ms jitter is irrelevant in speech)
+        //   - seconds   → round to nearest 0.001 s (= 1 ms)
+        //   - percent   → round to nearest 1%
+        const round = (v: number): number => {
+          if (unit === 'sec') return Math.round(v * 1000) / 1000;
+          return Math.round(v);
+        };
         const allIntervals: number[] = [];
         let maxPerToken = 0;
         for (const seq of tokenSequences.values()) {
           seq.sort((a, b) => a - b);
           if (seq.length > maxPerToken) maxPerToken = seq.length;
-          for (let i = 1; i < seq.length; i++) allIntervals.push(seq[i] - seq[i - 1]);
+          for (let i = 1; i < seq.length; i++) {
+            const d = round(seq[i]) - round(seq[i - 1]);
+            if (d > 0) allIntervals.push(d);
+          }
         }
-        // Build a spacing description from the interval distribution
-        const format: 'percentage' | 'time-slice' | 'single-point' = maxTP > 100
-          ? 'time-slice'
-          : (maxPerToken >= TRAJECTORY_MIN_POINTS ? 'percentage' : 'single-point');
-        // Unit: fraction 0-1 → undefined, percent 1-100 → undefined, ms > 100 → ms heuristic
-        const unit: 'ms' | 'sec' | undefined = format === 'time-slice'
-          ? (maxTP > 10 ? 'ms' : 'sec')
-          : undefined;
-        // Spacing: compute median interval and uniformity tolerance (10%)
+        // Downgrade to single-point if below threshold AND not time-slice
+        const finalFormat = format === 'percentage' && maxPerToken < TRAJECTORY_MIN_POINTS
+          ? 'single-point'
+          : format;
+        // Spacing: after rounding, uniform = all intervals identical
+        const uniqueTPs = Array.from(new Set(Array.from(tokenSequences.values()).flat())).sort((a, b) => a - b);
         let spacing: { kind: 'uniform' | 'listed' | 'irregular'; medianInterval?: number; values?: number[] };
-        const uniqueTPs = Array.from(new Set(allIntervals.length === 0
-          ? Array.from(tokenSequences.values()).flat()
-          : []))
-          .sort((a, b) => a - b);
         if (allIntervals.length === 0) {
           spacing = { kind: 'listed', values: uniqueTPs };
         } else {
           const sorted = [...allIntervals].sort((a, b) => a - b);
           const mid = Math.floor(sorted.length / 2);
           const med = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-          const uniform = med > 0 && allIntervals.every(d => Math.abs(d - med) / med <= 0.10);
+          const uniform = allIntervals.every(d => d === med);
           spacing = uniform ? { kind: 'uniform', medianInterval: med } : { kind: 'irregular' };
         }
-        return { format, unit, spacing, pointsPerFormant: maxPerToken, uniqueTimepoints: uniqueTPs };
+        return { format: finalFormat, unit, spacing, pointsPerFormant: maxPerToken, uniqueTimepoints: uniqueTPs };
       }
     }
     // Wide format: derive from column headers / mappings
