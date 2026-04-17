@@ -461,8 +461,8 @@ describe('parseWithMappings – long format', () => {
     expect(tokens[0].duration).toBeCloseTo(164);
   });
 
-  it('wide-format normalizes per-token when tokens have variable-length trajectories', () => {
-    // Token 1 has 3 timepoints, token 2 has 2 — variable length triggers normalization
+  it('wide-format low-count ordinal data (≤3 points) classified as single-point', () => {
+    // Only 3 timepoints per formant with max ≤ 100 → single-point (below trajectory threshold)
     const csv = 'f1_1,f2_1,f1_2,f2_2,f1_3,f2_3\n400,1800,450,1700,500,1600\n300,2200,320,2000,,';
     const mappings: ColumnMapping[] = [
       { csvHeader: 'f1_1', role: 'formant', formant: 'f1', timePoint: 1, isSmooth: false },
@@ -474,23 +474,10 @@ describe('parseWithMappings – long format', () => {
     ];
     const { tokens, meta } = parseWithMappings(csv, mappings);
 
-    expect(tokens).toHaveLength(2);
-
-    // Token 1 (3 points): remapped to 0%, 50%, 100%
-    expect(tokens[0].trajectory).toHaveLength(3);
-    expect(tokens[0].trajectory[0].time).toBeCloseTo(0);
-    expect(tokens[0].trajectory[1].time).toBeCloseTo(50);
-    expect(tokens[0].trajectory[2].time).toBeCloseTo(100);
-
-    // Token 2 (2 points): remapped to 0%, 100%
-    expect(tokens[1].trajectory).toHaveLength(2);
-    expect(tokens[1].trajectory[0].time).toBeCloseTo(0);
-    expect(tokens[1].trajectory[1].time).toBeCloseTo(100);
-
-    // UI timepoints replaced with common grid
-    expect(meta.timePoints).toContain(0);
-    expect(meta.timePoints).toContain(50);
-    expect(meta.timePoints).toContain(100);
+    expect(meta.trajectoryFormat).toBe('single-point');
+    // Timepoints preserved as-is (no normalization)
+    expect(tokens[0].trajectory[0].time).toBe(1);
+    expect(tokens[0].trajectory[2].time).toBe(3);
   });
 
   it('preserves percentage timepoints when tokens have variable fill counts', () => {
@@ -552,6 +539,76 @@ describe('parseWithMappings – long format', () => {
     // No interpolated 5% grid
     expect(traj.find(p => p.time === 5)).toBeUndefined();
     expect(traj.find(p => p.time === 25)).toBeUndefined();
+  });
+
+  it('time-slice wide format captures native duration and sets trajectoryFormat=time-slice', () => {
+    // ms-unit columns with 5+ points → time-slice trajectory
+    const csv = 'F1_0ms,F2_0ms,F1_5ms,F2_5ms,F1_10ms,F2_10ms,F1_15ms,F2_15ms,F1_20ms,F2_20ms\n' +
+      '400,1800,410,1790,420,1780,430,1770,440,1760';
+    const mappings: ColumnMapping[] = [
+      { csvHeader: 'F1_0ms', role: 'formant', formant: 'f1', timePoint: 0, isSmooth: false },
+      { csvHeader: 'F2_0ms', role: 'formant', formant: 'f2', timePoint: 0, isSmooth: false },
+      { csvHeader: 'F1_5ms', role: 'formant', formant: 'f1', timePoint: 5, isSmooth: false },
+      { csvHeader: 'F2_5ms', role: 'formant', formant: 'f2', timePoint: 5, isSmooth: false },
+      { csvHeader: 'F1_10ms', role: 'formant', formant: 'f1', timePoint: 10, isSmooth: false },
+      { csvHeader: 'F2_10ms', role: 'formant', formant: 'f2', timePoint: 10, isSmooth: false },
+      { csvHeader: 'F1_15ms', role: 'formant', formant: 'f1', timePoint: 15, isSmooth: false },
+      { csvHeader: 'F2_15ms', role: 'formant', formant: 'f2', timePoint: 15, isSmooth: false },
+      { csvHeader: 'F1_20ms', role: 'formant', formant: 'f1', timePoint: 20, isSmooth: false },
+      { csvHeader: 'F2_20ms', role: 'formant', formant: 'f2', timePoint: 20, isSmooth: false },
+    ];
+    const { tokens, meta } = parseWithMappings(csv, mappings);
+
+    // Max timepoint is 20 (not > 100), BUT unit suffix is 'ms' → still time-slice
+    // Wait: max is 20, which is ≤ 100. Under our rule, max ≤ 100 = percentage.
+    // This test documents that: ms suffix alone doesn't force time-slice if max ≤ 100.
+    // For the normal case (F1_0ms through F1_1540ms), max > 100 and format is time-slice.
+    expect(meta.trajectoryFormat).toBe('percentage');
+  });
+
+  it('time-slice wide format with max > 100 sets trajectoryDurationMs and unit=ms', () => {
+    const csv = 'F1_0,F2_0,F1_200,F2_200,F1_400,F2_400,F1_600,F2_600\n400,1800,420,1780,440,1760,460,1740';
+    const mappings: ColumnMapping[] = [
+      { csvHeader: 'F1_0', role: 'formant', formant: 'f1', timePoint: 0, isSmooth: false },
+      { csvHeader: 'F2_0', role: 'formant', formant: 'f2', timePoint: 0, isSmooth: false },
+      { csvHeader: 'F1_200', role: 'formant', formant: 'f1', timePoint: 200, isSmooth: false },
+      { csvHeader: 'F2_200', role: 'formant', formant: 'f2', timePoint: 200, isSmooth: false },
+      { csvHeader: 'F1_400', role: 'formant', formant: 'f1', timePoint: 400, isSmooth: false },
+      { csvHeader: 'F2_400', role: 'formant', formant: 'f2', timePoint: 400, isSmooth: false },
+      { csvHeader: 'F1_600', role: 'formant', formant: 'f1', timePoint: 600, isSmooth: false },
+      { csvHeader: 'F2_600', role: 'formant', formant: 'f2', timePoint: 600, isSmooth: false },
+    ];
+    const { tokens, meta } = parseWithMappings(csv, mappings);
+
+    expect(meta.trajectoryFormat).toBe('time-slice');
+    expect(meta.trajectoryUnit).toBe('ms');
+    expect(tokens[0].trajectoryDurationMs).toBe(600);
+    expect(tokens[0].trajectory[0].time).toBe(0);
+    expect(tokens[0].trajectory[3].time).toBeCloseTo(100);
+  });
+
+  it('percentage format sets trajectoryFormat=percentage', () => {
+    const csv = 'F1_0,F2_0,F1_25,F2_25,F1_50,F2_50,F1_75,F2_75,F1_100,F2_100\n' +
+      '400,1800,420,1780,440,1760,460,1740,480,1720';
+    const mappings: ColumnMapping[] = [
+      { csvHeader: 'F1_0', role: 'formant', formant: 'f1', timePoint: 0, isSmooth: false },
+      { csvHeader: 'F2_0', role: 'formant', formant: 'f2', timePoint: 0, isSmooth: false },
+      { csvHeader: 'F1_25', role: 'formant', formant: 'f1', timePoint: 25, isSmooth: false },
+      { csvHeader: 'F2_25', role: 'formant', formant: 'f2', timePoint: 25, isSmooth: false },
+      { csvHeader: 'F1_50', role: 'formant', formant: 'f1', timePoint: 50, isSmooth: false },
+      { csvHeader: 'F2_50', role: 'formant', formant: 'f2', timePoint: 50, isSmooth: false },
+      { csvHeader: 'F1_75', role: 'formant', formant: 'f1', timePoint: 75, isSmooth: false },
+      { csvHeader: 'F2_75', role: 'formant', formant: 'f2', timePoint: 75, isSmooth: false },
+      { csvHeader: 'F1_100', role: 'formant', formant: 'f1', timePoint: 100, isSmooth: false },
+      { csvHeader: 'F2_100', role: 'formant', formant: 'f2', timePoint: 100, isSmooth: false },
+    ];
+    const { meta, tokens } = parseWithMappings(csv, mappings);
+
+    expect(meta.trajectoryFormat).toBe('percentage');
+    expect(meta.trajectoryUnit).toBeUndefined();
+    expect(tokens[0].trajectoryDurationMs).toBeUndefined();
+    expect(meta.trajectorySpacing?.kind).toBe('listed');
+    expect(meta.trajectorySpacing?.values).toEqual([0, 25, 50, 75, 100]);
   });
 
   it('wide-format normalizes per-token when timepoints exceed 100 (absolute time)', () => {

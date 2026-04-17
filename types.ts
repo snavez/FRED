@@ -18,7 +18,8 @@ export interface SpeechToken {
   file_id: string;                    // For data provenance / tooltip
   xmin: number;
   duration: number;
-  trajectory: TrajectoryPoint[];      // Formant data across time
+  trajectory: TrajectoryPoint[];      // Formant data across time (time always 0-100%)
+  trajectoryDurationMs?: number;      // Native extraction range for time-slice data (for absolute time plots)
   fields: Record<string, string>;     // All other columns (user's headers as keys)
 }
 
@@ -312,6 +313,15 @@ export interface ColumnMapping {
   isDataField?: boolean;      // true = data/plot value (no sidebar), false/undefined = filter/label
 }
 
+export type TrajectoryFormat = 'percentage' | 'time-slice' | 'single-point';
+export type TrajectoryUnit = 'ms' | 'sec';
+
+export interface TrajectorySpacing {
+  kind: 'uniform' | 'listed' | 'irregular';
+  medianInterval?: number;    // for 'uniform'
+  values?: number[];          // for 'listed' (≤8 unique timepoints)
+}
+
 export interface DatasetMeta {
   fileName: string;
   columnMappings: ColumnMapping[];
@@ -320,4 +330,7 @@ export interface DatasetMeta {
   rowCount: number;
   formantVariants?: string[];
   sourceFormat?: 'wide' | 'long';
+  trajectoryFormat?: TrajectoryFormat;       // Confirmed (or auto-detected) format of trajectory data
+  trajectoryUnit?: TrajectoryUnit;           // For 'time-slice' format only
+  trajectorySpacing?: TrajectorySpacing;     // Description for the confirmation panel
 }

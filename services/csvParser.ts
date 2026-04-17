@@ -1,5 +1,12 @@
 
-import { SpeechToken, TrajectoryPoint, ColumnMapping, ColumnRole, DatasetMeta } from '../types';
+import { SpeechToken, TrajectoryPoint, ColumnMapping, ColumnRole, DatasetMeta, TrajectoryFormat, TrajectoryUnit, TrajectorySpacing } from '../types';
+
+/** Threshold: ≥ this many non-target timepoints per formant = trajectory data. */
+export const TRAJECTORY_MIN_POINTS = 4;
+/** Spacing uniformity tolerance: intervals within ±X of median are "uniform". */
+const UNIFORM_TOLERANCE = 0.10;
+/** Max distinct timepoints to list individually in the spacing description. */
+const MAX_LISTED_VALUES = 8;
 
 // --- Delimiter & row utilities ---
 
@@ -124,6 +131,142 @@ const PITCH_REGEX = /^f0_(\d+)(?:%|ms|sec)?(?:_(.+))?$/i;
 
 /** Names that should populate SpeechToken.xmin (now detected as regular fields) */
 const XMIN_NAMES = new Set(['xmin', 'onset', 'start', 'start_time']);
+
+// --- Trajectory format detection ---
+
+export interface TrajectoryFormatDetection {
+  format: TrajectoryFormat;
+  unit?: TrajectoryUnit;              // Only meaningful for 'time-slice'
+  spacing: TrajectorySpacing;
+  pointsPerFormant: number;           // Max count across formants (for ≥4 threshold)
+  uniqueTimepoints: number[];         // Sorted distinct timepoints observed
+}
+
+const median = (arr: number[]): number => {
+  const sorted = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+};
+
+/** Extract 'ms' or 'sec' suffix from a formant column header, if present. */
+export const detectUnitFromHeader = (header: string): TrajectoryUnit | undefined => {
+  const m = header.toLowerCase().trim().match(/^f[12345]_\d+(%|ms|sec)(?:_.+)?$/i);
+  if (!m) return undefined;
+  const unit = m[1].toLowerCase();
+  if (unit === 'ms') return 'ms';
+  if (unit === 'sec') return 'sec';
+  return undefined; // '%' is not a time unit
+};
+
+/**
+ * Detect trajectory format from a set of timepoint values and optional unit hint.
+ *
+ * Rules:
+ *   - Fewer than TRAJECTORY_MIN_POINTS distinct timepoints per formant → single-point
+ *   - Max timepoint > 100                                              → time-slice
+ *   - Otherwise                                                         → percentage
+ *
+ * Unit:
+ *   - Explicit hint (from 'ms'/'sec' suffix in column names)            → use as-is
+ *   - All integer-like values with max > 10                             → ms
+ *   - Decimal values with max ≤ 10                                      → sec
+ *   - Otherwise                                                          → undefined (ambiguous, user confirms)
+ *
+ * Spacing:
+ *   - ≤ MAX_LISTED_VALUES distinct timepoints                           → 'listed' (enumerate)
+ *   - All intervals within UNIFORM_TOLERANCE of median                  → 'uniform'
+ *   - Otherwise                                                          → 'irregular'
+ */
+export const detectTrajectoryFormat = (
+  timepointsByFormant: Map<string, number[]>,
+  unitHint?: TrajectoryUnit,
+): TrajectoryFormatDetection => {
+  // Collect unique timepoints across all formants
+  const allTP = new Set<number>();
+  let pointsPerFormant = 0;
+  for (const [, tps] of timepointsByFormant) {
+    const distinct = new Set(tps);
+    pointsPerFormant = Math.max(pointsPerFormant, distinct.size);
+    for (const t of distinct) allTP.add(t);
+  }
+  const unique = Array.from(allTP).sort((a, b) => a - b);
+  const count = unique.length;
+
+  const max = count > 0 ? unique[count - 1] : 0;
+  // max > 100 is always time-slice (absolute times matter even for few points).
+  // Otherwise: need ≥4 points per formant to be called trajectory.
+  let format: TrajectoryFormat;
+  if (max > 100) {
+    format = 'time-slice';
+  } else if (pointsPerFormant < TRAJECTORY_MIN_POINTS) {
+    format = 'single-point';
+  } else {
+    format = 'percentage';
+  }
+
+  if (format === 'single-point') {
+    return {
+      format,
+      spacing: { kind: 'listed', values: unique },
+      pointsPerFormant,
+      uniqueTimepoints: unique,
+    };
+  }
+
+  // Unit detection (time-slice only)
+  let unit: TrajectoryUnit | undefined;
+  if (format === 'time-slice') {
+    if (unitHint) {
+      unit = unitHint;
+    } else {
+      const allIntegerLike = unique.every(v => Math.abs(v - Math.round(v)) < 0.001);
+      if (allIntegerLike && max > 10) unit = 'ms';
+      else if (!allIntegerLike && max <= 10) unit = 'sec';
+      // else: ambiguous — user must choose
+    }
+  }
+
+  // Spacing description
+  let spacing: TrajectorySpacing;
+  if (count <= MAX_LISTED_VALUES) {
+    spacing = { kind: 'listed', values: unique };
+  } else {
+    const intervals: number[] = [];
+    for (let i = 1; i < unique.length; i++) intervals.push(unique[i] - unique[i - 1]);
+    const med = median(intervals);
+    const uniform = med > 0 && intervals.every(d => Math.abs(d - med) / med <= UNIFORM_TOLERANCE);
+    spacing = uniform ? { kind: 'uniform', medianInterval: med } : { kind: 'irregular' };
+  }
+
+  return { format, unit, spacing, pointsPerFormant, uniqueTimepoints: unique };
+};
+
+/** Collect non-target numeric timepoints grouped by formant letter, for wide-format mappings. */
+export const collectWideFormatTimepoints = (mappings: ColumnMapping[]): Map<string, number[]> => {
+  const byFormant = new Map<string, number[]>();
+  for (const m of mappings) {
+    if (m.role !== 'formant') continue;
+    if (m.formantTarget) continue;          // named targets excluded
+    if (m.timePoint === undefined) continue;
+    if (!m.formant) continue;
+    const key = m.formant;
+    if (!byFormant.has(key)) byFormant.set(key, []);
+    byFormant.get(key)!.push(m.timePoint);
+  }
+  return byFormant;
+};
+
+/** Aggregate unit hints from wide-format column headers (first wins; conflicts → undefined). */
+export const detectUnitHintFromMappings = (mappings: ColumnMapping[]): TrajectoryUnit | undefined => {
+  const units = new Set<TrajectoryUnit>();
+  for (const m of mappings) {
+    if (m.role !== 'formant' || m.formantTarget) continue;
+    const u = detectUnitFromHeader(m.csvHeader);
+    if (u) units.add(u);
+  }
+  if (units.size === 1) return units.values().next().value;
+  return undefined;
+};
 
 /**
  * Auto-detect column mappings from CSV headers + sample data.
@@ -425,15 +568,13 @@ function parseLongFormat(
       fields[fm.fieldName] = firstRow[fm.colIdx] || '';
     });
 
-    // Per-group time range for ms normalization
+    // Per-group time range (always computed — used for ms normalization AND trajectoryDurationMs)
     let groupMinT = Infinity, groupMaxT = -Infinity;
-    if (scale === 'ms') {
-      for (const row of rows) {
-        const v = parseFloat(row[timepointIdx]);
-        if (!isNaN(v)) {
-          if (v < groupMinT) groupMinT = v;
-          if (v > groupMaxT) groupMaxT = v;
-        }
+    for (const row of rows) {
+      const v = parseFloat(row[timepointIdx]);
+      if (!isNaN(v)) {
+        if (v < groupMinT) groupMinT = v;
+        if (v > groupMaxT) groupMaxT = v;
       }
     }
 
@@ -497,6 +638,12 @@ function parseLongFormat(
       duration = groupMaxT - groupMinT;
     }
 
+    // Native extraction range for time-slice absolute plotting (in ms)
+    let trajectoryDurationMs: number | undefined;
+    if (scale === 'ms' && groupMaxT > groupMinT) {
+      trajectoryDurationMs = groupMaxT - groupMinT;
+    }
+
     tokens.push({
       id: speaker ? `${speaker}_token_${tid}` : (fileId ? `${fileId}_token_${tid}` : `token_${tid}`),
       speaker,
@@ -504,6 +651,7 @@ function parseLongFormat(
       xmin: xminFieldMapping ? (parseFloat(firstRow[xminFieldMapping.colIdx]) || 0) : 0,
       duration,
       trajectory,
+      trajectoryDurationMs,
       fields,
     });
   }
@@ -521,6 +669,29 @@ function parseLongFormat(
     formantVariants = hasRaw ? ['Original', ...namedLabels] : namedLabels;
   }
 
+  // Derive format/unit/spacing from detected scale + observed timepoints
+  const uniqueTimepoints: number[] = [];
+  {
+    const tpSet = new Set<number>();
+    for (const rows of groups.values()) for (const row of rows) {
+      const v = parseFloat(row[timepointIdx]);
+      if (!isNaN(v)) tpSet.add(v);
+    }
+    uniqueTimepoints.push(...Array.from(tpSet).sort((a, b) => a - b));
+  }
+  const maxPointsPerToken = Math.max(...Array.from(groups.values()).map(r => r.length), 0);
+  const longFormat: TrajectoryFormat = scale === 'ms' ? 'time-slice' : 'percentage';
+  const longUnit: TrajectoryUnit | undefined = scale === 'ms' ? 'ms' : undefined;
+  const longSpacing: TrajectorySpacing = uniqueTimepoints.length <= MAX_LISTED_VALUES
+    ? { kind: 'listed', values: uniqueTimepoints }
+    : (() => {
+        const intervals: number[] = [];
+        for (let i = 1; i < uniqueTimepoints.length; i++) intervals.push(uniqueTimepoints[i] - uniqueTimepoints[i - 1]);
+        const med = median(intervals);
+        const uniform = med > 0 && intervals.every(d => Math.abs(d - med) / med <= UNIFORM_TOLERANCE);
+        return uniform ? { kind: 'uniform', medianInterval: med } : { kind: 'irregular' };
+      })();
+
   // Common time grid for UI (21 points: 0, 5, 10, ..., 100)
   const commonGrid: number[] = [];
   for (let t = 0; t <= 100; t += 5) commonGrid.push(t);
@@ -534,6 +705,9 @@ function parseLongFormat(
       rowCount: tokens.length,
       formantVariants,
       sourceFormat: 'long',
+      trajectoryFormat: maxPointsPerToken < TRAJECTORY_MIN_POINTS ? 'single-point' : longFormat,
+      trajectoryUnit: longUnit,
+      trajectorySpacing: longSpacing,
     },
   };
 }
@@ -542,11 +716,17 @@ function parseLongFormat(
  * Parse file text using user-confirmed column mappings.
  * Produces SpeechToken[] with generic `fields` for all 'field' role columns.
  */
+export interface TrajectoryFormatOverride {
+  format: TrajectoryFormat;
+  unit?: TrajectoryUnit;
+}
+
 export const parseWithMappings = (
   text: string,
   mappings: ColumnMapping[],
   fileName: string = '',
-  firstRowIsData: boolean = false
+  firstRowIsData: boolean = false,
+  formatOverride?: TrajectoryFormatOverride,
 ): { tokens: SpeechToken[], meta: DatasetMeta } => {
   const delimiter = detectDelimiter(text);
   const lines = text.split(/\r?\n/);
@@ -684,38 +864,35 @@ export const parseWithMappings = (
     });
   }
 
-  // Normalize per-token timepoints when timepoints are ordinal/absolute rather than %.
-  // Triggers when:
-  //   - Timepoints don't look like percentages (min!=0 or max!=100), AND
-  //     - Tokens have variable-length trajectories, OR any timepoint exceeds 100
-  // Percentage-style columns (F1_0%, F1_10%, ..., F1_100%) are preserved as-is —
-  // tokens missing some timepoints keep a partial trajectory at the actual % values
-  // rather than getting their positions remapped to a different grid.
-  // Named targets (F1_onset, F1_target, etc.) are excluded because their synthetic
-  // timepoints (1000+) are collision-avoidance indices, not data.
-  if (tokens.length > 1) {
-    const lengths = tokens.filter(t => t.trajectory.length > 0).map(t => t.trajectory.length);
-    const minLen = lengths.length > 0 ? Math.min(...lengths) : 0;
-    const maxLen = lengths.length > 0 ? Math.max(...lengths) : 0;
-    const nonTargetTimePoints = mappings
-      .filter(m => m.role === 'formant' && !m.formantTarget && m.timePoint !== undefined)
-      .map(m => m.timePoint as number);
-    const maxTimePoint = nonTargetTimePoints.length > 0 ? Math.max(...nonTargetTimePoints) : 0;
-    const minTimePoint = nonTargetTimePoints.length > 0 ? Math.min(...nonTargetTimePoints) : 0;
-    const looksLikePercentages = minTimePoint === 0 && maxTimePoint === 100;
-    const needsNorm = !looksLikePercentages && ((minLen !== maxLen) || maxTimePoint > 100);
-    if (needsNorm) {
-      for (const token of tokens) {
-        const n = token.trajectory.length;
-        if (n < 2) continue;
-        for (let j = 0; j < n; j++) {
-          token.trajectory[j].time = (j / (n - 1)) * 100;
-        }
+  // Detect trajectory format (auto) or use override from the Data Mapping dialog.
+  const timepointsByFormant = collectWideFormatTimepoints(mappings);
+  const unitHint = formatOverride?.unit ?? detectUnitHintFromMappings(mappings);
+  const detection = detectTrajectoryFormat(timepointsByFormant, unitHint);
+  const format: TrajectoryFormat = formatOverride?.format ?? detection.format;
+  const unit: TrajectoryUnit | undefined = formatOverride?.unit ?? detection.unit;
+
+  // For 'time-slice' format, normalize each token's trajectory to 0–100% based on
+  // position AND capture the native extraction range (for absolute time-series plots).
+  // For 'percentage' and 'single-point', trajectory times are kept as column values.
+  if (format === 'time-slice') {
+    for (const token of tokens) {
+      const n = token.trajectory.length;
+      if (n < 2) continue;
+      const nativeMin = token.trajectory[0].time;
+      const nativeMax = token.trajectory[n - 1].time;
+      const nativeRange = nativeMax - nativeMin;
+      if (unit === 'ms') {
+        token.trajectoryDurationMs = nativeRange;
+      } else if (unit === 'sec') {
+        token.trajectoryDurationMs = nativeRange * 1000;
       }
-      // Replace column-derived timepoints with the common 0–100% grid for UI
-      sortedTimePoints.length = 0;
-      for (let t = 0; t <= 100; t += 5) sortedTimePoints.push(t);
+      for (let j = 0; j < n; j++) {
+        token.trajectory[j].time = (j / (n - 1)) * 100;
+      }
     }
+    // Replace column-derived timepoints with the common 0–100% grid for UI
+    sortedTimePoints.length = 0;
+    for (let t = 0; t <= 100; t += 5) sortedTimePoints.push(t);
   }
 
   // Compute formant variants from formant-role mappings
@@ -752,7 +929,10 @@ export const parseWithMappings = (
     timePoints: sortedTimePoints,
     timePointLabels,
     rowCount: tokens.length,
-    formantVariants
+    formantVariants,
+    trajectoryFormat: format,
+    trajectoryUnit: format === 'time-slice' ? unit : undefined,
+    trajectorySpacing: detection.spacing,
   };
 
   return { tokens, meta };
