@@ -875,8 +875,10 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         )}
                       </div>
 
-                      {/* Snap means to grid */}
-                      {currentConfig.showMeanTrajectories && (
+                      {/* Snap means to grid — only useful for time-slice data where tokens
+                          have different native grids. For percentage data, all tokens share
+                          the same grid already, so snap is redundant. */}
+                      {currentConfig.showMeanTrajectories && datasetMeta?.trajectoryFormat === 'time-slice' && (
                         <>
                           <div className="w-px h-6 bg-slate-200"></div>
                           <label className="flex items-center gap-1 cursor-pointer" title="Snap mean points to RANGE intervals (fewer, evenly-spaced points)">
