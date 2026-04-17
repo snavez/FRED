@@ -17,6 +17,8 @@ interface DataMappingDialogProps {
   onConfirm: (mappings: ColumnMapping[], trajectoryOverride?: TrajectoryFormatOverride) => void;
   headers: string[];
   sampleData: string[][];
+  /** Full CSV text — needed for accurate trajectory detection in long format (beyond the 5 sample rows). */
+  rawText?: string;
   detectedMappings: ColumnMapping[];
   fileName: string;
   isEditMode?: boolean;
@@ -57,7 +59,7 @@ const ROLE_OPTIONS: { value: ColumnRole, label: string }[] = [
 const RESERVED_FIELD_NAMES = new Set(['duration', 'speaker', 'file_id']);
 
 const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
-  isOpen, onClose, onConfirm, headers, sampleData, detectedMappings, fileName, isEditMode,
+  isOpen, onClose, onConfirm, headers, sampleData, rawText, detectedMappings, fileName, isEditMode,
   firstRowIsHeader, headerDetection, onToggleFirstRowIsHeader
 }) => {
   const [mappings, setMappings] = useState<ColumnMapping[]>(detectedMappings);
@@ -81,25 +83,56 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
     setExpandedGroups(new Set());
   }, [detectedMappings]);
 
-  // Live auto-detection from current mappings (wide format) or sample data (long format)
+  // Live auto-detection from current mappings (wide format) or full rawText (long format)
   const trajectoryDetection = useMemo(() => {
-    // Long format: extract timepoints from the assigned timepoint column's sample values
     const tpMapping = mappings.find(m => m.role === 'timepoint');
+    const tokenMapping = mappings.find(m => m.role === 'token_id');
     if (tpMapping) {
       const tpColIdx = headers.indexOf(tpMapping.csvHeader);
+      const tidColIdx = tokenMapping ? headers.indexOf(tokenMapping.csvHeader) : -1;
       if (tpColIdx >= 0) {
-        const values = sampleData
-          .map(row => parseFloat(row[tpColIdx]))
-          .filter(v => !isNaN(v));
-        const byGroup = new Map<string, number[]>([['__long__', values]]);
-        return detectTrajectoryFormat(byGroup);
+        // Scan the full rawText if available — we need representative per-token counts,
+        // not the ≤5 sample rows the dialog normally sees.
+        const uniqueTPs = new Set<number>();
+        const perToken = new Map<string, number>();
+        if (rawText) {
+          const firstComma = rawText.indexOf(',');
+          const firstTab = rawText.indexOf('\t');
+          const delim = firstTab !== -1 && (firstComma === -1 || firstTab < firstComma) ? '\t' : ',';
+          const lines = rawText.split(/\r?\n/);
+          const start = firstRowIsHeader ? 1 : 0;
+          for (let i = start; i < lines.length; i++) {
+            const line = lines[i];
+            if (!line.trim()) continue;
+            // Lightweight split (no quote handling here — ok for numeric counting)
+            const cols = line.split(delim);
+            const tp = parseFloat(cols[tpColIdx]);
+            if (!isNaN(tp)) uniqueTPs.add(tp);
+            if (tidColIdx >= 0) {
+              const tid = (cols[tidColIdx] || '').trim();
+              if (tid) perToken.set(tid, (perToken.get(tid) ?? 0) + 1);
+            }
+          }
+        } else {
+          // Fallback to sample rows
+          for (const row of sampleData) {
+            const tp = parseFloat(row[tpColIdx]);
+            if (!isNaN(tp)) uniqueTPs.add(tp);
+          }
+        }
+        // pointsPerFormant reflects the MAX measurements in a single token (real spectral density),
+        // falling back to unique timepoints seen across all tokens.
+        const maxPerToken = perToken.size > 0 ? Math.max(...perToken.values()) : uniqueTPs.size;
+        const byGroup = new Map<string, number[]>([['__long__', Array.from(uniqueTPs)]]);
+        const det = detectTrajectoryFormat(byGroup);
+        return { ...det, pointsPerFormant: Math.max(det.pointsPerFormant, maxPerToken) };
       }
     }
     // Wide format: derive from column headers / mappings
     const byFormant = collectWideFormatTimepoints(mappings);
     const unitHint = detectUnitHintFromMappings(mappings);
     return detectTrajectoryFormat(byFormant, unitHint);
-  }, [mappings, sampleData, headers]);
+  }, [mappings, sampleData, headers, rawText, firstRowIsHeader]);
 
   const effectiveFormat: TrajectoryFormat = formatOverride ?? trajectoryDetection.format;
   const effectiveUnit: TrajectoryUnit | undefined = unitOverride ?? trajectoryDetection.unit;

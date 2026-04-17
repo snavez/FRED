@@ -678,6 +678,7 @@ const App: React.FC = () => {
           onConfirm={handleMappingConfirm}
           headers={mappingDialog.headers}
           sampleData={mappingDialog.sampleData}
+          rawText={mappingDialog.rawText}
           detectedMappings={mappingDialog.detectedMappings}
           fileName={mappingDialog.fileName}
           isEditMode={mappingDialog.isEditMode}
