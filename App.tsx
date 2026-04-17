@@ -329,11 +329,24 @@ const App: React.FC = () => {
     const f3Range = computeNormalizedRange(tokens, 'f3', method, initStats, smooth);
     const tsFreqRange: [number, number] = [Math.min(f1Range[0], f2Range[0]), Math.max(f1Range[1], f2Range[1])];
 
+    // Pick default duration field for percentage-format absolute time-series (first duration-role column)
+    const defaultDurationField = meta.columnMappings.find(m => m.role === 'duration')?.fieldName
+      ?? meta.columnMappings.find(m => m.role === 'duration')?.csvHeader;
+
+    // For time-slice data, default to Absolute mode (user wants native time axis)
+    const defaultTimeNormalized = meta.trajectoryFormat === 'time-slice' ? false : INITIAL_CONFIG.timeNormalized;
+
     // Reset to a single background layer with fresh config + filters (clears old layers/plots)
     setLayers([{
       ...createBackgroundLayer(),
       filters: allFilters,
-      config: { ...INITIAL_CONFIG, f1Range, f2Range, f3Range, timeSeriesFrequencyRange: tsFreqRange },
+      config: {
+        ...INITIAL_CONFIG,
+        f1Range, f2Range, f3Range,
+        timeSeriesFrequencyRange: tsFreqRange,
+        trajectoryDurationField: defaultDurationField,
+        timeNormalized: defaultTimeNormalized,
+      },
     }]);
     setActiveLayerId('bg');
     setLayerCounters({ point: 1, trajectory: 1 });

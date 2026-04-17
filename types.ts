@@ -63,6 +63,9 @@ export interface PlotConfig {
   timeNormalized: boolean;
   showMeanTrajectories: boolean;
   snapMeansToGrid: boolean;
+  /** Field name to use as token duration in absolute-time plots.
+   *  Empty/undefined = fall back to SpeechToken.duration (from the duration-role column). */
+  trajectoryDurationField?: string;
 
   // Trajectory F1/F2 Config
   showIndividualLines: boolean;

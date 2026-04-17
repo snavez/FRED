@@ -27,15 +27,23 @@ const getTokenDuration = (t: SpeechToken): number => {
   return 0;
 };
 
-/** Token duration for absolute-time plotting in the chosen x-axis unit (ms or seconds). */
-const getTokenDurationInUnit = (t: SpeechToken, useMs: boolean): number => {
+/** Token duration for absolute-time plotting in the chosen x-axis unit (ms or seconds).
+ *  If durationField is provided, reads that field from t.fields (falling back to
+ *  SpeechToken.duration if the field is missing/unparseable). */
+const getTokenDurationInUnit = (t: SpeechToken, useMs: boolean, durationField?: string): number => {
+  // User-selected duration field takes priority for percentage data
+  if (durationField && t.fields[durationField] !== undefined) {
+    const raw = parseFloat(t.fields[durationField]);
+    if (!isNaN(raw) && raw > 0) {
+      if (useMs) return raw > 10 ? raw : raw * 1000;
+      return raw > 10 ? raw / 1000 : raw;
+    }
+  }
   if (useMs) {
     if (t.trajectoryDurationMs && t.trajectoryDurationMs > 0) return t.trajectoryDurationMs;
     const d = getTokenDuration(t);
-    // Heuristic: large values are already ms, small are seconds
     return d > 10 ? d : d * 1000;
   }
-  // seconds
   if (t.trajectoryDurationMs && t.trajectoryDurationMs > 0) return t.trajectoryDurationMs / 1000;
   const d = getTokenDuration(t);
   return d > 10 ? d / 1000 : d;
@@ -194,7 +202,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
         // For each token, absoluteTime = (trajectoryTime / 100) * tokenDurationInUnit.
         const absSet = new Set<number>();
         tks.forEach(t => {
-          const dur = getTokenDurationInUnit(t, useMs);
+          const dur = getTokenDurationInUnit(t, useMs, config.trajectoryDurationField);
           if (dur <= 0) return;
           t.trajectory.forEach(p => {
             if (p.time < onset || p.time > offset) return;
@@ -206,7 +214,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
         const f2Sums = new Array(gridTimes.length).fill(0);
         const counts = new Array(gridTimes.length).fill(0);
         tks.forEach(t => {
-          const dur = getTokenDurationInUnit(t, useMs);
+          const dur = getTokenDurationInUnit(t, useMs, config.trajectoryDurationField);
           if (dur <= 0) return;
           const sts = speakerStats?.[t.speaker || '__all__'];
           gridTimes.forEach((gt, idx) => {
@@ -236,7 +244,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     
     ctx.scale(scale, scale);
 
-    const xMax = config.timeNormalized ? 100 : Math.max(0.1, ...data.map(t => getTokenDurationInUnit(t, useMs)));
+    const xMax = config.timeNormalized ? 100 : Math.max(0.1, ...data.map(t => getTokenDurationInUnit(t, useMs, config.trajectoryDurationField)));
     // Use specific frequency range for time series
     const [yMin, yMax] = config.timeSeriesFrequencyRange || [0, 4000];
 
@@ -375,7 +383,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
                   return;
               }
 
-              const tVal = config.timeNormalized ? p.time : (p.time / 100) * getTokenDurationInUnit(token, useMs);
+              const tVal = config.timeNormalized ? p.time : (p.time / 100) * getTokenDurationInUnit(token, useMs, config.trajectoryDurationField);
               const x = mapX(tVal);
               const y = mapY(val);
 
@@ -831,7 +839,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     const width = containerRef.current.clientWidth;
     const height = containerRef.current.clientHeight;
 
-    const xMax = config.timeNormalized ? 100 : Math.max(0.1, ...data.map(t => getTokenDurationInUnit(t, useMs)));
+    const xMax = config.timeNormalized ? 100 : Math.max(0.1, ...data.map(t => getTokenDurationInUnit(t, useMs, config.trajectoryDurationField)));
     const [yMin, yMax] = config.timeSeriesFrequencyRange || [0, 4000]; 
     const mapX = (val: number) => (val / xMax) * width;
     const mapY = (val: number) => height - ((val - yMin) / (yMax - yMin)) * height;
@@ -842,7 +850,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     for (const t of data) {
        const mid = t.trajectory[Math.floor(t.trajectory.length / 2)];
        if (!mid) continue;
-       const tVal = config.timeNormalized ? mid.time : (mid.time / 100) * getTokenDurationInUnit(t, useMs);
+       const tVal = config.timeNormalized ? mid.time : (mid.time / 100) * getTokenDurationInUnit(t, useMs, config.trajectoryDurationField);
        const px = mapX(tVal);
        
        if (Math.abs(px - x) < 20) {

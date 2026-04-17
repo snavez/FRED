@@ -172,6 +172,32 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     return options.length > 0 ? options : [{ label: 'Duration', value: 'duration' }];
   }, [datasetMeta]);
 
+  /** Duration-field candidates for the absolute-mode selector: duration-role columns first,
+   *  then numeric data fields whose names look duration-like ("dur", "length", "time"). */
+  const durationFieldOptions = useMemo(() => {
+    const options: { label: string; value: string }[] = [];
+    if (!datasetMeta) return options;
+    const seen = new Set<string>();
+    for (const m of datasetMeta.columnMappings) {
+      if (m.role !== 'duration') continue;
+      const key = m.fieldName || m.csvHeader;
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      options.push({ label: key, value: key });
+    }
+    for (const m of datasetMeta.columnMappings) {
+      if (m.role !== 'field' || !m.isDataField) continue;
+      const key = m.fieldName || m.csvHeader;
+      if (!key || seen.has(key)) continue;
+      const lower = key.toLowerCase();
+      if (lower.includes('dur') || lower.includes('length')) {
+        seen.add(key);
+        options.push({ label: key, value: key });
+      }
+    }
+    return options;
+  }, [datasetMeta]);
+
   // Set of formant value keys present in the dataset (for conditional time-point selectors)
   const formantValueKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -1123,6 +1149,23 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         >Absolute</button>
                       </div>
                     </div>
+                    {/* Duration field selector — only when absolute mode AND percentage-format data
+                        (time-slice data uses its own native extraction range). */}
+                    {currentConfig.timeNormalized === false && datasetMeta?.trajectoryFormat === 'percentage' && durationFieldOptions.length > 0 && (
+                      <div className="flex flex-col justify-center">
+                        <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Duration from</span>
+                        <select
+                          className="p-0.5 border rounded text-[10px]"
+                          value={currentConfig.trajectoryDurationField ?? ''}
+                          onChange={e => handleConfig('trajectoryDurationField', e.target.value || undefined)}
+                          title="Choose which field provides token durations for absolute time-series scaling"
+                        >
+                          {durationFieldOptions.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                     </>
                   )}
                   {activeTab === 'duration' && (
