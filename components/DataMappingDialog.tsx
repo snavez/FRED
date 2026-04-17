@@ -91,10 +91,11 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
       const tpColIdx = headers.indexOf(tpMapping.csvHeader);
       const tidColIdx = tokenMapping ? headers.indexOf(tokenMapping.csvHeader) : -1;
       if (tpColIdx >= 0) {
-        // Scan the full rawText if available — we need representative per-token counts,
-        // not the ≤5 sample rows the dialog normally sees.
-        const uniqueTPs = new Set<number>();
-        const perToken = new Map<string, number>();
+        // Gather per-token timepoint sequences from the full rawText. Intervals are then
+        // computed WITHIN each token — not across the union — because in long format
+        // absolute times differ per token, which would pollute the interval distribution.
+        const tokenSequences = new Map<string, number[]>();
+        let maxTP = -Infinity;
         if (rawText) {
           const firstComma = rawText.indexOf(',');
           const firstTab = rawText.indexOf('\t');
@@ -104,28 +105,56 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
           for (let i = start; i < lines.length; i++) {
             const line = lines[i];
             if (!line.trim()) continue;
-            // Lightweight split (no quote handling here — ok for numeric counting)
             const cols = line.split(delim);
             const tp = parseFloat(cols[tpColIdx]);
-            if (!isNaN(tp)) uniqueTPs.add(tp);
-            if (tidColIdx >= 0) {
-              const tid = (cols[tidColIdx] || '').trim();
-              if (tid) perToken.set(tid, (perToken.get(tid) ?? 0) + 1);
-            }
+            if (isNaN(tp)) continue;
+            if (tp > maxTP) maxTP = tp;
+            const tid = tidColIdx >= 0 ? (cols[tidColIdx] || '').trim() : '__all__';
+            if (!tokenSequences.has(tid)) tokenSequences.set(tid, []);
+            tokenSequences.get(tid)!.push(tp);
           }
         } else {
-          // Fallback to sample rows
           for (const row of sampleData) {
             const tp = parseFloat(row[tpColIdx]);
-            if (!isNaN(tp)) uniqueTPs.add(tp);
+            if (isNaN(tp)) continue;
+            if (tp > maxTP) maxTP = tp;
+            const tid = tidColIdx >= 0 ? (row[tidColIdx] || '').trim() : '__all__';
+            if (!tokenSequences.has(tid)) tokenSequences.set(tid, []);
+            tokenSequences.get(tid)!.push(tp);
           }
         }
-        // pointsPerFormant reflects the MAX measurements in a single token (real spectral density),
-        // falling back to unique timepoints seen across all tokens.
-        const maxPerToken = perToken.size > 0 ? Math.max(...perToken.values()) : uniqueTPs.size;
-        const byGroup = new Map<string, number[]>([['__long__', Array.from(uniqueTPs)]]);
-        const det = detectTrajectoryFormat(byGroup);
-        return { ...det, pointsPerFormant: Math.max(det.pointsPerFormant, maxPerToken) };
+        // Collect intervals within each token
+        const allIntervals: number[] = [];
+        let maxPerToken = 0;
+        for (const seq of tokenSequences.values()) {
+          seq.sort((a, b) => a - b);
+          if (seq.length > maxPerToken) maxPerToken = seq.length;
+          for (let i = 1; i < seq.length; i++) allIntervals.push(seq[i] - seq[i - 1]);
+        }
+        // Build a spacing description from the interval distribution
+        const format: 'percentage' | 'time-slice' | 'single-point' = maxTP > 100
+          ? 'time-slice'
+          : (maxPerToken >= TRAJECTORY_MIN_POINTS ? 'percentage' : 'single-point');
+        // Unit: fraction 0-1 → undefined, percent 1-100 → undefined, ms > 100 → ms heuristic
+        const unit: 'ms' | 'sec' | undefined = format === 'time-slice'
+          ? (maxTP > 10 ? 'ms' : 'sec')
+          : undefined;
+        // Spacing: compute median interval and uniformity tolerance (10%)
+        let spacing: { kind: 'uniform' | 'listed' | 'irregular'; medianInterval?: number; values?: number[] };
+        const uniqueTPs = Array.from(new Set(allIntervals.length === 0
+          ? Array.from(tokenSequences.values()).flat()
+          : []))
+          .sort((a, b) => a - b);
+        if (allIntervals.length === 0) {
+          spacing = { kind: 'listed', values: uniqueTPs };
+        } else {
+          const sorted = [...allIntervals].sort((a, b) => a - b);
+          const mid = Math.floor(sorted.length / 2);
+          const med = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+          const uniform = med > 0 && allIntervals.every(d => Math.abs(d - med) / med <= 0.10);
+          spacing = uniform ? { kind: 'uniform', medianInterval: med } : { kind: 'irregular' };
+        }
+        return { format, unit, spacing, pointsPerFormant: maxPerToken, uniqueTimepoints: uniqueTPs };
       }
     }
     // Wide format: derive from column headers / mappings
@@ -585,10 +614,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
         {showTrajectoryPanel && (
           <div className="mx-5 mt-3 mb-1 p-3 bg-emerald-50/60 border border-emerald-200 rounded-lg shrink-0">
             <div className="text-xs text-emerald-900 leading-relaxed space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="font-bold">Trajectory data detected —</span>
-                <span>{trajectoryDetection.pointsPerFormant} measurements per formant</span>
-              </div>
+              <div className="font-bold">Trajectory data detected</div>
 
               <div className="flex items-center gap-3 flex-wrap">
                 <span className="font-semibold">These samples are separated by:</span>
