@@ -129,6 +129,29 @@ const FORMANT_BARE_REGEX = /^(f[12345])$/i;
 const FORMANT_NAMED_REGEX = /^(f[12345])_([a-z][a-z0-9]*)(?:_(.+))?$/i;
 const PITCH_REGEX = /^f0_(\d+)(?:%|ms|sec)?(?:_(.+))?$/i;
 
+/**
+ * Spectral-moment columns for consonant analysis: COG/SD/skew/kurt (plus common
+ * synonyms), optionally with a numeric timepoint suffix — e.g. COG_20%, sd_50,
+ * kurtosis_80%, SpecDiff, centroid. Detected columns get a dedicated spectral role
+ * (spectral_cog / spectral_sd / spectral_skew / spectral_kurt) so the Spectral
+ * Moments tab can find them regardless of naming; users can also assign these roles
+ * manually in the mapping dialog. The explicit roles double as protection from the
+ * generic "mostly numeric, many unique" ignore heuristic.
+ */
+const SPECTRAL_NAME_TO_ROLE: Record<string, ColumnRole> = {
+  cog: 'spectral_cog', centroid: 'spectral_cog',
+  centerofgravity: 'spectral_cog', centreofgravity: 'spectral_cog',
+  sd: 'spectral_sd', stdev: 'spectral_sd', std: 'spectral_sd', sdev: 'spectral_sd',
+  spread: 'spectral_sd', specdiff: 'spectral_sd', diffusion: 'spectral_sd',
+  skew: 'spectral_skew', skewness: 'spectral_skew',
+  kurt: 'spectral_kurt', kurtosis: 'spectral_kurt',
+};
+const SPECTRAL_HEADER_REGEX = /^([a-z]+)(?:_\d+(?:\.\d+)?\s*%?)?(?:_smooth)?$/;
+const detectSpectralRole = (lowerHeader: string): ColumnRole | null => {
+  const match = lowerHeader.match(SPECTRAL_HEADER_REGEX);
+  return match ? (SPECTRAL_NAME_TO_ROLE[match[1]] ?? null) : null;
+};
+
 /** Names that should populate SpeechToken.xmin (now detected as regular fields) */
 const XMIN_NAMES = new Set(['xmin', 'onset', 'start', 'start_time']);
 
@@ -385,6 +408,19 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
         timePoint: namedTargetIndex[target],
         formantTarget: target,
         isSmooth, formantLabel, isDataField: true,
+      };
+    }
+
+    // 2c-bis. Spectral-moment columns (COG/SD/skew/kurt and synonyms, with or without
+    // a timepoint suffix) → dedicated spectral role feeding the Spectral Moments tab.
+    const spectralRole = detectSpectralRole(lower);
+    if (spectralRole) {
+      return {
+        csvHeader: header,
+        role: spectralRole,
+        fieldName: header,
+        showInSidebar: false,
+        isDataField: true,
       };
     }
 
@@ -775,8 +811,12 @@ export const parseWithMappings = (
         break;
       case 'pitch':
       case 'field':
-        if (m.fieldName) {
-          fieldMappings.push({ colIdx, fieldName: m.fieldName });
+      case 'spectral_cog':
+      case 'spectral_sd':
+      case 'spectral_skew':
+      case 'spectral_kurt':
+        if (m.fieldName || m.csvHeader) {
+          fieldMappings.push({ colIdx, fieldName: m.fieldName || m.csvHeader });
         }
         break;
       // 'ignore' — skip

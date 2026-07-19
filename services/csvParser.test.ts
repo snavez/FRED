@@ -71,6 +71,70 @@ describe('autoDetectMappings', () => {
     expect(mappings.find(m => m.csvHeader === 'onset')?.isDataField).toBe(true);
   });
 
+  it('detects spectral-moment columns and assigns dedicated spectral roles', () => {
+    const headers = ['COG_20%', 'SD_50%', 'skew_80%', 'kurtosis_50%'];
+    // 25 rows of distinct numeric values would trip the high-cardinality ignore
+    // heuristic for generic numeric columns; spectral moments must survive it.
+    const sampleRows = Array.from({ length: 25 }, (_, i) => [
+      `${500 + i}`, `${300 + i}`, `${1 + i * 0.1}`, `${100 + i}`,
+    ]);
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    const expectedRoles: Record<string, string> = {
+      'COG_20%': 'spectral_cog',
+      'SD_50%': 'spectral_sd',
+      'skew_80%': 'spectral_skew',
+      'kurtosis_50%': 'spectral_kurt',
+    };
+    for (const h of headers) {
+      const m = mappings.find(x => x.csvHeader === h)!;
+      expect(m.role).toBe(expectedRoles[h]);
+      expect(m.isDataField).toBe(true);
+      expect(m.showInSidebar).toBe(false);
+      expect(m.fieldName).toBe(h);
+    }
+  });
+
+  it('detects spectral synonyms with and without timepoint suffixes', () => {
+    const headers = ['centroid', 'SpecDiff', 'Skewness_50', 'spread_20%'];
+    const sampleRows = Array.from({ length: 25 }, (_, i) => [
+      `${5000 + i}`, `${800 + i}`, `${-1 - i * 0.1}`, `${900 + i}`,
+    ]);
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    expect(mappings.find(m => m.csvHeader === 'centroid')?.role).toBe('spectral_cog');
+    expect(mappings.find(m => m.csvHeader === 'SpecDiff')?.role).toBe('spectral_sd');
+    expect(mappings.find(m => m.csvHeader === 'Skewness_50')?.role).toBe('spectral_skew');
+    expect(mappings.find(m => m.csvHeader === 'spread_20%')?.role).toBe('spectral_sd');
+  });
+
+  it('does not misclassify non-moment columns as spectral', () => {
+    const headers = ['winms_20%', 'word', 'sda_50'];
+    const sampleRows = Array.from({ length: 25 }, (_, i) => [
+      `${20 + (i % 3)}`, `word${i}`, `${i}`,
+    ]);
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    for (const h of headers) {
+      const role = mappings.find(m => m.csvHeader === h)!.role;
+      expect(['spectral_cog', 'spectral_sd', 'spectral_skew', 'spectral_kurt']).not.toContain(role);
+    }
+  });
+
+  it('stores spectral-role columns in token.fields when parsing', () => {
+    const csv = 'speaker,sibilance_centre,COG_50%\nspk1,4200,5100\n';
+    const mappings: ColumnMapping[] = [
+      { csvHeader: 'speaker', role: 'speaker' },
+      // Custom-named column manually mapped to Spectral COG in the dialog
+      { csvHeader: 'sibilance_centre', role: 'spectral_cog', fieldName: 'sibilance_centre', isDataField: true },
+      { csvHeader: 'COG_50%', role: 'spectral_cog', fieldName: 'COG_50%', isDataField: true },
+    ];
+    const { tokens } = parseWithMappings(csv, mappings, 'test.csv');
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].fields['sibilance_centre']).toBe('4200');
+    expect(tokens[0].fields['COG_50%']).toBe('5100');
+  });
+
   it('detects formant columns via regex', () => {
     const headers = ['f1_50', 'F2_00_smooth'];
     const sampleRows = [['400', '1500']];

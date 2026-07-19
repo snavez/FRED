@@ -10,6 +10,12 @@ import {
   TRAJECTORY_MIN_POINTS,
 } from '../services/csvParser';
 import { X, Upload, FileText, RefreshCw, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import {
+  isSpectralRole,
+  parseSpectralTimePointSuffix,
+  spectralColumnBaseName,
+  spectralRoleTimePoint,
+} from '../utils/spectralMoments';
 
 interface DataMappingDialogProps {
   isOpen: boolean;
@@ -47,6 +53,10 @@ const ROLE_OPTIONS: { value: ColumnRole, label: string }[] = [
   { value: 'formant', label: 'Formant Value' },
   { value: 'duration', label: 'Duration Value' },
   { value: 'pitch', label: 'Pitch Value' },
+  { value: 'spectral_cog', label: 'Spectral COG' },
+  { value: 'spectral_sd', label: 'Spectral Diffusion (SD)' },
+  { value: 'spectral_skew', label: 'Spectral Skew' },
+  { value: 'spectral_kurt', label: 'Spectral Kurtosis' },
   { value: 'token_id', label: 'Token ID (groups rows)' },
   { value: 'timepoint', label: 'Timepoint' },
   { value: 'field', label: 'Custom Field' },
@@ -267,29 +277,56 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
    * Order: speaker/file_id/token_id/timepoint → filter fields → trajectory groups
    *        → named-target formants → data fields → ignored.
    */
-  type GroupRow = { kind: 'group'; groupKey: string; formant: string; members: { m: ColumnMapping; idx: number }[] };
+  type GroupRow = {
+    kind: 'group'; groupKey: string; label: string; badge: string;
+    isSpectral: boolean; members: { m: ColumnMapping; idx: number }[];
+  };
   type SingleRow = { kind: 'single'; m: ColumnMapping; idx: number };
   type DisplayRow = GroupRow | SingleRow;
   const displayRows: DisplayRow[] = useMemo(() => {
     const byFormant = new Map<string, { m: ColumnMapping; idx: number }[]>();
+    // Spectral trajectory families: same role + same base name, numeric timepoint
+    // suffixes (COG_20%, COG_50%, COG_80% → one "Spectral COG trajectory" group).
+    const bySpectral = new Map<string, { m: ColumnMapping; idx: number }[]>();
     const singles: { m: ColumnMapping; idx: number }[] = [];
     mappings.forEach((m, idx) => {
       if (m.role === 'formant' && !m.formantTarget && m.formant && m.timePoint !== undefined) {
         if (!byFormant.has(m.formant)) byFormant.set(m.formant, []);
         byFormant.get(m.formant)!.push({ m, idx });
+      } else if (isSpectralRole(m.role) && parseSpectralTimePointSuffix(m.csvHeader) !== null) {
+        const key = `${m.role}:${spectralColumnBaseName(m.csvHeader).toLowerCase()}`;
+        if (!bySpectral.has(key)) bySpectral.set(key, []);
+        bySpectral.get(key)!.push({ m, idx });
       } else {
         singles.push({ m, idx });
       }
     });
+    const roleLabel = (role: ColumnRole): string =>
+      ROLE_OPTIONS.find(o => o.value === role)?.label ?? role;
     const groups: GroupRow[] = [];
     for (const [formant, members] of byFormant) {
       if (members.length >= TRAJECTORY_MIN_POINTS) {
-        groups.push({ kind: 'group', groupKey: formant, formant, members });
+        groups.push({
+          kind: 'group', groupKey: formant, label: `${formant.toUpperCase()} trajectory`,
+          badge: 'Formant · Data', isSpectral: false, members,
+        });
       } else {
         members.forEach(mem => singles.push(mem));
       }
     }
-    groups.sort((a, b) => a.formant.localeCompare(b.formant));
+    // Spectral families are short (typically 20/50/80%), so any repeated base name
+    // with ≥2 timepoints rolls up — unlike formant trajectories (TRAJECTORY_MIN_POINTS).
+    for (const [key, members] of bySpectral) {
+      if (members.length >= 2) {
+        groups.push({
+          kind: 'group', groupKey: key, label: `${roleLabel(members[0].m.role)} trajectory`,
+          badge: 'Spectral · Data', isSpectral: true, members,
+        });
+      } else {
+        members.forEach(mem => singles.push(mem));
+      }
+    }
+    groups.sort((a, b) => a.label.localeCompare(b.label));
 
     const priority = (m: ColumnMapping): number => {
       if (m.role === 'speaker') return 0;
@@ -300,6 +337,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
       if (m.role === 'formant' && m.formantTarget) return 6;
       if (m.role === 'duration') return 7;
       if (m.role === 'pitch') return 8;
+      if (isSpectralRole(m.role)) return 9;
       if (m.role === 'field' && m.isDataField === true) return 9;
       if (m.role === 'ignore') return 10;
       return 11;
@@ -327,10 +365,12 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
     });
   };
 
-  const describeGroup = (members: { m: ColumnMapping; idx: number }[]): string => {
-    const tps = members.map(mem => mem.m.timePoint as number).sort((a, b) => a - b);
+  const describeGroup = (members: { m: ColumnMapping; idx: number }[], isSpectral: boolean): string => {
+    const tps = members
+      .map(mem => isSpectral ? spectralRoleTimePoint(mem.m.csvHeader) : mem.m.timePoint as number)
+      .sort((a, b) => a - b);
     const min = tps[0], max = tps[tps.length - 1];
-    const unitLabel = effectiveFormat === 'time-slice' ? (effectiveUnit ?? '') : '%';
+    const unitLabel = !isSpectral && effectiveFormat === 'time-slice' ? (effectiveUnit ?? '') : '%';
     return `${members.length} columns · ${min}${unitLabel} to ${max}${unitLabel}`;
   };
 
@@ -366,7 +406,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
               onChange={e => {
                 const role = e.target.value as ColumnRole;
                 const updates: Partial<ColumnMapping> = { role };
-                if (role === 'formant' || role === 'duration' || role === 'pitch') {
+                if (role === 'formant' || role === 'duration' || role === 'pitch' || isSpectralRole(role)) {
                   updates.isDataField = true;
                   updates.showInSidebar = false;
                 } else if (role === 'ignore' || role === 'token_id' || role === 'timepoint') {
@@ -376,7 +416,7 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                   updates.isDataField = false;
                   updates.showInSidebar = true;
                 }
-                if (role === 'field' || role === 'pitch') {
+                if (role === 'field' || role === 'pitch' || isSpectralRole(role)) {
                   updates.fieldName = m.fieldName || m.csvHeader;
                 }
                 if (role === 'formant') {
@@ -443,6 +483,12 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
               {reservedClashes.has(idx) && (
                 <span className="text-[10px] text-red-600 font-bold whitespace-nowrap">Reserved name — please rename</span>
               )}
+            </div>
+          )}
+          {isSpectralRole(m.role) && (
+            <div className="flex items-center gap-1" title="Timepoint parsed from the column name; bare names default to the 50% midpoint">
+              <span className="text-[11px] text-slate-400">@</span>
+              <span className="text-xs bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded font-bold">{spectralRoleTimePoint(m.csvHeader)}%</span>
             </div>
           )}
           {(m.role === 'speaker' || m.role === 'file_id' || m.role === 'duration' || m.role === 'token_id' || m.role === 'timepoint') && (
@@ -802,13 +848,13 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                           >
                             {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                             <span className="font-mono text-xs font-bold text-slate-700">
-                              {row.formant.toUpperCase()} trajectory
+                              {row.label}
                             </span>
                             <span className="text-[11px] text-slate-500">
-                              {describeGroup(row.members)}
+                              {describeGroup(row.members, row.isSpectral)}
                             </span>
                             <span className="ml-auto text-[11px] px-2 py-0.5 bg-amber-100 text-amber-700 rounded font-bold">
-                              Formant · Data
+                              {row.badge}
                             </span>
                           </button>
                         </td>

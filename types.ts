@@ -130,6 +130,17 @@ export interface PlotConfig {
   distHistOverlap: 'stacked' | 'overlaid';   // multi-color bar mode (default: 'stacked')
   distHistOpacity: number;                   // bar opacity for overlaid mode (default: 0.6)
 
+  // Spectral Moments Config (consonant analysis: COG/SD/skew/kurt)
+  spectralMode: 'scatter' | 'box' | 'timeline' | 'density';
+  spectralXMoment: string;                   // moment key for scatter X (e.g. 'COG')
+  spectralYMoment: string;                   // moment key for scatter Y (e.g. 'SD')
+  spectralMoment: string;                    // single moment for box/trajectory/density
+  spectralTimePoint: number;                 // timepoint for single-value modes (default 50)
+  spectralViolin: boolean;                   // box mode: false = box, true = violin
+  spectralShowIndividual: boolean;           // timeline: faded per-token lines
+  spectralXRange: [number, number];          // scatter X range ([0,0] = auto)
+  spectralYRange: [number, number];          // scatter/box/density value range ([0,0] = auto)
+
   // Table Panel Config
   tableMode: 'browse' | 'summary' | 'analysis';
   tableFormantTime: number;                  // shared time dropdown for Browse mode (default: 50)
@@ -301,6 +312,7 @@ export type ColumnRole =
   | 'speaker' | 'file_id'
   | 'duration' | 'formant' | 'pitch'
   | 'token_id' | 'timepoint'
+  | 'spectral_cog' | 'spectral_sd' | 'spectral_skew' | 'spectral_kurt'
   | 'field' | 'ignore';
 
 export interface ColumnMapping {

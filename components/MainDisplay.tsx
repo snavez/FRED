@@ -2,10 +2,12 @@
 import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, VariableType, StyleOverrides, Layer, DatasetMeta, NormalizationMethod } from '../types';
 import { SpeakerStatsMap, getRangeStep, getAxisLabel, computeNormalizedRange } from '../utils/normalization';
+import { discoverSpectralMoments, isSpectralRole } from '../utils/spectralMoments';
 import CanvasPlot from './CanvasPlot';
 import TrajectoryTimeSeries from './TrajectoryTimeSeries';
 import TrajectoryF1F2 from './TrajectoryF1F2';
 import DurationPlot from './DurationPlot';
+import SpectralMomentsPlot from './SpectralMomentsPlot';
 import PhonemeDistributionPlot from './PhonemeDistributionPlot';
 import Scatter3DPlot from './Scatter3DPlot';
 import TablePanel from './TablePanel';
@@ -101,7 +103,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   toggleLayerVisibility, renameLayer, setActiveConfig,
   globalReferences = [], updateStyleOverride, datasetMeta, speakerStats, data
 }) => {
-  const [activeTab, setActiveTab] = useState<'vowel' | '3d' | 'traj_f1f2' | 'traj_series' | 'duration' | 'dist' | 'table'>('vowel');
+  const [activeTab, setActiveTab] = useState<'vowel' | '3d' | 'traj_f1f2' | 'traj_series' | 'spectral' | 'duration' | 'dist' | 'table'>('vowel');
   const [showRefDropdown, setShowRefDropdown] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -152,8 +154,9 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
         seen.add(key);
         options.push({ label: prettyLabel(key, datasetMeta), value: key });
       }
-      // Include data fields (isDataField: true) — these are numeric plot values
-      if (m.role === 'field' && m.isDataField) {
+      // Include data fields (isDataField: true) and spectral-moment columns —
+      // these are numeric plot values
+      if ((m.role === 'field' && m.isDataField) || isSpectralRole(m.role)) {
         seen.add(key);
         options.push({ label: prettyLabel(key, datasetMeta), value: key });
       }
@@ -245,6 +248,9 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   // Active layer data — used by non-F1/F2 plots so sidebar filters affect all views
   const activeData = layerData[activeLayerId] || [];
 
+  // Spectral moments present in the active dataset (COG/SD/skew/kurt + timepoints).
+  const spectralMeta = useMemo(() => discoverSpectralMoments(activeData, datasetMeta), [activeData, datasetMeta]);
+
   const handleConfig = (key: keyof PlotConfig, val: any) => {
       updateLayerConfig(activeLayerId, key, val);
   };
@@ -318,6 +324,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     // Line type: trajectory mode on F1/F2, or dedicated trajectory tabs
     if (((activeTab === 'vowel' && isTrajectory) || activeTab === 'traj_f1f2' || activeTab === 'traj_series') && currentConfig.lineTypeBy !== 'none') active.lineType = true;
     if ((activeTab === 'dist' || activeTab === 'duration') && currentConfig.textureBy !== 'none') active.texture = true;
+    // Spectral Moments: colour is the only grouping channel (all four modes).
+    if (activeTab === 'spectral' && currentConfig.colorBy !== 'none') active.color = true;
     return active;
   };
 
@@ -334,6 +342,202 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
         ))}
       </select>
     </div>
+  );
+
+  /** Shared visual-encoding controls (Colour, Shape/Line Type, Lines/Means/Labels/Points/
+   *  Ellipses) used by both the F1/F2 plot and the Spectral Moments scatter, so the two share
+   *  an identical layout. Operates on the active layer via currentConfig/handleConfig. */
+  const renderEncodingControls = () => (
+    <>
+      {/* Colour */}
+      {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
+
+      {/* Shape / Line Type */}
+      {currentConfig.plotType === 'trajectory'
+        ? renderVariableSelect('Line Type', currentConfig.lineTypeBy, val => handleConfig('lineTypeBy', val))
+        : renderVariableSelect('Shape', currentConfig.shapeBy, val => handleConfig('shapeBy', val))
+      }
+
+      <div className="w-px h-6 bg-slate-300"></div>
+
+      {/* ── Trajectory mode: Lines / Means / Labels ── */}
+      {currentConfig.plotType === 'trajectory' && (
+        <>
+          <div className="flex items-center gap-1.5">
+            <span className="font-bold">Lines</span>
+            <div className="flex flex-col gap-0.5">
+              <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                <span>Width</span>
+                <input type="range" min="0.5" max="5" step="0.5" title="Individual Line Width" value={currentConfig.trajectoryLineWidth ?? 1} onChange={e => handleConfig('trajectoryLineWidth', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
+              </div>
+              <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                <span>Opacity</span>
+                <input type="range" min="0" max="1" step="0.02" title="Individual Line Opacity (0 = hidden)" value={opacityToSlider(currentConfig.trajectoryLineOpacity ?? 0.5)} onChange={e => handleConfig('trajectoryLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
+              </div>
+            </div>
+          </div>
+
+          <div className="w-px h-6 bg-slate-200"></div>
+
+          <div className="flex items-center gap-1.5">
+            <label className="flex items-center gap-1 cursor-pointer" title="Show Mean Trajectories">
+              <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showMeanTrajectories} onChange={e => handleConfig('showMeanTrajectories', e.target.checked)} />
+              <span className="font-bold">Means</span>
+            </label>
+            {currentConfig.showMeanTrajectories && (
+              <div className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                  <span>Width</span>
+                  <input type="range" min="1" max="10" step="0.5" title="Mean Line Width" value={currentConfig.meanTrajectoryWidth ?? 3} onChange={e => handleConfig('meanTrajectoryWidth', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
+                </div>
+                <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                  <span>Opacity</span>
+                  <input type="range" min="0" max="1" step="0.02" title="Mean Line Opacity" value={opacityToSlider(currentConfig.meanTrajectoryOpacity ?? 1)} onChange={e => handleConfig('meanTrajectoryOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
+                </div>
+                <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                  <span>Pts</span>
+                  <input type="range" min="0" max="10" step="0.5" title="Mean Point Size (0 = hidden)" value={currentConfig.meanTrajectoryPointSize ?? 4} onChange={e => handleConfig('meanTrajectoryPointSize', parseFloat(e.target.value))} className="w-12 h-1 accent-slate-600" />
+                </div>
+                <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                  <span>Arrow</span>
+                  <input type="range" min="0" max="8" step="0.5" title="Arrow Size (0 = hidden)" value={currentConfig.meanTrajectoryArrowSize ?? 3} onChange={e => handleConfig('meanTrajectoryArrowSize', parseFloat(e.target.value))} className="w-12 h-1 accent-slate-600" />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="w-px h-6 bg-slate-200"></div>
+
+          <div className="flex items-center gap-1.5">
+            <label className="flex items-center gap-1 cursor-pointer" title="Show Trajectory Labels">
+              <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showTrajectoryLabels} onChange={e => handleConfig('showTrajectoryLabels', e.target.checked)} />
+              <span className="font-bold">Labels</span>
+            </label>
+            {currentConfig.showTrajectoryLabels && (
+              <>
+                <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                  <span>Size</span>
+                  <input type="range" min="8" max="72" step="1" title="Label Size" value={currentConfig.meanTrajectoryLabelSize || 12} onChange={e => handleConfig('meanTrajectoryLabelSize', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
+                </div>
+                {(currentConfig.colorBy !== 'none' || currentConfig.lineTypeBy !== 'none') && (
+                  <select className="text-[9px] p-0.5 border rounded" title="Label Source" value={currentConfig.meanLabelType} onChange={e => handleConfig('meanLabelType', e.target.value)}>
+                    <option value="auto">Auto</option>
+                    <option value="color">Color Key</option>
+                    <option value="shape">Line Key</option>
+                    <option value="both">Both</option>
+                  </select>
+                )}
+              </>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ── Point mode: Pts / Ellip / Means / Labels ── */}
+      {currentConfig.plotType !== 'trajectory' && (
+        <>
+          <div className="flex items-center gap-1.5">
+            <label className="flex items-center gap-1 cursor-pointer" title="Show Individual Points">
+              <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showPoints} onChange={e => handleConfig('showPoints', e.target.checked)} />
+              <span className="font-bold">Pts</span>
+            </label>
+            {currentConfig.showPoints && (
+              <div className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                  <span>Size</span>
+                  <input type="range" min="1" max="10" title="Point Size" value={currentConfig.pointSize} onChange={e => handleConfig('pointSize', parseInt(e.target.value))} className="w-16 h-1 accent-slate-600" />
+                </div>
+                <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                  <span>Opacity</span>
+                  <input type="range" min="0" max="1" step="0.02" title="Point Opacity" value={opacityToSlider(currentConfig.pointOpacity)} onChange={e => handleConfig('pointOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="w-px h-6 bg-slate-200"></div>
+
+          <div className="flex items-center gap-1.5 border-r border-slate-200 pr-2">
+            <label className="flex items-center gap-1 cursor-pointer" title="Show Standard Deviation Ellipses">
+              <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showEllipses} onChange={e => handleConfig('showEllipses', e.target.checked)} />
+              <span className="font-bold">Ellip</span>
+            </label>
+            {currentConfig.showEllipses && (
+              <div className="flex items-center gap-1.5">
+                <select className="p-0.5 border rounded text-[10px]" value={currentConfig.ellipseSD} onChange={e => handleConfig('ellipseSD', parseFloat(e.target.value))} title="Standard Deviations">
+                  {[1, 1.5, 2, 2.5, 3].map(sd => <option key={sd} value={sd}>{sd}σ</option>)}
+                </select>
+                <div className="flex flex-col gap-0.5">
+                  <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                    <span>Width</span>
+                    <input type="range" min="0.5" max="8" step="0.5" title="Line Width" value={currentConfig.ellipseLineWidth} onChange={e => handleConfig('ellipseLineWidth', parseFloat(e.target.value))} className="w-10 h-1 accent-slate-600" />
+                  </div>
+                  <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                    <span>Line</span>
+                    <input type="range" min="0" max="1" step="0.02" title="Line Opacity" value={opacityToSlider(currentConfig.ellipseLineOpacity)} onChange={e => handleConfig('ellipseLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-10 h-1 accent-slate-600" />
+                  </div>
+                  <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                    <span>Fill</span>
+                    <input type="range" min="0" max="1" step="0.02" title="Fill Opacity" value={opacityToSlider(currentConfig.ellipseFillOpacity)} onChange={e => handleConfig('ellipseFillOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-10 h-1 accent-slate-600" />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <label className="flex items-center gap-1 cursor-pointer" title="Show Means">
+              <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showCentroids} onChange={e => handleConfig('showCentroids', e.target.checked)} />
+              <span className="font-bold">Means</span>
+            </label>
+            {currentConfig.showCentroids && (
+              <>
+                <div className="flex flex-col gap-0.5">
+                  <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                    <span>Size</span>
+                    <input type="range" min="4" max="20" title="Centroid Size" value={currentConfig.centroidSize} onChange={e => handleConfig('centroidSize', parseInt(e.target.value))} className="w-16 h-1 accent-slate-600" />
+                  </div>
+                  <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                    <span>Opacity</span>
+                    <input type="range" min="0" max="1" step="0.02" title="Centroid Opacity" value={opacityToSlider(currentConfig.centroidOpacity)} onChange={e => handleConfig('centroidOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
+                  </div>
+                </div>
+                {(currentConfig.colorBy !== 'none' || currentConfig.shapeBy !== 'none') && (
+                  <select className="text-[9px] p-0.5 border rounded" title="Label Source" value={currentConfig.meanLabelType} onChange={e => handleConfig('meanLabelType', e.target.value)}>
+                    <option value="auto">Auto</option>
+                    <option value="color">Color Key</option>
+                    <option value="shape">Shape Key</option>
+                    <option value="both">Both</option>
+                  </select>
+                )}
+              </>
+            )}
+          </div>
+
+          <label className="flex items-center gap-1 cursor-pointer ml-1">
+            <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.labelAsCentroid} onChange={e => handleConfig('labelAsCentroid', e.target.checked)} />
+            <span className="font-bold">Labels</span>
+          </label>
+          {currentConfig.labelAsCentroid && (
+            <div className="flex items-center gap-1 text-[9px] text-slate-500">
+              <span>Size</span>
+              <input type="range" min="8" max="72" title="Text Size" value={currentConfig.labelSize} onChange={e => handleConfig('labelSize', parseInt(e.target.value))} className="w-10 h-1 accent-slate-600" />
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Snap means to grid — only for time-slice data (redundant for percentage). */}
+      {currentConfig.plotType === 'trajectory' && currentConfig.showMeanTrajectories && datasetMeta?.trajectoryFormat === 'time-slice' && (
+        <>
+          <div className="w-px h-6 bg-slate-200"></div>
+          <label className="flex items-center gap-1 cursor-pointer" title="Snap mean points to RANGE intervals (fewer, evenly-spaced points)">
+            <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.snapMeansToGrid} onChange={e => handleConfig('snapMeansToGrid', e.target.checked)} />
+            <span className="font-bold">Snap</span>
+          </label>
+        </>
+      )}
+    </>
   );
 
   const startRename = (layerId: string, currentName: string) => {
@@ -357,6 +561,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             <button onClick={() => setActiveTab('vowel')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'vowel' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Grid size={16} /><span>F1/F2</span></button>
             <button onClick={() => setActiveTab('3d')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === '3d' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Box size={16} /><span>3D F1/F2/F3</span></button>
             <button onClick={() => setActiveTab('traj_series')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'traj_series' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><LineChart size={16} /><span>Time Series</span></button>
+            <button onClick={() => setActiveTab('spectral')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'spectral' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Waves size={16} /><span>Spectral Moments</span></button>
             <button onClick={() => setActiveTab('duration')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'duration' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><BarChart2 size={16} /><span>Data Summaries</span></button>
             <button onClick={() => setActiveTab('dist')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'dist' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><PieChart size={16} /><span>Distributions</span></button>
             <button onClick={() => setActiveTab('table')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'table' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Table size={16} /><span>Table</span></button>
@@ -470,8 +675,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                          ))}
                        </div>
 
-                       {/* Add Layer Button — only on F1/F2 tab */}
-                       {activeTab === 'vowel' && (
+                       {/* Add Layer Button — F1/F2 and Spectral Moments (both multi-layer canvases) */}
+                       {(activeTab === 'vowel' || activeTab === 'spectral') && (
                        <div className="mt-2 pt-2 border-t border-slate-100">
                          <div className="relative">
                            <button
@@ -508,8 +713,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                  </div>
                )}
 
-               {/* Point Info Field Selector (F1/F2 & 3D) */}
-               {(activeTab === 'vowel' || activeTab === '3d') && (
+               {/* Point Info Field Selector (F1/F2, 3D & Spectral Moments) */}
+               {(activeTab === 'vowel' || activeTab === '3d' || activeTab === 'spectral') && (
                  <div className="relative">
                    <button
                      onClick={() => setShowPointInfoSettings(!showPointInfoSettings)}
@@ -814,207 +1019,9 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   )}
                 </div>
 
-                {/* ── Row 2: Visual Controls ── */}
+                {/* ── Row 2: Visual Controls (shared with Spectral Moments scatter) ── */}
                 <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2 min-h-[40px]">
-                  {/* Colour */}
-                  {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
-
-                  {/* Shape / Line Type */}
-                  {currentConfig.plotType === 'trajectory'
-                    ? renderVariableSelect('Line Type', currentConfig.lineTypeBy, val => handleConfig('lineTypeBy', val))
-                    : renderVariableSelect('Shape', currentConfig.shapeBy, val => handleConfig('shapeBy', val))
-                  }
-
-                  <div className="w-px h-6 bg-slate-300"></div>
-
-                  {/* ── Trajectory mode: Lines / Means / Labels ── */}
-                  {currentConfig.plotType === 'trajectory' && (
-                    <>
-                      {/* Lines */}
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-bold">Lines</span>
-                        <div className="flex flex-col gap-0.5">
-                          <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                            <span>Width</span>
-                            <input type="range" min="0.5" max="5" step="0.5" title="Individual Line Width" value={currentConfig.trajectoryLineWidth ?? 1} onChange={e => handleConfig('trajectoryLineWidth', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
-                          </div>
-                          <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                            <span>Opacity</span>
-                            <input type="range" min="0" max="1" step="0.02" title="Individual Line Opacity (0 = hidden)" value={opacityToSlider(currentConfig.trajectoryLineOpacity ?? 0.5)} onChange={e => handleConfig('trajectoryLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="w-px h-6 bg-slate-200"></div>
-
-                      {/* Means */}
-                      <div className="flex items-center gap-1.5">
-                        <label className="flex items-center gap-1 cursor-pointer" title="Show Mean Trajectories">
-                          <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showMeanTrajectories} onChange={e => handleConfig('showMeanTrajectories', e.target.checked)} />
-                          <span className="font-bold">Means</span>
-                        </label>
-                        {currentConfig.showMeanTrajectories && (
-                          <div className="flex flex-col gap-0.5">
-                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                              <span>Width</span>
-                              <input type="range" min="1" max="10" step="0.5" title="Mean Line Width" value={currentConfig.meanTrajectoryWidth ?? 3} onChange={e => handleConfig('meanTrajectoryWidth', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
-                            </div>
-                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                              <span>Opacity</span>
-                              <input type="range" min="0" max="1" step="0.02" title="Mean Line Opacity" value={opacityToSlider(currentConfig.meanTrajectoryOpacity ?? 1)} onChange={e => handleConfig('meanTrajectoryOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
-                            </div>
-                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                              <span>Pts</span>
-                              <input type="range" min="0" max="10" step="0.5" title="Mean Point Size (0 = hidden)" value={currentConfig.meanTrajectoryPointSize ?? 4} onChange={e => handleConfig('meanTrajectoryPointSize', parseFloat(e.target.value))} className="w-12 h-1 accent-slate-600" />
-                            </div>
-                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                              <span>Arrow</span>
-                              <input type="range" min="0" max="8" step="0.5" title="Arrow Size (0 = hidden)" value={currentConfig.meanTrajectoryArrowSize ?? 3} onChange={e => handleConfig('meanTrajectoryArrowSize', parseFloat(e.target.value))} className="w-12 h-1 accent-slate-600" />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="w-px h-6 bg-slate-200"></div>
-
-                      {/* Labels */}
-                      <div className="flex items-center gap-1.5">
-                        <label className="flex items-center gap-1 cursor-pointer" title="Show Trajectory Labels">
-                          <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showTrajectoryLabels} onChange={e => handleConfig('showTrajectoryLabels', e.target.checked)} />
-                          <span className="font-bold">Labels</span>
-                        </label>
-                        {currentConfig.showTrajectoryLabels && (
-                          <>
-                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                              <span>Size</span>
-                              <input type="range" min="8" max="72" step="1" title="Label Size" value={currentConfig.meanTrajectoryLabelSize || 12} onChange={e => handleConfig('meanTrajectoryLabelSize', parseFloat(e.target.value))} className="w-16 h-1 accent-slate-600" />
-                            </div>
-                            {(currentConfig.colorBy !== 'none' || currentConfig.lineTypeBy !== 'none') && (
-                              <select className="text-[9px] p-0.5 border rounded" title="Label Source" value={currentConfig.meanLabelType} onChange={e => handleConfig('meanLabelType', e.target.value)}>
-                                <option value="auto">Auto</option>
-                                <option value="color">Color Key</option>
-                                <option value="shape">Line Key</option>
-                                <option value="both">Both</option>
-                              </select>
-                            )}
-                          </>
-                        )}
-                      </div>
-
-                      {/* Snap means to grid — only useful for time-slice data where tokens
-                          have different native grids. For percentage data, all tokens share
-                          the same grid already, so snap is redundant. */}
-                      {currentConfig.showMeanTrajectories && datasetMeta?.trajectoryFormat === 'time-slice' && (
-                        <>
-                          <div className="w-px h-6 bg-slate-200"></div>
-                          <label className="flex items-center gap-1 cursor-pointer" title="Snap mean points to RANGE intervals (fewer, evenly-spaced points)">
-                            <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.snapMeansToGrid} onChange={e => handleConfig('snapMeansToGrid', e.target.checked)} />
-                            <span className="font-bold">Snap</span>
-                          </label>
-                        </>
-                      )}
-                    </>
-                  )}
-
-                  {/* ── Point mode: Pts / Ellip / Means / Labels ── */}
-                  {currentConfig.plotType !== 'trajectory' && (
-                    <>
-                      {/* Points */}
-                      <div className="flex items-center gap-1.5">
-                        <label className="flex items-center gap-1 cursor-pointer" title="Show Individual Points">
-                          <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showPoints} onChange={e => handleConfig('showPoints', e.target.checked)} />
-                          <span className="font-bold">Pts</span>
-                        </label>
-                        {currentConfig.showPoints && (
-                          <div className="flex flex-col gap-0.5">
-                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                              <span>Size</span>
-                              <input type="range" min="1" max="10" title="Point Size" value={currentConfig.pointSize} onChange={e => handleConfig('pointSize', parseInt(e.target.value))} className="w-16 h-1 accent-slate-600" />
-                            </div>
-                            <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                              <span>Opacity</span>
-                              <input type="range" min="0" max="1" step="0.02" title="Point Opacity" value={opacityToSlider(currentConfig.pointOpacity)} onChange={e => handleConfig('pointOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="w-px h-6 bg-slate-200"></div>
-
-                      {/* Ellipses */}
-                      <div className="flex items-center gap-1.5 border-r border-slate-200 pr-2">
-                        <label className="flex items-center gap-1 cursor-pointer" title="Show Standard Deviation Ellipses">
-                          <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showEllipses} onChange={e => handleConfig('showEllipses', e.target.checked)} />
-                          <span className="font-bold">Ellip</span>
-                        </label>
-                        {currentConfig.showEllipses && (
-                          <div className="flex items-center gap-1.5">
-                            <select className="p-0.5 border rounded text-[10px]" value={currentConfig.ellipseSD} onChange={e => handleConfig('ellipseSD', parseFloat(e.target.value))} title="Standard Deviations">
-                              {[1, 1.5, 2, 2.5, 3].map(sd => <option key={sd} value={sd}>{sd}σ</option>)}
-                            </select>
-                            <div className="flex flex-col gap-0.5">
-                              <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                <span>Width</span>
-                                <input type="range" min="0.5" max="8" step="0.5" title="Line Width" value={currentConfig.ellipseLineWidth} onChange={e => handleConfig('ellipseLineWidth', parseFloat(e.target.value))} className="w-10 h-1 accent-slate-600" />
-                              </div>
-                              <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                <span>Line</span>
-                                <input type="range" min="0" max="1" step="0.02" title="Line Opacity" value={opacityToSlider(currentConfig.ellipseLineOpacity)} onChange={e => handleConfig('ellipseLineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-10 h-1 accent-slate-600" />
-                              </div>
-                              <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                <span>Fill</span>
-                                <input type="range" min="0" max="1" step="0.02" title="Fill Opacity" value={opacityToSlider(currentConfig.ellipseFillOpacity)} onChange={e => handleConfig('ellipseFillOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-10 h-1 accent-slate-600" />
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Means (point mode) */}
-                      <div className="flex items-center gap-1.5">
-                        <label className="flex items-center gap-1 cursor-pointer" title="Show Means">
-                          <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showCentroids} onChange={e => handleConfig('showCentroids', e.target.checked)} />
-                          <span className="font-bold">Means</span>
-                        </label>
-                        {currentConfig.showCentroids && (
-                          <>
-                            <div className="flex flex-col gap-0.5">
-                              <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                <span>Size</span>
-                                <input type="range" min="4" max="20" title="Centroid Size" value={currentConfig.centroidSize} onChange={e => handleConfig('centroidSize', parseInt(e.target.value))} className="w-16 h-1 accent-slate-600" />
-                              </div>
-                              <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                <span>Opacity</span>
-                                <input type="range" min="0" max="1" step="0.02" title="Centroid Opacity" value={opacityToSlider(currentConfig.centroidOpacity)} onChange={e => handleConfig('centroidOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-16 h-1 accent-slate-600" />
-                              </div>
-                            </div>
-
-                            {/* Mean Label Source dropdown */}
-                            {(currentConfig.colorBy !== 'none' || currentConfig.shapeBy !== 'none') && (
-                              <select className="text-[9px] p-0.5 border rounded" title="Label Source" value={currentConfig.meanLabelType} onChange={e => handleConfig('meanLabelType', e.target.value)}>
-                                <option value="auto">Auto</option>
-                                <option value="color">Color Key</option>
-                                <option value="shape">Shape Key</option>
-                                <option value="both">Both</option>
-                              </select>
-                            )}
-                          </>
-                        )}
-                      </div>
-
-                      {/* Labels (point mode) */}
-                      <label className="flex items-center gap-1 cursor-pointer ml-1">
-                        <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.labelAsCentroid} onChange={e => handleConfig('labelAsCentroid', e.target.checked)} />
-                        <span className="font-bold">Labels</span>
-                      </label>
-                      {currentConfig.labelAsCentroid && (
-                        <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                          <span>Size</span>
-                          <input type="range" min="8" max="72" title="Text Size" value={currentConfig.labelSize} onChange={e => handleConfig('labelSize', parseInt(e.target.value))} className="w-10 h-1 accent-slate-600" />
-                        </div>
-                      )}
-                    </>
-                  )}
+                  {renderEncodingControls()}
                 </div>
               </div>
             )}
@@ -1029,6 +1036,85 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 </div>
 
                 <div className="h-6 w-px bg-slate-300"></div>
+
+                {/* ── Spectral Moments Row 1: Mode / Axes / Type / Moment / Time ── */}
+                {activeTab === 'spectral' && !spectralMeta.available && (
+                  <span className="text-xs text-slate-400 italic">
+                    No spectral-moment columns (COG / SD / skew / kurt) detected in this dataset.
+                  </span>
+                )}
+                {activeTab === 'spectral' && spectralMeta.available && (
+                  <>
+                    {/* Mode (active layer). In scatter mode all visible layers overlay. */}
+                    <div className="flex items-center gap-2">
+                      <label className="font-semibold text-slate-600">Mode:</label>
+                      <select
+                        className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
+                        value={currentConfig.spectralMode}
+                        onChange={e => handleConfig('spectralMode', e.target.value)}
+                      >
+                        <option value="scatter">Moment scatter (layers)</option>
+                        <option value="box">Distribution (box / violin)</option>
+                        <option value="timeline">Timeline (moment × position)</option>
+                        <option value="density">Density</option>
+                      </select>
+                    </div>
+
+                    {/* Scatter: shared axes (background layer) + per-layer type */}
+                    {currentConfig.spectralMode === 'scatter' && (
+                      <>
+                        <HelpTooltip helpMode={helpMode} text="Axes define the shared coordinate space for all layers, so they are controlled by the background layer.">
+                        <div className="flex items-center gap-2">
+                          <label className="font-semibold text-slate-600">Axes X:</label>
+                          <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={bgConfig.spectralXMoment} onChange={e => updateLayerConfig(layers[0].id, 'spectralXMoment', e.target.value)}>
+                            {spectralMeta.moments.map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
+                          </select>
+                          <label className="font-semibold text-slate-600">Y:</label>
+                          <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={bgConfig.spectralYMoment} onChange={e => updateLayerConfig(layers[0].id, 'spectralYMoment', e.target.value)}>
+                            {spectralMeta.moments.map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
+                          </select>
+                        </div>
+                        </HelpTooltip>
+
+                        <div className="w-px h-6 bg-slate-200"></div>
+
+                        {/* Active-layer type: points vs moment-space trajectory */}
+                        <HelpTooltip helpMode={helpMode} text={`Editing layer "${activeLayer.name}". Point = one marker per token at the chosen timepoint. Trajectory = a path through moment space across all timepoints (e.g. a stop release from onset to offset).`}>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase">{activeLayer.name}</span>
+                          <label className="font-semibold text-slate-600">Type:</label>
+                          <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={currentConfig.plotType} onChange={e => handleConfig('plotType', e.target.value)}>
+                            <option value="point">Points</option>
+                            <option value="trajectory">Trajectory</option>
+                          </select>
+                        </div>
+                        </HelpTooltip>
+                      </>
+                    )}
+
+                    {/* Box / timeline / density: single moment picker (active layer) */}
+                    {currentConfig.spectralMode !== 'scatter' && (
+                      <div className="flex items-center gap-2">
+                        <label className="font-semibold text-slate-600">Moment:</label>
+                        <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={currentConfig.spectralMoment} onChange={e => handleConfig('spectralMoment', e.target.value)}>
+                          {spectralMeta.moments.map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Timepoint — hidden for timeline (spans all) and for scatter trajectory layers */}
+                    {currentConfig.spectralMode !== 'timeline'
+                      && !(currentConfig.spectralMode === 'scatter' && currentConfig.plotType === 'trajectory')
+                      && spectralMeta.timePoints.length > 1 && (
+                      <div className="flex items-center gap-2">
+                        <label className="font-semibold text-slate-600">Time:</label>
+                        <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={currentConfig.spectralTimePoint} onChange={e => handleConfig('spectralTimePoint', parseFloat(e.target.value))}>
+                          {spectralMeta.timePoints.map(tp => <option key={tp} value={tp}>{tp}%</option>)}
+                        </select>
+                      </div>
+                    )}
+                  </>
+                )}
 
                 {/* Mode toggle (dist tab) */}
                 {activeTab === 'dist' && (
@@ -1085,7 +1171,55 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 )}
 
                 {/* Range Controls */}
+                {(activeTab !== 'spectral' || spectralMeta.available) && (
                 <div className="flex items-center gap-2 border-r border-slate-300 pr-4 mr-2">
+                  {/* Spectral scatter: manual axis ranges on the shared (background) coordinate
+                      space, labelled by the current axis moments. 0 / 0 = auto-fit. */}
+                  {activeTab === 'spectral' && currentConfig.spectralMode === 'scatter' && (
+                    <>
+                      <div className="flex flex-col" title="X axis range — set both to 0 for auto-fit">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">X · {bgConfig.spectralXMoment}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-bold text-slate-500">Min</span>
+                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={bgConfig.spectralXRange[0]} onChange={e => updateLayerConfig(layers[0].id, 'spectralXRange', [parseFloat(e.target.value) || 0, bgConfig.spectralXRange[1]])} />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-bold text-slate-500">Max</span>
+                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={bgConfig.spectralXRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'spectralXRange', [bgConfig.spectralXRange[0], parseFloat(e.target.value) || 0])} />
+                        </div>
+                      </div>
+                      <div className="flex flex-col" title="Y axis range — set both to 0 for auto-fit">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">Y · {bgConfig.spectralYMoment}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-bold text-slate-500">Min</span>
+                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={bgConfig.spectralYRange[0]} onChange={e => updateLayerConfig(layers[0].id, 'spectralYRange', [parseFloat(e.target.value) || 0, bgConfig.spectralYRange[1]])} />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-bold text-slate-500">Max</span>
+                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={bgConfig.spectralYRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'spectralYRange', [bgConfig.spectralYRange[0], parseFloat(e.target.value) || 0])} />
+                        </div>
+                      </div>
+                    </>
+                  )}
+                  {/* Spectral summary modes: value-axis range for the active layer.
+                      Density plots the moment on X; box/timeline plot it on Y. */}
+                  {activeTab === 'spectral' && currentConfig.spectralMode !== 'scatter' && (() => {
+                    const rangeKey = currentConfig.spectralMode === 'density' ? 'spectralXRange' : 'spectralYRange';
+                    const range = currentConfig[rangeKey] || [0, 0];
+                    return (
+                      <div className="flex flex-col" title="Value axis range — set both to 0 for auto-fit">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">{currentConfig.spectralMoment}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-bold text-slate-500">Min</span>
+                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={range[0]} onChange={e => handleConfig(rangeKey, [parseFloat(e.target.value) || 0, range[1]])} />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-bold text-slate-500">Max</span>
+                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={range[1]} onChange={e => handleConfig(rangeKey, [range[0], parseFloat(e.target.value) || 0])} />
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {activeTab === 'traj_f1f2' && (
                     <>
                       <div className="flex flex-col">
@@ -1201,6 +1335,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     </div>
                   )}
                 </div>
+                )}
 
                 {/* Duration Row 1 continued: Whiskers, Centre, Order */}
                 {activeTab === 'duration' && (
@@ -1264,12 +1399,12 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   </>
                 )}
 
-                {/* General Visualization Controls (non-duration, non-traj_series, non-dist) */}
-                {activeTab !== 'duration' && activeTab !== 'traj_series' && activeTab !== 'dist' && (
+                {/* General Visualization Controls (spectral has its own Row 2 for these) */}
+                {activeTab !== 'duration' && activeTab !== 'traj_series' && activeTab !== 'dist' && activeTab !== 'spectral' && (
                   renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))
                 )}
 
-                {activeTab !== 'traj_series' && activeTab !== 'duration' && activeTab !== 'dist' && (
+                {activeTab !== 'traj_series' && activeTab !== 'duration' && activeTab !== 'dist' && activeTab !== 'spectral' && (
                   <div className="h-6 w-px bg-slate-300"></div>
                 )}
 
@@ -1669,6 +1804,34 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   </div>
                 </div>
                 </HelpTooltip>
+              </div>
+            )}
+
+            {/* ── Spectral Moments: Row 2 — Visual Controls (Colour onwards, matching F1/F2) ── */}
+            {activeTab === 'spectral' && spectralMeta.available && (
+              <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2 min-h-[40px]">
+                {/* Scatter: full F1/F2-style encoding controls (Colour, Shape/Line Type,
+                    Lines/Means/Labels/Points/Ellipses) — identical layout to the F1/F2 tab. */}
+                {currentConfig.spectralMode === 'scatter' && renderEncodingControls()}
+
+                {/* Summary modes: colour + a mode-specific toggle */}
+                {currentConfig.spectralMode !== 'scatter' && (
+                  <>
+                    {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
+                    {currentConfig.spectralMode === 'box' && (
+                      <label className="flex items-center gap-1 cursor-pointer ml-1" title="Draw violins instead of boxes">
+                        <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.spectralViolin} onChange={e => handleConfig('spectralViolin', e.target.checked)} />
+                        <span className="text-[10px] font-bold text-slate-600">Violin</span>
+                      </label>
+                    )}
+                    {currentConfig.spectralMode === 'timeline' && (
+                      <label className="flex items-center gap-1 cursor-pointer ml-1" title="Show faded individual-token lines behind the means">
+                        <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.spectralShowIndividual} onChange={e => handleConfig('spectralShowIndividual', e.target.checked)} />
+                        <span className="text-[10px] font-bold text-slate-600">Individual lines</span>
+                      </label>
+                    )}
+                  </>
+                )}
               </div>
             )}
 
@@ -2074,6 +2237,16 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             styleOverrides={styleOverrides}
             speakerStats={speakerStats}
             datasetMeta={datasetMeta}
+          />
+        )}
+        {activeTab === 'spectral' && (
+          <SpectralMomentsPlot
+            ref={plotRef}
+            layers={layers}
+            layerData={layerData}
+            activeLayerId={activeLayerId}
+            datasetMeta={datasetMeta}
+            onLegendClick={handleLegendClick}
           />
         )}
         {activeTab === 'duration' && (
