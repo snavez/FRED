@@ -84,6 +84,9 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hoveredToken, setHoveredToken] = useState<SpeechToken | null>(null);
+  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+  const isDragging = useRef(false);
+  const lastMouse = useRef({ x: 0, y: 0 });
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   const toggleSection = (key: string) => setCollapsedSections(prev => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
   const isSectionCollapsed = (key: string) => collapsedSections.has(key);
@@ -241,14 +244,22 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     // Explicit background fill to prevent transparency
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
-    
+
     ctx.scale(scale, scale);
 
     const xMax = config.timeNormalized ? 100 : Math.max(0.1, ...data.map(t => getTokenDurationInUnit(t, useMs, config.trajectoryDurationField)));
     // Use specific frequency range for time series
     const [yMin, yMax] = config.timeSeriesFrequencyRange || [0, 4000];
 
-    // Reserve right margin for labels when enabled (screen only; export handles its own margins)
+    // The live view maps into an inset area, framed like the F1/F2 and Spectral tabs:
+    // ticks and axis titles outside the frame, and a right-hand gutter under the
+    // legend. Export maps the full plot — it lays out its own margins and labels.
+    const isExport = !!exportConfig;
+    const area = isExport
+      ? { x: 0, y: 0, w: width, h: height }
+      : { x: 82, y: 24, w: width - 82 - 248, h: height - 24 - 56 };
+
+    // Reserve a strip inside the frame for mean-trajectory labels (screen only)
     let labelMargin = 0;
     if (!exportConfig && config.showTrajectoryLabels && config.showMeanTrajectories) {
       // Estimate widest label using character count × font size (robust — avoids measureText font-loading issues)
@@ -259,18 +270,17 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
       const labelPadX = (8 * drawScale) / scale;
       labelMargin = charW * maxChars + labelPadX + 8; // text + gap + breathing room
     }
-    const plotWidth = width - labelMargin;
-    const mapX = (val: number) => (val / xMax) * plotWidth;
-    const mapY = (val: number) => height - ((val - yMin) / (yMax - yMin)) * height;
+    const effW = area.w - labelMargin;
+    const mapX = (val: number) => area.x + (val / xMax) * effW;
+    const mapY = (val: number) => area.y + area.h - ((val - yMin) / (yMax - yMin)) * area.h;
 
     // Grid & Ticks
     ctx.strokeStyle = '#f1f5f9';
     ctx.lineWidth = (1 * drawScale) / scale;
     ctx.fillStyle = '#64748b'; // Tick color
-    
+
     // Balanced Sizing
-    const isExport = !!exportConfig;
-    const tickBaseSize = exportConfig ? exportConfig.tickLabelSize : (drawScale > 1.5 ? 28 : 14);
+    const tickBaseSize = exportConfig ? exportConfig.tickLabelSize : 11;
     const tickFontSize = (tickBaseSize * drawScale) / scale;
     ctx.font = `bold ${tickFontSize}px Inter`;
 
@@ -284,21 +294,22 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     const rangeSpan = yMax - yMin;
     const step = rangeSpan > 2000 ? 500 : 250;
     const startTick = Math.ceil(yMin / step) * step;
+    const tickOffset = (6 * drawScale) / scale;
 
     for (let f = startTick; f <= yMax; f += step) {
       const y = mapY(f);
       // Grid line
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
-      
+      ctx.beginPath(); ctx.moveTo(area.x, y); ctx.lineTo(area.x + area.w, y); ctx.stroke();
+
       // Tick label
       if (isExport) {
           ctx.textAlign = 'right';
           ctx.textBaseline = 'middle';
           ctx.fillText(`${f}`, -(10 * drawScale) + yTickOffsetX, y + yTickOffsetY);
       } else {
-          ctx.textAlign = 'left';
-          ctx.textBaseline = 'bottom';
-          ctx.fillText(`${f}`, (6*drawScale), y - (2*drawScale));
+          ctx.textAlign = 'right';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`${f}`, area.x - tickOffset, y);
       }
     }
 
@@ -312,7 +323,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     for (let t = 0; t <= xMax; t += timeStep) {
       const x = mapX(t);
       // Grid line
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, area.y); ctx.lineTo(x, area.y + area.h); ctx.stroke();
 
       // Tick label (always shown, even on screen)
       const label = formatXTick(t);
@@ -323,9 +334,34 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
       } else {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
-        ctx.fillText(label, x, height + (4 * drawScale));
+        ctx.fillText(label, x, area.y + area.h + tickOffset);
       }
     }
+    ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+
+    // Axis titles (live view only — export draws its own, sized from ExportConfig)
+    if (!isExport) {
+      const normUnit = config.normalization === 'lobanov' ? 'z-score'
+        : config.normalization === 'nearey1' ? 'log'
+        : config.normalization === 'bark' ? 'Bark'
+        : config.normalization === 'erb' ? 'ERB'
+        : config.normalization === 'mel' ? 'Mel' : 'Hz';
+      const xTitle = config.timeNormalized ? 'Normalised time (%)' : (useMs ? 'Time (ms)' : 'Time (s)');
+      ctx.fillStyle = '#334155';
+      ctx.font = `600 ${(13 * drawScale) / scale}px Inter, sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      ctx.fillText(xTitle, area.x + area.w / 2, area.y + area.h + (40 * drawScale) / scale);
+      ctx.save();
+      ctx.translate(area.x - (52 * drawScale) / scale, area.y + area.h / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText(`Frequency (${normUnit})`, 0, 0);
+      ctx.restore();
+      ctx.textAlign = 'start';
+    }
+
+    // Clip data to the frame in the live view, so lines outside the ranges do not
+    // spill into the margins. Export lays its margins out around the plot instead.
+    if (!isExport) { ctx.save(); ctx.beginPath(); ctx.rect(area.x, area.y, area.w, area.h); ctx.clip(); }
 
     // Draw Lines
     const dynamicOpacity = Math.max(0.01, config.trajectoryLineOpacity);
@@ -499,10 +535,10 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
           labelEntries.push({ x: mapX(lastPt.x), y: mapY(lastPt.y), label: labelText, color });
         });
 
-        // Bounded anti-overlap: push labels apart while keeping them within canvas
+        // Bounded anti-overlap: push labels apart while keeping them within the frame
         const halfLbl = labelSize * 0.6;
-        const yTop = halfLbl;
-        const yBot = height - halfLbl;
+        const yTop = area.y + halfLbl;
+        const yBot = area.y + area.h - halfLbl;
         const availableH = yBot - yTop;
         const idealSpacing = labelSize * 1.3;
         // If labels can't all fit at ideal spacing, reduce spacing to fit
@@ -543,7 +579,19 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
         });
       }
     }
-  }, [data, config, colorMap, meanTrajectories, lineStyles]);
+
+    // Frame, matching the F1/F2 and Spectral tabs. Drawn last so data never covers it.
+    if (!isExport) ctx.restore(); // end data clip
+    const borderW = (1.5 * drawScale) / scale;
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = borderW;
+    ctx.setLineDash([]);
+    if (isExport) {
+      ctx.strokeRect(borderW / 2, borderW / 2, width - borderW, height - borderW);
+    } else {
+      ctx.strokeRect(area.x, area.y, area.w, area.h);
+    }
+  }, [data, config, colorMap, meanTrajectories, lineStyles, sortedKeys, useMs, speakerStats, datasetMeta]);
 
   const drawLegend = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
       let curY = y;
@@ -805,7 +853,24 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     };
   });
 
-  // ... (rest unchanged)
+  // Wheel zoom towards the cursor (non-passive so preventDefault works)
+  useEffect(() => {
+    const canvas = canvasRef.current; if (!canvas) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      const factor = e.deltaY > 0 ? 0.92 : 1.08;
+      setTransform(t => {
+        const ns = Math.max(0.2, Math.min(20, t.scale * factor));
+        const r = ns / t.scale;
+        return { x: mx - r * (mx - t.x), y: my - r * (my - t.y), scale: ns };
+      });
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, []);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !containerRef.current) return;
@@ -824,28 +889,51 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     if (ctx) {
         ctx.save();
         ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-        renderPlot(ctx, width, height, 1, 1);
+        ctx.translate(transform.x, transform.y);
+        renderPlot(ctx, width, height, transform.scale, 1);
         ctx.restore();
     }
-  }, [data, config, renderPlot]);
+  }, [data, config, renderPlot, transform]);
 
-  // ... Interaction handlers unchanged
-  const handleMouseDown = (e: React.MouseEvent) => {};
+  const handleMouseDown = (e: React.MouseEvent) => {
+    isDragging.current = true;
+    lastMouse.current = { x: e.clientX, y: e.clientY };
+  };
+  const handleMouseUp = () => { isDragging.current = false; };
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (isDragging.current) {
+      const dx = e.clientX - lastMouse.current.x;
+      const dy = e.clientY - lastMouse.current.y;
+      lastMouse.current = { x: e.clientX, y: e.clientY };
+      setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
+      setHoveredToken(null);
+      return;
+    }
     if (!containerRef.current || !canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
-    const x = (e.clientX - rect.left) * (canvasRef.current.width / rect.width / window.devicePixelRatio);
-    const y = (e.clientY - rect.top) * (canvasRef.current.height / rect.height / window.devicePixelRatio);
-    const width = containerRef.current.clientWidth;
-    const height = containerRef.current.clientHeight;
+    // Inverse-transform into plot space, then use the same area mapping as the renderer
+    const x = (e.clientX - rect.left - transform.x) / transform.scale;
+    const y = (e.clientY - rect.top - transform.y) / transform.scale;
+    const width = rect.width;
+    const height = rect.height;
+    const area = { x: 82, y: 24, w: width - 82 - 248, h: height - 24 - 56 };
 
     const xMax = config.timeNormalized ? 100 : Math.max(0.1, ...data.map(t => getTokenDurationInUnit(t, useMs, config.trajectoryDurationField)));
-    const [yMin, yMax] = config.timeSeriesFrequencyRange || [0, 4000]; 
-    const mapX = (val: number) => (val / xMax) * width;
-    const mapY = (val: number) => height - ((val - yMin) / (yMax - yMin)) * height;
+    const [yMin, yMax] = config.timeSeriesFrequencyRange || [0, 4000];
+    // Mirror the renderer's label strip so hover positions match drawn positions
+    let labelMargin = 0;
+    if (config.showTrajectoryLabels && config.showMeanTrajectories) {
+      const lblFontSize = config.meanTrajectoryLabelSize || 12;
+      const keys = config.colorBy !== 'none' ? sortedKeys : ['All'];
+      const maxChars = Math.max(...keys.map(k => k.length), 1);
+      labelMargin = lblFontSize * 0.62 * maxChars + 16;
+    }
+    const effW = area.w - labelMargin;
+    const mapX = (val: number) => area.x + (val / xMax) * effW;
+    const mapY = (val: number) => area.y + area.h - ((val - yMin) / (yMax - yMin)) * area.h;
 
     let closest = null;
-    let minDist = 15;
+    let minDist = 15 / transform.scale;
 
     for (const t of data) {
        const mid = t.trajectory[Math.floor(t.trajectory.length / 2)];
@@ -853,7 +941,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
        const tVal = config.timeNormalized ? mid.time : (mid.time / 100) * getTokenDurationInUnit(t, useMs, config.trajectoryDurationField);
        const px = mapX(tVal);
        
-       if (Math.abs(px - x) < 20) {
+       if (Math.abs(px - x) < 20 / transform.scale) {
            const normMH = (config.normalization || 'hz') as NormalizationMethod;
            const stsH = speakerStats?.[t.speaker || '__all__'];
            const f1 = normalizeFormant(config.useSmoothing ? (mid.f1_smooth ?? mid.f1) : mid.f1, 'f1', normMH, stsH);
@@ -893,7 +981,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
   };
 
   return (
-    <div ref={containerRef} className="w-full h-full p-8 relative">
+    <div ref={containerRef} className="w-full h-full relative">
        {/* Tooltip ... */}
        {hoveredToken && (
         <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-16 top-16 border border-slate-700 backdrop-blur-md space-y-1.5 min-w-[200px]">
@@ -909,8 +997,8 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
         </div>
       )}
 
-      {/* Screen Legend (Same as previous) */}
-      <div className="absolute top-4 right-4 bg-white/95 backdrop-blur p-3 rounded-xl border border-slate-200 text-xs shadow-xl flex flex-col space-y-3 max-h-[85%] overflow-y-auto w-56 pointer-events-auto">
+      {/* Screen legend — plain top-right overlay, matching the F1/F2 and Spectral tabs */}
+      <div className="absolute top-4 right-4 text-xs flex flex-col space-y-3 max-h-[85%] overflow-y-auto w-56 z-40 pointer-events-auto">
          <div className="space-y-2 border-b border-slate-100 pb-2">
            <h4 className="text-[10px] font-black uppercase text-slate-400">Frequency ID</h4>
            {config.lineTypeBy === 'none' ? (
@@ -980,12 +1068,20 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
          )}
       </div>
 
-      <canvas 
-        ref={canvasRef} 
+      <canvas
+        ref={canvasRef}
+        onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
-        onMouseLeave={() => setHoveredToken(null)}
-        className="w-full h-full" 
+        onMouseUp={handleMouseUp}
+        onMouseLeave={() => { handleMouseUp(); setHoveredToken(null); }}
+        className="w-full h-full"
+        style={{ cursor: isDragging.current ? 'grabbing' : 'grab' }}
       />
+      <div className="absolute bottom-4 left-4 flex space-x-2">
+        <button onClick={() => setTransform(t => ({ ...t, scale: t.scale * 1.2 }))} className="w-8 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 font-bold">+</button>
+        <button onClick={() => setTransform(t => ({ ...t, scale: t.scale * 0.8 }))} className="w-8 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 font-bold">-</button>
+        <button onClick={() => setTransform({ x: 0, y: 0, scale: 1 })} className="px-3 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 text-[10px] font-bold">RESET VIEW</button>
+      </div>
     </div>
   );
 });

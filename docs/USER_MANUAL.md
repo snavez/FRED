@@ -449,10 +449,10 @@ structure:
 - **Group By** — clusters of bars inside one chart.
 - **Colour** and **Texture By** — the bars in each cluster.
 
-In this example, each diphthong has its own chart, and the bars show the syllable
-position as a percentage:
+In this example, each diphthong has its own chart. In each chart, one coloured bar shows
+the percentage of that diphthong's tokens that have a given syllable mark (0, 1, or 2):
 
-![Counts of syllable position, one chart for each diphthong](images/distributionsB.png)
+![The percentage of tokens with each syllable mark, one chart for each diphthong](images/distributionsB.png)
 
 The **Layout** boxes set the geometry: **Bar width** (0 = automatic), **Group gap**
 (the space between the Group By clusters — it operates only when Group By is set), and
