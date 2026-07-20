@@ -25,6 +25,15 @@ const OUT = resolve('docs/images');
 const PORT = 9223;
 mkdirSync(OUT, { recursive: true });
 
+/**
+ * Hand-made screenshots, curated in docs/images by a human — this script must never
+ * overwrite them. Remove a name from this list to let the script generate it again.
+ * (distributionsA/B are captured manually and have no generator here at all.)
+ */
+const CURATED = new Set([
+  '3d-view', 'data-summaries', 'export-dialog', 'f1f2-ellipses', 'layers-panel', 'time-series',
+]);
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Edge detaches from the process puppeteer spawns, so launch it ourselves with a
@@ -52,6 +61,7 @@ const page = await browser.newPage();
 page.setDefaultTimeout(30000);
 
 const shot = async name => {
+  if (CURATED.has(name)) { console.log(`  – ${name}.png (curated by hand, kept)`); return; }
   await sleep(350);
   await page.screenshot({ path: `${OUT}/${name}.png` });
   console.log(`  ✓ ${name}.png`);
@@ -153,9 +163,7 @@ await clickButton(/^Data Summaries$/);
 await sleep(900);
 await shot('data-summaries');
 
-await clickButton(/^Distributions$/);
-await sleep(900);
-await shot('distributions');
+// Distributions shots (distributionsA/B) are captured by hand — no generator here.
 
 await clickButton(/^Table$/);
 await sleep(700);

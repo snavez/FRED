@@ -432,20 +432,32 @@ duration, but this plot does.
 
 ### Distributions
 
-- **Counts** — a bar chart of the number of tokens in each category.
-- **Distribution** — a histogram of a numeric field.
+This tab has two modes.
 
-![The Distributions plot](images/distributions.png)
+**Distribution** shows a histogram of a numeric field. Set **Colour** to compare groups on
+one axis. In this example, the durations of a short vowel and a long vowel are overlaid:
 
-In Counts mode, four controls set the chart structure:
+![A histogram of duration for a short vowel and a long vowel](images/distributionsA.png)
+
+The **Overlap** control sets how the groups combine (overlaid, stacked, or side by side),
+and **Bins** sets the number of bars.
+
+**Counts** shows the number of tokens in each category. Four controls set the chart
+structure:
 
 - **Plot By** — one small chart for each value of a field.
 - **Group By** — clusters of bars inside one chart.
 - **Colour** and **Texture By** — the bars in each cluster.
 
+In this example, each diphthong has its own chart, and the bars show the syllable
+position as a percentage:
+
+![Counts of syllable position, one chart for each diphthong](images/distributionsB.png)
+
 The **Layout** boxes set the geometry: **Bar width** (0 = automatic), **Group gap**
 (the space between the Group By clusters — it operates only when Group By is set), and
-**Bar gap** (the space between bars inside a cluster).
+**Bar gap** (the space between bars inside a cluster). The **Values** control changes
+between counts and percentages.
 
 ### Table
 
