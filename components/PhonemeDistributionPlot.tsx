@@ -584,8 +584,9 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
               ctx.fillText(label, margin.left - 4 * drawScale, y + 3 * drawScale);
             }
 
-            // Bars
+            // Bars — same layout controls as the single-chart path (W / GG / BG)
             const cfgGroupGap = (config.distGroupGap || 0) * drawScale;
+            const cfgBarWidth = (config.distBarWidth || 0) * drawScale;
             const cfgBarGap = (config.distBarGap || 0) * drawScale;
             const totalGroupGaps = fGroups.length > 1 ? (fGroups.length - 1) * cfgGroupGap : 0;
             const groupW = (chartW - totalGroupGaps) / Math.max(fGroups.length, 1);
@@ -617,7 +618,8 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                 });
 
                 const numPrimary = pKeys.length;
-                const primaryGroupW = (groupW * 0.9) / Math.max(numPrimary, 1);
+                const totalInnerGaps = numPrimary > 1 ? (numPrimary - 1) * cfgBarGap : 0;
+                const primaryGroupW = (groupW * 0.9 - totalInnerGaps) / Math.max(numPrimary, 1);
                 const startX = gx + groupW * 0.05;
 
                 pKeys.forEach((pk, pi) => {
@@ -625,10 +627,10 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                   const sKeys = Object.keys(sMap).sort();
                   const stackTotal = (Object.values(sMap) as number[]).reduce((a, b) => a + b, 0);
                   const referenceTotal = (config.distNormalize && isStacked) ? stackTotal : total;
-                  const pBx = startX + pi * primaryGroupW;
+                  const pBx = startX + pi * (primaryGroupW + cfgBarGap);
 
                   if (isStacked) {
-                    const barW = primaryGroupW * 0.7;
+                    const barW = cfgBarWidth > 0 ? Math.min(cfgBarWidth, primaryGroupW * 0.95) : primaryGroupW * 0.7;
                     const bx = pBx + (primaryGroupW - barW) / 2;
                     let currentY = margin.top + chartH;
                     sKeys.forEach(sk => {
@@ -641,7 +643,8 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                       drawFacetBar(bx, currentY, barW, h, color, tex);
                     });
                   } else {
-                    const barW = (primaryGroupW * 0.9) / Math.max(sKeys.length, 1);
+                    const autoBarW = (primaryGroupW * 0.9) / Math.max(sKeys.length, 1);
+                    const barW = cfgBarWidth > 0 ? Math.min(cfgBarWidth, autoBarW) : autoBarW;
                     const innerStartX = pBx + primaryGroupW * 0.05;
                     sKeys.forEach((sk, si) => {
                       const val = sMap[sk];
@@ -675,7 +678,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                 if (config.distBarDir === 'desc') items.reverse();
 
                 if (isStacked) {
-                  const barW = groupW * 0.6;
+                  const barW = cfgBarWidth > 0 ? Math.min(cfgBarWidth, groupW * 0.95) : groupW * 0.6;
                   const bx = gx + (groupW - barW) / 2;
                   let curY = margin.top + chartH;
                   items.forEach(item => {
@@ -686,7 +689,8 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                   });
                 } else {
                   const innerGaps = items.length > 1 ? (items.length - 1) * cfgBarGap : 0;
-                  const barW = (groupW * 0.9 - innerGaps) / Math.max(items.length, 1);
+                  const autoBarW = (groupW * 0.9 - innerGaps) / Math.max(items.length, 1);
+                  const barW = cfgBarWidth > 0 ? Math.min(cfgBarWidth, autoBarW) : autoBarW;
                   const startX = gx + groupW * 0.05;
                   items.forEach((item, idx) => {
                     const dispVal = isPercentage ? (total > 0 ? (item.val / total * 100) : 0) : item.val;

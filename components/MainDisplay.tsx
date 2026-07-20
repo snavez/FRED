@@ -2103,26 +2103,27 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             {activeTab === 'dist' && currentConfig.distMode !== 'histogram' && (
               <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2 min-h-[40px]">
                 {renderVariableSelect('Plot By', currentConfig.distPlotBy || 'none', v => handleConfig('distPlotBy', v))}
+                {renderVariableSelect('Group By', currentConfig.groupBy, v => handleConfig('groupBy', v))}
                 {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
                 {renderVariableSelect('Texture By', currentConfig.textureBy, v => handleConfig('textureBy', v))}
 
                 <div className="w-px h-6 bg-slate-200"></div>
 
                 {/* Bar Width & Gap Controls */}
-                <HelpTooltip helpMode={helpMode} text="Box width = bar width in pixels (0 = auto). Group Gap = gap between groups in pixels (0 = auto). Box Gap = gap between bars within a group (0 = auto).">
+                <HelpTooltip helpMode={helpMode} text="Bar width = bar width in pixels (0 = auto). Group gap = gap between the Group By clusters (needs Group By set). Bar gap = gap between bars inside a cluster.">
                 <div className="flex flex-col">
                   <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Layout</span>
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1" title="Bar Width (0 = auto)">
-                      <span className="text-[9px] text-slate-500">Box width</span>
+                      <span className="text-[9px] text-slate-500">Bar width</span>
                       <input type="number" min="0" max="100" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distBarWidth || 0} onChange={e => handleConfig('distBarWidth', parseFloat(e.target.value) || 0)} />
                     </div>
-                    <div className="flex items-center gap-1" title="Group Gap">
-                      <span className="text-[9px] text-slate-500">Group Gap</span>
+                    <div className="flex items-center gap-1" title="Group Gap (needs Group By)">
+                      <span className={`text-[9px] ${currentConfig.groupBy !== 'none' ? 'text-slate-500' : 'text-slate-300'}`}>Group gap</span>
                       <input type="number" min="0" max="50" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distGroupGap || 0} onChange={e => handleConfig('distGroupGap', parseFloat(e.target.value) || 0)} />
                     </div>
                     <div className="flex items-center gap-1" title="Bar Gap">
-                      <span className="text-[9px] text-slate-500">Box Gap</span>
+                      <span className="text-[9px] text-slate-500">Bar gap</span>
                       <input type="number" min="0" max="20" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distBarGap || 0} onChange={e => handleConfig('distBarGap', parseFloat(e.target.value) || 0)} />
                     </div>
                   </div>

@@ -437,6 +437,16 @@ duration, but this plot does.
 
 ![The Distributions plot](images/distributions.png)
 
+In Counts mode, four controls set the chart structure:
+
+- **Plot By** — one small chart for each value of a field.
+- **Group By** — clusters of bars inside one chart.
+- **Colour** and **Texture By** — the bars in each cluster.
+
+The **Layout** boxes set the geometry: **Bar width** (0 = automatic), **Group gap**
+(the space between the Group By clusters — it operates only when Group By is set), and
+**Bar gap** (the space between bars inside a cluster).
+
 ### Table
 
 This view shows the tokens that agree with the filters. Use it to examine the data that
