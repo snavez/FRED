@@ -12,9 +12,10 @@ import {
 import { X, Upload, FileText, RefreshCw, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import {
   isSpectralRole,
+  parseSpectralColumn,
   parseSpectralTimePointSuffix,
-  spectralColumnBaseName,
-  spectralRoleTimePoint,
+  spectralColumnChip,
+  SpectralKind,
 } from '../utils/spectralMoments';
 
 interface DataMappingDialogProps {
@@ -62,6 +63,20 @@ const ROLE_OPTIONS: { value: ColumnRole, label: string }[] = [
   { value: 'field', label: 'Custom Field' },
   { value: 'ignore', label: 'Ignore' },
 ];
+
+/** Noun naming each spectral family in the mapping table's group header. */
+const SPECTRAL_GROUP_NOUN: Record<SpectralKind, string> = {
+  point: 'at timepoints',
+  track: 'track',
+  coeff: 'coefficients',
+};
+
+/**
+ * Whether a spectral column carries a recognised suffix, and so belongs to a family.
+ * A bare `COG` is a lone measurement and stays a standalone row.
+ */
+const hasSpectralSuffix = (header: string): boolean =>
+  parseSpectralTimePointSuffix(header) !== null || /_[tk]\d+$/i.test(header);
 
 // These names have hardcoded property accessors in filtering (App.tsx) and
 // sidebar display (Sidebar.tsx). A custom field using one of these names will
@@ -293,8 +308,11 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
       if (m.role === 'formant' && !m.formantTarget && m.formant && m.timePoint !== undefined) {
         if (!byFormant.has(m.formant)) byFormant.set(m.formant, []);
         byFormant.get(m.formant)!.push({ m, idx });
-      } else if (isSpectralRole(m.role) && parseSpectralTimePointSuffix(m.csvHeader) !== null) {
-        const key = `${m.role}:${spectralColumnBaseName(m.csvHeader).toLowerCase()}`;
+      } else if (isSpectralRole(m.role) && hasSpectralSuffix(m.csvHeader)) {
+        // Point / track / coefficient families are grouped separately — they are
+        // different kinds of measurement, not interchangeable timepoints.
+        const ref = parseSpectralColumn(m.csvHeader);
+        const key = `${m.role}:${ref.kind}:${ref.base.toLowerCase()}`;
         if (!bySpectral.has(key)) bySpectral.set(key, []);
         bySpectral.get(key)!.push({ m, idx });
       } else {
@@ -314,12 +332,14 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
         members.forEach(mem => singles.push(mem));
       }
     }
-    // Spectral families are short (typically 20/50/80%), so any repeated base name
-    // with ≥2 timepoints rolls up — unlike formant trajectories (TRAJECTORY_MIN_POINTS).
+    // Spectral families are short (often just 20/50/80%), so any repeated base name
+    // with ≥2 members rolls up — unlike formant trajectories (TRAJECTORY_MIN_POINTS).
     for (const [key, members] of bySpectral) {
       if (members.length >= 2) {
+        const kind = parseSpectralColumn(members[0].m.csvHeader).kind;
         groups.push({
-          kind: 'group', groupKey: key, label: `${roleLabel(members[0].m.role)} trajectory`,
+          kind: 'group', groupKey: key,
+          label: `${roleLabel(members[0].m.role)} ${SPECTRAL_GROUP_NOUN[kind]}`,
           badge: 'Spectral · Data', isSpectral: true, members,
         });
       } else {
@@ -366,11 +386,17 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
   };
 
   const describeGroup = (members: { m: ColumnMapping; idx: number }[], isSpectral: boolean): string => {
-    const tps = members
-      .map(mem => isSpectral ? spectralRoleTimePoint(mem.m.csvHeader) : mem.m.timePoint as number)
-      .sort((a, b) => a - b);
+    if (isSpectral) {
+      // Label the span in the family's own units: 20% to 80%, t0 to t10, k0 to k3.
+      const sorted = [...members].sort((a, b) =>
+        parseSpectralColumn(a.m.csvHeader).index - parseSpectralColumn(b.m.csvHeader).index);
+      const first = spectralColumnChip(sorted[0].m.csvHeader);
+      const last = spectralColumnChip(sorted[sorted.length - 1].m.csvHeader);
+      return `${members.length} columns · ${first} to ${last}`;
+    }
+    const tps = members.map(mem => mem.m.timePoint as number).sort((a, b) => a - b);
     const min = tps[0], max = tps[tps.length - 1];
-    const unitLabel = !isSpectral && effectiveFormat === 'time-slice' ? (effectiveUnit ?? '') : '%';
+    const unitLabel = effectiveFormat === 'time-slice' ? (effectiveUnit ?? '') : '%';
     return `${members.length} columns · ${min}${unitLabel} to ${max}${unitLabel}`;
   };
 
@@ -485,12 +511,18 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
               )}
             </div>
           )}
-          {isSpectralRole(m.role) && (
-            <div className="flex items-center gap-1" title="Timepoint parsed from the column name; bare names default to the 50% midpoint">
-              <span className="text-[11px] text-slate-400">@</span>
-              <span className="text-xs bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded font-bold">{spectralRoleTimePoint(m.csvHeader)}%</span>
-            </div>
-          )}
+          {isSpectralRole(m.role) && (() => {
+            const ref = parseSpectralColumn(m.csvHeader);
+            const hint = ref.kind === 'track' ? 'Track sample, read from the column name (normalised time order)'
+              : ref.kind === 'coeff' ? 'Shape coefficient order, read from the column name'
+              : 'Timepoint parsed from the column name; bare names default to the 50% midpoint';
+            return (
+              <div className="flex items-center gap-1" title={hint}>
+                <span className="text-[11px] text-slate-400">@</span>
+                <span className="text-xs bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded font-bold">{spectralColumnChip(m.csvHeader)}</span>
+              </div>
+            );
+          })()}
           {(m.role === 'speaker' || m.role === 'file_id' || m.role === 'duration' || m.role === 'token_id' || m.role === 'timepoint') && (
             <span className="text-[11px] text-slate-400 italic">auto-detected</span>
           )}

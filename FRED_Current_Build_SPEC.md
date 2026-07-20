@@ -17,24 +17,42 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 2. **Mapping Dialog**: User reviews/adjusts column assignments in a modal before parsing
 
 ### Column Roles (`ColumnRole` type)
-| Role | Description | Aliases |
+| Role | Description | Aliases / pattern |
 |------|-------------|---------|
 | `speaker` | Speaker identifier | `speaker_id`, `participant`, `subject` |
 | `file_id` | File identifier | `fileid`, `filename`, `file` |
-| `duration` | Segment duration | `dur`, `seg_dur` |
-| `formant` | Formant data (auto-detected from pattern `f[1-3]_<time>[_<variant>]`) | |
-| `pitch` | Pitch / F0 data (auto-detected from pattern `f0_<time>[_<variant>]`) | `f0`, `voice_pitch` |
+| `duration` | Segment duration | `dur`, `seg_dur`, fuzzy `dur_*` / `*_dur` |
+| `formant` | Formant data | pattern `f[1-5]_<time>[_<variant>]`, bare `f1`, named `f1_onset` |
+| `pitch` | Pitch / F0 data | pattern `f0_<time>[_<variant>]`, `pitch`, `voice_pitch` |
+| `token_id` | Groups long-format rows into tokens | `segment_id`, `item_id`, `obs_id`, … |
+| `timepoint` | Time column for long format | `times_norm`, `time_rel`, `timepoint`, … |
+| `spectral_cog` / `spectral_sd` / `spectral_skew` / `spectral_kurt` | Consonant spectral measurements (see Spectral section) | moment synonyms with `_N%`, `_tN` or `_kN` suffix |
 | `field` | Generic field (categorical or data) | *(any unrecognized column)* |
 | `ignore` | Column is not imported | |
 
-All columns that don't match a built-in role are assigned `field` role. Previous named roles like `word`, `canonical`, `type`, `alignment`, etc. are now detected as `field` role with their original column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`, `start_time`) is also treated as a `field` with `isDataField: true`.
+All columns that don't match a built-in role are assigned `field` role, with the original
+column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`,
+`start_time`) is treated as a `field` with `isDataField: true` and populates
+`SpeechToken.xmin`.
 
 ### Formant & Pitch Column Detection
-- **Formant regex**: `f[1-3]_<timepoint>[_<variant>]` (e.g., `f1_50`, `f2_30_smooth`)
+- **Formant regex**: `f[1-5]_<timepoint>[_<variant>]` (e.g., `f1_50`, `f2_30_smooth`); bare
+  `f1`…`f5` = single measurement at timepoint 0; named targets (`f1_onset`) map to synthetic
+  timepoints. F4/F5 are stored as named data fields (TrajectoryPoint holds f1–f3).
 - **Pitch regex**: `f0_<timepoint>[_<variant>]` (e.g., `f0_50`, `f0_80_smooth`)
 - Supports multiple formant variants (e.g., raw + smoothed); select between them via the Data dropdown in the config toolbar
 - Time points are derived from the data (not hardcoded); all plots use `findNearestTimePoint()` for flexible lookup
-- xmin-like columns (`xmin`, `onset`, `start`, `start_time`) are auto-detected as `field` role with `isDataField: true` and used to populate `SpeechToken.xmin`
+
+### Delimiters, headers, robustness (verified by probe tests)
+- Delimiter: comma or tab only (chosen by count in the first line). Semicolon files parse
+  as a single column.
+- Header row auto-detected (`detectHeaderRow` heuristic + user override "First row: Data").
+- CRLF and LF line endings; UTF-8 with or without BOM; quoted values with embedded
+  delimiters and doubled quotation marks.
+- Empty / non-numeric cells (`NA`) yield NaN for that measurement; the token is kept.
+- 50k-row files parse in ~150 ms.
+- **FormantStudio** (https://github.com/snavez/FormantStudio) emits formant + spectral CSVs
+  in this format directly.
 
 ### Generic Fields
 - All non-built-in columns are assigned `field` role with `fieldName` set to the CSV header
@@ -47,7 +65,9 @@ All columns that don't match a built-in role are assigned `field` role. Previous
 ### Data Mapping Dialog
 - Modal UI listing all detected columns with role dropdowns and sample data preview
 - User can reassign roles, set field names, or ignore columns
-- **Role options**: Speaker ID, File ID, Formant Value, Duration Value, Pitch Value, Custom Field, Ignore
+- **Role options**: Formant Value, Duration Value, Pitch Value, Spectral COG / Diffusion
+  (SD) / Skew / Kurtosis, Token ID, Timepoint, Custom Field, Ignore (Speaker/File ID are
+  assigned via the quick-assign dropdowns at the top)
 - **Filter/Data toggle**: Every non-ignored column gets a Filter/Data toggle
   - **Filter**: categorical label for sidebar filtering (default for low-cardinality columns)
   - **Data**: numeric value for plotting, not shown in sidebar (default for high-cardinality columns)
@@ -103,59 +123,118 @@ All columns that don't match a built-in role are assigned `field` role. Previous
 - **Interactive legend**: HTML overlay with colour swatches + texture pattern previews. Click any item to open the StyleEditor for manual colour/texture customisation. Style overrides persist via `layer.styleOverrides`
 - **Configurable tooltip**: hover over outlier circles or jitter points to see token details. Field selector popover (max 10 fields) with `durationTooltipFields` stored in PlotConfig
 - **Zoom & Pan**: scroll wheel zooms towards cursor, click-drag to pan. +/−/RESET VIEW buttons at bottom-left. Canvas transform applied to rendering; hit-detection inverse-transforms mouse coordinates
+- **Plot border**: a grey frame (`#94a3b8`) bounds the data area, matching the Spectral tab.
+  Drawn last so data never covers it, and inside the transformed space so it pans and zooms
+  with the plot. The legend overlay sits wholly inside it.
 
-### Spectral Moments (Consonant analysis)
-- New tab between **Time Series** and **Data Summaries**, for consonant spectral-moment
-  data: centre of gravity (COG), standard deviation / spread (SD), skewness, kurtosis.
-- Moments are read from wide-format columns (`COG_20%`, `SD_50%`, `skew_80%`, …) held in
-  `token.fields`. `utils/spectralMoments.ts` discovers which moments/timepoints are present
-  (`discoverSpectralMoments`) and extracts numeric values (`getSpectralValue`), tolerating
-  synonyms (centroid→COG, spread/stdev→SD, kurtosis→kurt) and an optional `_smooth` suffix.
+### Spectral (Consonant analysis)
+- Tab between **Time Series** and **Data Summaries** (labelled **Spectral**; `activeTab` id
+  stays `'spectral'`), for consonant spectral data: centre of gravity (COG), standard
+  deviation / spread (SD), skewness, kurtosis.
+- Each moment can arrive in **three forms**, discovered and stored separately by
+  `utils/spectralMoments.ts` (`discoverSpectralMoments`). Synonyms (centroid→COG,
+  spread/stdev/SpecDiff→SD, kurtosis→kurt) and an optional `_smooth` suffix are tolerated:
+  - **Point** — a moment at a position: `COG_20%`, `SD_50%` (`getSpectralValue`).
+  - **Track** — a dense contour over normalised time: `COG_t0` … `COG_tN`
+    (`getSpectralTrackValue`, `getSpectralTrack`).
+  - **Coefficient** — DCT/polynomial coefficients describing a track's shape:
+    `COG_k0` … `COG_kN`, conventionally k0 = height, k1 = slope, k2 = curvature
+    (`getSpectralCoeffValue`).
+  `parseSpectralColumn` classifies a column by suffix (`_tN` / `_kN` tested before `_N%`).
+  **Grid lengths are always read from the data** — a dataset may carry any number of track
+  samples or coefficients (`meta.trackIndices`, `meta.coeffIndices`).
+- **Features** (`SpectralFeature`) are the scalars an axis or measure picker can offer:
+  a moment at a timepoint (`COG@50`) or a coefficient (`COG~k1`). `listSpectralFeatures`
+  enumerates them, `resolveSpectralFeature` falls back when a stored ref is absent, and
+  `getSpectralFeatureValue` reads one. Tracks are excluded — they are vectors, selected by
+  moment alone.
 - **Explicit mapping roles**: the Data Mapping dialog offers **Spectral COG / Spectral
   Diffusion (SD) / Spectral Skew / Spectral Kurtosis** roles (`spectral_cog` / `spectral_sd`
   / `spectral_skew` / `spectral_kurt` in `ColumnRole`), so columns with *any* name can feed
-  the Spectral Moments tab. Role-mapped columns are authoritative in
-  `discoverSpectralMoments` (claimed first; the header-pattern scan fills remaining slots).
-  A role-mapped column's timepoint is parsed from a trailing `_<n>[%]` suffix, defaulting to
-  the 50% midpoint for bare names (`spectralRoleTimePoint`).
+  the Spectral tab. Role-mapped columns are authoritative in `discoverSpectralMoments`
+  (claimed first; the header-pattern scan fills remaining slots). The role names the
+  *moment*; which of the three forms a column holds is read from its name suffix.
 - The CSV parser auto-assigns these roles by header (COG/centroid, SD/stdev/spread/SpecDiff/
-  diffusion, skew(ness), kurt(osis) — with or without a timepoint suffix); mis-assignments
-  can be corrected in the dialog. The explicit roles also keep moment columns clear of the
-  high-cardinality "ignore" heuristic. Values are stored in `token.fields` under the column
-  name, and spectral columns appear in the Data Summaries numeric Y-axis options.
-- **Trajectory roll-up in the mapping dialog**: spectral columns sharing a role and base name
-  with ≥2 numeric timepoint suffixes collapse into a group row mirroring formant trajectories —
-  e.g. "Spectral COG trajectory · 3 columns · 20% to 80% · Spectral · Data". Expanding shows
-  each member column with its role dropdown and an "@ NN%" chip (timepoint parsed from the
-  name; bare names default to 50%). Remapping a member removes it from the group live.
-  (Formant groups need `TRAJECTORY_MIN_POINTS` (4) columns; spectral families are short, so
-  they group from 2.)
-- **Timepoint selector**: choose 20% / 50% / 80% (or whatever the data provides) for the
-  single-value modes; defaults to 50%, snapping to the nearest available.
+  diffusion, skew(ness), kurt(osis) — bare, or with a `_N%`, `_tN` or `_kN` suffix);
+  mis-assignments can be corrected in the dialog. The explicit roles also keep spectral
+  columns clear of the high-cardinality "ignore" heuristic. Values are stored in
+  `token.fields` under the column name, and spectral columns appear in the Data Summaries
+  numeric Y-axis options. Analysis metadata that shares the `_N%` suffix (`winms_20%`,
+  `nsamples_20%`, `winsource_20%`) is correctly left alone — the *base* name must be a
+  moment synonym.
+- **Family roll-ups in the mapping dialog**: spectral columns sharing a role, kind and base
+  name collapse into one group row per family, so tracks stay separate from point moments:
+  - "Spectral COG at timepoints · 3 columns · 20% to 80%"
+  - "Spectral COG track · 11 columns · t0 to t10"
+  - "Spectral COG coefficients · 4 columns · k0 to k3"
+  Expanding shows each member with its role dropdown and a chip giving its position
+  (`50%`, `t3`, `k1` — `spectralColumnChip`). Remapping a member removes it from the group
+  live. (Formant groups need `TRAJECTORY_MIN_POINTS` (4) columns; spectral families group
+  from 2.)
+- **Control row** reads Plot → Mode → Data → Axes → position → ranges:
+  - **Plot** (`spectralMode`) — Scatter / Distribution / Mean contours / Density.
+  - **Mode** — the variant of that plot: `plotType` (Points/Trajectory) for scatter,
+    `spectralViolin` (Box/Violin) for distribution, `spectralContourAbsolute`
+    (Normalised/Absolute) for contours.
+  - **Data** — which column kind the axes sit on, derived from the X feature's kind.
+    Switching it re-seeds both axes (`setSpectralKind`), so **both axes always share a
+    kind** — a track sample can never be compared against a %-timepoint. Coefficients are
+    withheld while Mode is Trajectory, since they have no time axis.
+  - **Axes X/Y** list moments only; for coefficients each axis gains its own order picker
+    (k0 × k1 of one moment being the headline plot).
+  - **Time / Sample** is one shared position dropdown moving both axes together, mirroring
+    the formant tabs. **Range** (`spectralTrajRange`, `[0,0]` = full) trims the trajectory
+    sweep, mirroring the Time Series range control.
 - **Colour** grouping (`config.colorBy`) drives grouping/colouring across all modes; the
   on-screen legend + StyleEditor work via the shared colour channel.
 - Four modes (`config.spectralMode`):
-  - **Moment scatter** — any moment on X vs any moment on Y. COG×SD (the default) separates
-    sibilant from non-sibilant fricatives; skew×kurt is a secondary separator. This mode is a
-    **multi-layer canvas** (see below).
+  - **Feature scatter** — any feature on X vs any on Y (`spectralXFeature` /
+    `spectralYFeature`, on the background layer). COG@50 × SD@50 separates sibilant from
+    non-sibilant fricatives; **k0 × k1** (height × slope) is a 2D shape space where
+    categories that overlap on height alone often separate once direction is added. This
+    mode is a **multi-layer canvas** (see below).
   - **Distribution** — box-and-whisker (1.5×IQR whiskers + outliers) or violin (Gaussian KDE)
-    of one moment per colour group (active layer).
-  - **Timeline** — one moment's mean value across timepoints (20→50→80%) per group, with
-    optional faded per-token lines behind the means (active layer).
-  - **Density** — Gaussian-KDE density curves of one moment per group (active layer).
+    of one feature (`spectralFeature`) per colour group. A box plot of **k1 by group** turns
+    a visual impression of contour direction into a comparable number. **All coefficients**
+    (`spectralCoeffFacets`) draws small multiples — one panel per coefficient sharing the
+    group axis, each on **its own scale**, because k0 runs into the tens of thousands while
+    k1 is a few hundred and a shared axis would flatten all but k0.
+  - **Mean contours** — per-group mean of one moment (`spectralTimelineMoment`) across the
+    track grid, with an optional **±1 SD band** (`spectralShowBand`) and faded per-token
+    lines (`spectralShowIndividual`). Falls back to %-timepoints when the dataset has no
+    track. Normalised (0→1) averages pointwise, which is valid because every token shares
+    the grid. **Absolute** (`spectralContourAbsolute`) instead places each token's samples
+    at its real times from `token.duration`, resamples onto a common millisecond grid by
+    linear interpolation, and averages only where ≥2 tokens still reach — so short tokens
+    drop out of the tail instead of dragging the mean down, and the duration difference
+    that normalised time hides becomes visible.
+  - **Density** — Gaussian-KDE density curves of one feature per group (active layer).
+- **Coefficient sign** (`spectralFlipSign`, box/density only, shown only for coefficient
+  features): a rising contour has a *negative* k1, which reads backwards on a chart, so the
+  toggle negates the value and the axis label notes it.
+- **Caveats surfaced in Help tooltips**: normalised time discards duration (pair a contour
+  plot with a duration box plot in Data Summaries), and the track is inset by half an
+  analysis window, so `t0` is not literally the segment onset.
 - **Multi-layer scatter** (mirrors F1/F2): the scatter view iterates all visible layers using
-  the shared global layer system. Each layer is drawn as **points** or **moment-space
-  trajectories** per its own `plotType`:
-  - *Point layer* — one marker per token at the layer's timepoint; optional individual points,
+  the shared global layer system. Each layer is drawn as **points** or **trajectories** per
+  its own `plotType`:
+  - *Point layer* — one marker per token at the axis features; optional individual points,
     per-group SD ellipses, and per-group means (centroids).
-  - *Trajectory layer* — each token's path through moment space across all timepoints (e.g. a
-    stop release from onset→offset), plus a per-group **mean trajectory** with points and an
-    optional arrowhead at the offset end. Optional faded individual paths.
-  - The **background layer** (`layers[0]`) controls the shared coordinate space: which moment is
-    on X/Y and the axis ranges. Per-layer filters, colour, timepoint and type are independent.
+  - *Trajectory layer* — each token's path through the axis space over time (e.g. a stop
+    release from onset→offset), plus a per-group **mean trajectory** with points and an
+    optional arrowhead at the offset end. Optional faded individual paths. The path sweeps
+    the **track grid** when the dataset has one (11 points rather than 3), else the
+    %-timepoints.
+  - The **background layer** (`layers[0]`) controls the shared coordinate space: both axis
+    features and the axis ranges. Per-layer filters, colour and type are independent. A
+    trajectory layer sweeps the *moments* of the axis features, which is what keeps point and
+    trajectory layers overlayable on one pair of axes.
+  - Trajectories need both axes on **point** features; coefficients are not time-varying, so
+    a coefficient axis disables sweeping (the layer falls back to points and the control bar
+    shows "Set both axes to moments to draw trajectories").
   - Enables the workflow: a point layer of fricative means + a trajectory layer of stop releases
     overlaid on one COG×SD plot to see where releases sit relative to frication/sibilance.
-  - "Add Layer" (Point/Trajectory) is available on the Spectral Moments tab as well as F1/F2.
+  - "Add Layer" (Point/Trajectory) is available on the Spectral tab as well as F1/F2.
   - **Full F1/F2-style visual controls**, shared verbatim with the F1/F2 tab (same layout, via
     `renderEncodingControls` in MainDisplay): Colour, Shape (point) / Line Type (trajectory),
     and — for point layers — Points (size/opacity), Ellipses (σ + line-width/line/fill),
@@ -170,16 +249,27 @@ All columns that don't match a built-in role are assigned `field` role. Previous
     swatch).
   - Default colour when no colour variable is set is neutral slate (`#64748b`), matching F1/F2.
 - **Manual axis ranges** (Row 1, like F1/F2): scatter mode exposes X and Y Min/Max inputs on the
-  background layer (`spectralXRange` / `spectralYRange`), labelled by the current axis moments
-  (e.g. "X · COG", "Y · SD"); summary modes expose a single value-axis Min/Max for the active
-  layer (density writes X, box/timeline write Y). Both Min and Max at 0 = auto-fit.
+  background layer (`spectralXRange` / `spectralYRange`), labelled by the current axis features
+  (e.g. "X · COG @50%", "Y · COG k1 (slope)"); summary modes expose a single value-axis Min/Max
+  for the active layer (density writes X, box/contours write Y). Both Min and Max at 0 =
+  auto-fit. With bands on, the contour auto-range widens to fit the ±1 SD ribbons.
+  While a range is still auto, the plot reports the range it actually drew
+  (`onAutoRange` → `spectralAutoRange` in MainDisplay) and the inputs display *those*
+  numbers, so the arrows step from what is on screen. Editing one end seeds the other from
+  the drawn range (`spectralRangeEdit`) rather than leaving it at a 0 the user never chose —
+  without this, typing a Max collapsed the axis to [0, Max] and the data vanished.
 - **Point Info**: configurable hover tooltip on the scatter (`config.tooltipFields`, shared with
-  F1/F2), showing chosen fields plus the live moment values at the hovered point/vertex. The
-  "Point Info" button appears on the Spectral Moments tab.
+  F1/F2), showing chosen fields plus the live values at the hovered point/vertex (labelled by
+  feature, or by track step `t3` / timepoint on trajectories). The "Point Info" button appears
+  on the Spectral tab.
+- **Plot border**: a grey frame (`#94a3b8`) bounds the data area, matching F1/F2. On the
+  Spectral tab the frame reserves a right-hand gutter whenever the on-screen legend is
+  showing, so the border never cuts through the key and no data hides behind it; export
+  renders keep the plain margin because they draw their own legend beside the plot.
 - **Zoom & Pan** (scroll to zoom, drag to pan, Reset view).
 - **Export** via the shared ExportDialog (`PlotHandle.generateImage`), with a multi-layer colour
   legend and optional title.
-- Empty-state messaging when no moment columns are present, or a mode has too few timepoints.
+- Empty-state messaging when no spectral columns are present, or a mode has too few positions.
 
 ### Phoneme Distribution
 - Bar chart showing phoneme counts/percentages
@@ -195,7 +285,7 @@ All columns that don't match a built-in role are assigned `field` role. Previous
 
 ---
 
-## 3. Multi-Layer System (F1/F2 Plot Only)
+## 3. Multi-Layer System (F1/F2 and Spectral scatter)
 
 ### Architecture
 - Up to **10 layers**, each with independent config, filters, and style overrides
@@ -459,10 +549,16 @@ Replaces raw X/Y offset inputs with directional arrows (↑↓←→) + reset bu
 - Token count badge
 
 ### Main Display (Center)
-- Tab bar: F1/F2, 3D F1/F2/F3, Time Series, Duration, Phoneme Dist., Table
+- Tab bar, grouped by purpose with hairline separators and small group labels (`TAB_GROUPS`
+  in MainDisplay). Every plot stays one click away — the labels are a signpost, not a second
+  level of navigation:
+  - **Vowels** — F1/F2, 3D F1/F2/F3, Time Series
+  - **Consonants** — Spectral
+  - **General** — Data Summaries, Distributions, Table (these work on any numeric field,
+    spectral measures included, so they serve both vowel and consonant work)
 - Config toolbar (context-sensitive per active tab)
 - Plot area (fills remaining space)
-- Layer panel dropdown (F1/F2 tab only)
+- Layer panel dropdown (F1/F2 and Spectral — the multi-layer canvases)
 - Export button, B&W toggle, Tooltip settings button
 
 ---
@@ -497,6 +593,8 @@ FRED/
     TrajectoryTimeSeries.tsx           # Trajectory time series plot
     DurationPlot.tsx                   # Duration box plots
     PhonemeDistributionPlot.tsx        # Phoneme distribution bar charts
+    SpectralMomentsPlot.tsx            # Spectral tab (scatter/box/contours/density)
+    TablePanel.tsx                     # Table view
     Sidebar.tsx                        # Filter sidebar
     Header.tsx                         # Top header bar
     ExportDialog.tsx                   # Export configuration modal
@@ -509,7 +607,15 @@ FRED/
     getLabel.ts                        # Shared label extraction utility (checks fields dict)
     getLabel.test.ts                   # Label utility tests
     normalization.ts                   # Speaker stats, normalization (Lobanov, Nearey, etc.)
+    plotEncoding.tsx                   # Shared encoding primitives (palette, shapes, dashes)
+    spectralMoments.ts                 # Spectral discovery/features (moments, tracks, coeffs)
+    spectralMoments.test.ts            # Spectral tests
+    trajectory.ts                      # Trajectory interpolation helpers
     textureGenerator.ts                # Texture pattern generation
+  scripts/
+    generate-screenshots.mjs           # Regenerates docs/images via headless Edge
+  docs/
+    USER_MANUAL.md                     # User manual (screenshots in docs/images/)
 ```
 
 ---

@@ -5,8 +5,10 @@ import {
   drawShape, ShapeIcon, hexToRgb, computeEncodingMaps, EncodingMaps,
 } from '../utils/plotEncoding';
 import {
-  discoverSpectralMoments, getSpectralValue, nearestSpectralTimePoint,
-  spectralAxisLabel, getSpectralMomentDef, SpectralMomentKey, SpectralMomentMeta,
+  discoverSpectralMoments, getSpectralValue, spectralAxisLabel, getSpectralMomentDef,
+  SpectralMomentKey, SpectralMomentMeta, SpectralFeature,
+  resolveSpectralFeature, getSpectralFeatureValue, spectralFeatureAxisLabel,
+  spectralFeatureLabel, getSpectralTrackValue, getSpectralCoeffValue, coefficientLabel,
 } from '../utils/spectralMoments';
 
 interface SpectralMomentsPlotProps {
@@ -15,6 +17,8 @@ interface SpectralMomentsPlotProps {
   activeLayerId: string;
   datasetMeta: DatasetMeta | null;
   onLegendClick?: (category: string, currentStyles: { color: string, shape: string, texture: number, lineType: string }, event: React.MouseEvent, layerId?: string) => void;
+  /** Reports the axis range actually drawn, so the range inputs can show real numbers. */
+  onAutoRange?: (range: { x: [number, number], y: [number, number] }) => void;
 }
 
 interface MomentStats { min: number; max: number; q1: number; median: number; q3: number; mean: number; sd: number; count: number; values: number[]; }
@@ -84,7 +88,7 @@ const buildGroups = (data: SpeechToken[], enc: EncodingMaps, secondary: 'shape' 
   });
 };
 
-const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ layers, layerData, activeLayerId, datasetMeta, onLegendClick }, ref) => {
+const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ layers, layerData, activeLayerId, datasetMeta, onLegendClick, onAutoRange }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hovered, setHovered] = useState<{ lines: string[] } | null>(null);
@@ -93,6 +97,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
   const isDragging = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
   const scatterHits = useRef<{ token: SpeechToken, layer: Layer, x: number, y: number, extra: string[] }[]>([]);
+  const lastReportedRange = useRef<{ x: [number, number], y: [number, number] } | null>(null);
 
   const bgLayer = layers[0];
   const bgConfig = bgLayer.config;
@@ -138,41 +143,88 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
     ctx.fillStyle = '#94a3b8'; ctx.font = `${14 * s}px Inter, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(msg, w / 2, h / 2);
   };
 
+  // ─── Legend (per visible layer, colour/shape/line-type sections) ──
+  // Declared before the renderer because the plot frame reserves a gutter for it.
+  const legendLayers = useMemo(() => {
+    const view = activeConfig.spectralMode;
+    const src = view === 'scatter' ? layers.filter(l => l.visible) : [activeLayer];
+    return src.map(layer => ({ layer, enc: computeEncodingMaps(layerData[layer.id] || [], layer.config, layer.styleOverrides), isTraj: view === 'scatter' && layer.config.plotType === 'trajectory' }))
+      .filter(x => x.enc.colorKey || x.enc.shapeKey || x.enc.lineTypeKey);
+  }, [layers, layerData, activeConfig.spectralMode, activeLayer]);
+  const showTitles = legendLayers.length > 1;
+
   // ─── Main render ──────────────────────────────────────────────────
   const renderPlot = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number, _mode: number, s: number, exportConfig?: ExportConfig) => {
     const capture = s === 1 && !exportConfig;
     if (capture) scatterHits.current = [];
-    if (!sm.available) { drawEmpty(ctx, width, height, 'No spectral-moment columns (COG / SD / skew / kurt) found in this dataset.', s); return; }
+    if (!sm.available) { drawEmpty(ctx, width, height, 'No spectral columns (COG / SD / skew / kurt, tracks or coefficients) found in this dataset.', s); return; }
 
-    const margin = { top: 24 * s, right: 24 * s, bottom: 56 * s, left: 82 * s };
+    // Reserve room for the on-screen legend so the frame sits entirely to its left —
+    // the border never cuts through the key, and no data hides behind it. Export draws
+    // its own legend beside the plot, so it keeps the plain margin.
+    const legendGutter = (!exportConfig && legendLayers.length > 0) ? 288 : 24;
+    const margin = { top: 24 * s, right: legendGutter * s, bottom: 56 * s, left: 82 * s };
     const area = { x: margin.left, y: margin.top, w: width - margin.left - margin.right, h: height - margin.top - margin.bottom };
     if (area.w <= 0 || area.h <= 0) return;
     const rangeOr = (cfg: [number, number], lo: number, hi: number): [number, number] => (cfg[0] === 0 && cfg[1] === 0) ? [lo, hi] : cfg;
     const view = activeConfig.spectralMode;
+    // Report the range actually drawn (only for the live canvas, not export renders) so
+    // the Min/Max inputs can show real numbers instead of a placeholder 0.
+    const reportRange = (x: [number, number], y: [number, number]) => {
+      if (exportConfig || s !== 1) return;
+      const r = { x, y };
+      const prev = lastReportedRange.current;
+      if (prev && prev.x[0] === x[0] && prev.x[1] === x[1] && prev.y[0] === y[0] && prev.y[1] === y[1]) return;
+      lastReportedRange.current = r;
+      onAutoRange?.(r);
+    };
 
-    // ═══ SCATTER (multi-layer, moment × moment) ═══
+    // ═══ SCATTER (multi-layer, feature × feature) ═══
     if (view === 'scatter') {
-      const xM = pickMoment(bgConfig.spectralXMoment, availableKeys, 0);
-      const yM = pickMoment(bgConfig.spectralYMoment, availableKeys, 1);
+      const xF = resolveSpectralFeature(bgConfig.spectralXFeature, sm, 0);
+      const yF = resolveSpectralFeature(bgConfig.spectralYFeature, sm, 1);
+      if (!xF || !yF) { drawEmpty(ctx, width, height, 'No spectral measurements available for the axes.', s); return; }
       const visible = layers.filter(l => l.visible);
+
+      // A trajectory sweeps the axis features' moments along whichever grid the axes
+      // sit on — the track when they are track samples, else the %-timepoints. Both
+      // axes always share a kind, so one grid serves both. Coefficients have no time
+      // axis, so a coefficient axis falls back to plotting points.
+      const onTrack = xF.kind === 'track';
+      const sweepable = xF.kind !== 'coeff' && yF.kind !== 'coeff';
+      const sweepAt = (t: SpeechToken, i: number) => onTrack
+        ? { x: getSpectralTrackValue(t, sm, xF.moment, i), y: getSpectralTrackValue(t, sm, yF.moment, i) }
+        : { x: getSpectralValue(t, sm, xF.moment, i), y: getSpectralValue(t, sm, yF.moment, i) };
+      const fullGrid = onTrack ? sm.trackIndices : sm.timePoints;
+      // Range trims the sweep; [0,0] means the whole grid.
+      const [rFrom, rTo] = bgConfig.spectralTrajRange || [0, 0];
+      const sweepSteps = (rFrom === 0 && rTo === 0)
+        ? fullGrid
+        : fullGrid.filter(i => i >= Math.min(rFrom, rTo) && i <= Math.max(rFrom, rTo));
+      const stepLabel = (i: number) => onTrack ? `t${i}` : `${i}%`;
+      const isSweeping = (cfg: PlotConfig) => cfg.plotType === 'trajectory' && sweepable && sweepSteps.length >= 2;
+      const pointXY = (t: SpeechToken) => ({ x: getSpectralFeatureValue(t, sm, xF), y: getSpectralFeatureValue(t, sm, yF) });
 
       const xs: number[] = [], ys: number[] = [];
       visible.forEach(layer => {
         const data = layerData[layer.id] || [];
-        const tps = layer.config.plotType === 'trajectory' ? sm.timePoints : [nearestSpectralTimePoint(sm, layer.config.spectralTimePoint) ?? sm.timePoints[0]];
-        data.forEach(t => tps.forEach(tp => { const x = getSpectralValue(t, sm, xM, tp), y = getSpectralValue(t, sm, yM, tp); if (!isNaN(x) && !isNaN(y)) { xs.push(x); ys.push(y); } }));
+        data.forEach(t => {
+          const pts = isSweeping(layer.config) ? sweepSteps.map(i => sweepAt(t, i)) : [pointXY(t)];
+          pts.forEach(p => { if (!isNaN(p.x) && !isNaN(p.y)) { xs.push(p.x); ys.push(p.y); } });
+        });
       });
-      if (xs.length === 0) { drawEmpty(ctx, width, height, 'No valid values for the selected moments. Add/adjust a layer or timepoint.', s); return; }
+      if (xs.length === 0) { drawEmpty(ctx, width, height, 'No valid values for the selected axes. Adjust the axis measurements or layer filters.', s); return; }
       const pad = (arr: number[]): [number, number] => { const lo = Math.min(...arr), hi = Math.max(...arr), d = (hi - lo) * 0.06 || 1; return [lo - d, hi + d]; };
       const [xLo, xHi] = rangeOr(bgConfig.spectralXRange, ...pad(xs));
       const [yLo, yHi] = rangeOr(bgConfig.spectralYRange, ...pad(ys));
+      reportRange([xLo, xHi], [yLo, yHi]);
       const mapX = (v: number) => area.x + ((v - xLo) / (xHi - xLo)) * area.w;
       const mapY = (v: number) => area.y + area.h - ((v - yLo) / (yHi - yLo)) * area.h;
 
       drawFrame(ctx, area,
         niceTicks(xLo, xHi).filter(t => t >= xLo && t <= xHi).map(t => ({ pos: mapX(t), label: `${t}` })),
         niceTicks(yLo, yHi).filter(t => t >= yLo && t <= yHi).map(t => ({ pos: mapY(t), label: `${t}` })),
-        spectralAxisLabel(xM), spectralAxisLabel(yM), s);
+        spectralFeatureAxisLabel(xF), spectralFeatureAxisLabel(yF), s);
 
       visible.forEach(layer => {
         const cfg = layer.config;
@@ -181,12 +233,12 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         const dc = defaultColor(cfg);
         const colorOf = (t: SpeechToken) => enc.colorKey ? (enc.colorMap[getLabel(t, enc.colorKey)] || dc) : dc;
 
-        if (cfg.plotType === 'trajectory') {
-          const xy = (t: SpeechToken, tp: number) => ({ x: getSpectralValue(t, sm, xM, tp), y: getSpectralValue(t, sm, yM, tp) });
+        if (isSweeping(cfg)) {
+          const xy = (t: SpeechToken, i: number) => sweepAt(t, i);
           // Individual token paths (opacity 0 = hidden)
           if ((cfg.trajectoryLineOpacity ?? 0.5) > 0) {
             data.forEach(t => {
-              const path = sm.timePoints.map(tp => ({ tp, ...xy(t, tp) })).filter(p => !isNaN(p.x) && !isNaN(p.y));
+              const path = sweepSteps.map(tp => ({ tp, ...xy(t, tp) })).filter(p => !isNaN(p.x) && !isNaN(p.y));
               if (path.length < 2) return;
               ctx.beginPath();
               path.forEach((p, i) => { const px = mapX(p.x), py = mapY(p.y); if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); });
@@ -194,13 +246,13 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
               ctx.globalAlpha = cfg.trajectoryLineOpacity ?? 0.5;
               ctx.strokeStyle = colorOf(t); ctx.lineWidth = (cfg.trajectoryLineWidth || 1) * s; ctx.stroke();
               ctx.globalAlpha = 1; ctx.setLineDash([]);
-              if (capture) path.forEach(p => scatterHits.current.push({ token: t, layer, x: mapX(p.x), y: mapY(p.y), extra: [`${getSpectralMomentDef(xM).short}@${p.tp}%: ${p.x.toFixed(1)}`, `${getSpectralMomentDef(yM).short}@${p.tp}%: ${p.y.toFixed(1)}`] }));
+              if (capture) path.forEach(p => scatterHits.current.push({ token: t, layer, x: mapX(p.x), y: mapY(p.y), extra: [`${getSpectralMomentDef(xF.moment).short} ${stepLabel(p.tp)}: ${p.x.toFixed(1)}`, `${getSpectralMomentDef(yF.moment).short} ${stepLabel(p.tp)}: ${p.y.toFixed(1)}`] }));
             });
           }
           // Mean trajectory per group
           if (cfg.showMeanTrajectories) {
             buildGroups(data, enc, 'lineType', dc, cfg.meanLabelType).forEach(g => {
-              const mpath = sm.timePoints.map(tp => {
+              const mpath = sweepSteps.map(tp => {
                 const pts = g.tokens.map(t => xy(t, tp)).filter(p => !isNaN(p.x) && !isNaN(p.y));
                 return pts.length ? { tp, x: pts.reduce((a, p) => a + p.x, 0) / pts.length, y: pts.reduce((a, p) => a + p.y, 0) / pts.length } : null;
               }).filter(Boolean) as { tp: number, x: number, y: number }[];
@@ -227,17 +279,18 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
               if (cfg.showTrajectoryLabels && g.label && mpath.length) {
                 const last = mpath[mpath.length - 1];
                 const size = exportConfig ? exportConfig.dataLabelSize : (cfg.meanTrajectoryLabelSize || 12);
+                // Clear the arrowhead and end point, which both extend past the last vertex.
+                const gap = (10 + (arrow > 0 ? arrow + 4 : 0) + ptSize) * s;
                 ctx.font = `bold ${size * s}px Inter, sans-serif`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
                 ctx.strokeStyle = 'white'; ctx.lineWidth = 3 * s; ctx.lineJoin = 'round';
-                ctx.strokeText(g.label, mapX(last.x) + 6 * s, mapY(last.y)); ctx.fillStyle = g.color; ctx.fillText(g.label, mapX(last.x) + 6 * s, mapY(last.y));
+                ctx.strokeText(g.label, mapX(last.x) + gap, mapY(last.y)); ctx.fillStyle = g.color; ctx.fillText(g.label, mapX(last.x) + gap, mapY(last.y));
               }
-              if (capture) mpath.forEach(p => scatterHits.current.push({ token: g.tokens[0], layer, x: mapX(p.x), y: mapY(p.y), extra: [`${g.label || layer.name} (mean, n=${g.tokens.length})`, `${getSpectralMomentDef(xM).short}@${p.tp}%: ${p.x.toFixed(1)}`, `${getSpectralMomentDef(yM).short}@${p.tp}%: ${p.y.toFixed(1)}`] }));
+              if (capture) mpath.forEach(p => scatterHits.current.push({ token: g.tokens[0], layer, x: mapX(p.x), y: mapY(p.y), extra: [`${g.label || layer.name} (mean, n=${g.tokens.length})`, `${getSpectralMomentDef(xF.moment).short} ${stepLabel(p.tp)}: ${p.x.toFixed(1)}`, `${getSpectralMomentDef(yF.moment).short} ${stepLabel(p.tp)}: ${p.y.toFixed(1)}`] }));
             });
           }
         } else {
           // ── Point layer ──
-          const tp = nearestSpectralTimePoint(sm, cfg.spectralTimePoint) ?? sm.timePoints[0];
-          const valid = (t: SpeechToken) => { const x = getSpectralValue(t, sm, xM, tp), y = getSpectralValue(t, sm, yM, tp); return isNaN(x) || isNaN(y) ? null : { x, y }; };
+          const valid = (t: SpeechToken) => { const { x, y } = pointXY(t); return isNaN(x) || isNaN(y) ? null : { x, y }; };
           const groups = buildGroups(data, enc, 'shape', dc, cfg.meanLabelType);
 
           if (cfg.showEllipses) {
@@ -264,7 +317,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
               const shape = enc.shapeKey ? (enc.shapeMap[getLabel(t, enc.shapeKey)] || 'circle') : 'circle';
               ctx.fillStyle = colorOf(t); ctx.strokeStyle = colorOf(t);
               drawShape(ctx, shape, px, py, (cfg.pointSize || 3) * s, 1, s);
-              if (capture) scatterHits.current.push({ token: t, layer, x: px, y: py, extra: [`${getSpectralMomentDef(xM).short}@${tp}%: ${p.x.toFixed(1)}`, `${getSpectralMomentDef(yM).short}@${tp}%: ${p.y.toFixed(1)}`] });
+              if (capture) scatterHits.current.push({ token: t, layer, x: px, y: py, extra: [`${spectralFeatureLabel(xF)}: ${p.x.toFixed(1)}`, `${spectralFeatureLabel(yF)}: ${p.y.toFixed(1)}`] });
             });
             ctx.globalAlpha = 1;
           }
@@ -300,8 +353,15 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
     const data = activeData;
     const cfg = activeConfig;
     if (data.length === 0) { drawEmpty(ctx, width, height, 'No data in the active layer.', s); return; }
-    const single = pickMoment(cfg.spectralMoment, availableKeys, 0);
-    const tp = nearestSpectralTimePoint(sm, cfg.spectralTimePoint) ?? sm.timePoints[0];
+    // Box and density plot one scalar feature; the sign flip exists because a rising
+    // contour has a negative k1, which reads backwards on a chart.
+    const feature = resolveSpectralFeature(cfg.spectralFeature, sm, 0);
+    const flip = cfg.spectralFlipSign && feature?.kind === 'coeff';
+    const featureValue = (t: SpeechToken) => {
+      if (!feature) return NaN;
+      const v = getSpectralFeatureValue(t, sm, feature);
+      return flip ? -v : v;
+    };
     const enc = computeEncodingMaps(data, cfg, activeLayer.styleOverrides);
     const dc = defaultColor(cfg);
     const keys = enc.colorKey ? Object.keys(enc.colorMap) : ['__all__'];
@@ -310,18 +370,71 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
     data.forEach(t => { const g = enc.colorKey ? getLabel(t, enc.colorKey) : '__all__'; (groups[g] ||= []).push(t); });
 
     if (view === 'box') {
-      const stats = keys.map(k => ({ key: k, stats: calcStats((groups[k] || []).map(t => getSpectralValue(t, sm, single, tp))) })).filter(g => g.stats) as { key: string, stats: MomentStats }[];
-      if (stats.length === 0) { drawEmpty(ctx, width, height, 'No valid values for the selected moment/timepoint.', s); return; }
-      const allMin = Math.min(...stats.map(g => g.stats.min)), allMax = Math.max(...stats.map(g => g.stats.max));
-      const dpad = (allMax - allMin) * 0.06 || 1;
-      const [yLo, yHi] = rangeOr(cfg.spectralYRange, allMin - dpad, allMax + dpad);
-      const mapY = (v: number) => area.y + area.h - ((v - yLo) / (yHi - yLo)) * area.h;
-      const slotW = area.w / stats.length, boxW = Math.min(60 * s, slotW * 0.6);
-      drawFrame(ctx, area, stats.map((g, i) => ({ pos: area.x + (i + 0.5) * slotW, label: g.key === '__all__' ? 'All' : g.key })),
-        niceTicks(yLo, yHi).filter(t => t >= yLo && t <= yHi).map(t => ({ pos: mapY(t), label: `${t}` })),
-        cfg.colorBy && cfg.colorBy !== 'none' ? cfg.colorBy : 'Group', spectralAxisLabel(single, tp), s);
+      if (!feature) { drawEmpty(ctx, width, height, 'No spectral measurements available.', s); return; }
+
+      /** Draw one box/violin panel for a given value accessor into an arbitrary rect. */
+      const drawBoxPanel = (
+        panel: { x: number, y: number, w: number, h: number },
+        valueOf: (t: SpeechToken) => number,
+        yLabel: string,
+        useConfigRange: boolean,
+        compact: boolean,
+      ) => {
+        const stats = keys.map(k => ({ key: k, stats: calcStats((groups[k] || []).map(valueOf)) }))
+          .filter(g => g.stats) as { key: string, stats: MomentStats }[];
+        if (stats.length === 0) return false;
+        const allMin = Math.min(...stats.map(g => g.stats.min)), allMax = Math.max(...stats.map(g => g.stats.max));
+        const dpad = (allMax - allMin) * 0.06 || 1;
+        const [yLo, yHi] = useConfigRange
+          ? rangeOr(cfg.spectralYRange, allMin - dpad, allMax + dpad)
+          : [allMin - dpad, allMax + dpad];
+        if (useConfigRange) reportRange([0, 0], [yLo, yHi]);
+        const mapY = (v: number) => panel.y + panel.h - ((v - yLo) / (yHi - yLo)) * panel.h;
+        const slotW = panel.w / stats.length, boxW = Math.min(60 * s, slotW * 0.6);
+        drawFrame(ctx, panel,
+          stats.map((g, i) => ({ pos: panel.x + (i + 0.5) * slotW, label: g.key === '__all__' ? 'All' : g.key })),
+          niceTicks(yLo, yHi).filter(t => t >= yLo && t <= yHi).slice(0, compact ? 4 : 99).map(t => ({ pos: mapY(t), label: `${t}` })),
+          compact ? '' : (cfg.colorBy && cfg.colorBy !== 'none' ? cfg.colorBy : 'Group'), yLabel, s);
+        drawBoxes(stats, panel, mapY, slotW, boxW, compact);
+        return true;
+      };
+
+      // "All coefficients" small multiples: one panel per coefficient, each on its own
+      // scale — k0 runs to ~19000 while k1 is ~±1500, so a shared axis would flatten them.
+      if (cfg.spectralCoeffFacets && sm.coeffMoments.length > 0 && sm.coeffIndices.length > 1) {
+        const moment = feature.kind === 'coeff' ? feature.moment : sm.coeffMoments[0].key;
+        const panels = sm.coeffIndices.filter(i => sm.coeffKeyMap[`${moment}~k${i}`]);
+        if (panels.length === 0) { drawEmpty(ctx, width, height, 'No coefficients available.', s); return; }
+        const cols = Math.min(panels.length, 2);
+        const rows = Math.ceil(panels.length / cols);
+        const gapX = 76 * s, gapY = 62 * s;
+        const pw = (area.w - gapX * (cols - 1)) / cols, ph = (area.h - gapY * (rows - 1)) / rows;
+        panels.forEach((k, idx) => {
+          const cx = idx % cols, cy = Math.floor(idx / cols);
+          drawBoxPanel(
+            { x: area.x + cx * (pw + gapX), y: area.y + cy * (ph + gapY), w: pw, h: ph },
+            t => { const v = getSpectralCoeffValue(t, sm, moment, k); return flip ? -v : v; },
+            `${getSpectralMomentDef(moment).short} ${coefficientLabel(k)}`,
+            false, true,
+          );
+        });
+        return;
+      }
+
+      const ok = drawBoxPanel(area, featureValue, spectralFeatureAxisLabel(feature, flip), true, false);
+      if (!ok) { drawEmpty(ctx, width, height, 'No valid values for the selected measurement.', s); return; }
+      return;
+    }
+
+    /** Shared box/violin geometry, used by the single plot and by each facet. */
+    function drawBoxes(
+      stats: { key: string, stats: MomentStats }[],
+      panel: { x: number, y: number, w: number, h: number },
+      mapY: (v: number) => number,
+      slotW: number, boxW: number, compact: boolean,
+    ) {
       stats.forEach((g, i) => {
-        const cx = area.x + (i + 0.5) * slotW, color = colorForKey(g.key), st = g.stats;
+        const cx = panel.x + (i + 0.5) * slotW, color = colorForKey(g.key), st = g.stats;
         if (cfg.spectralViolin) {
           const grid: number[] = []; const gN = 48; for (let k = 0; k <= gN; k++) grid.push(st.min + (st.max - st.min) * (k / gN));
           const dens = kde(st.values, grid), dMax = Math.max(...dens) || 1;
@@ -339,53 +452,136 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
           ctx.beginPath(); ctx.moveTo(cx - boxW / 2, mapY(st.median)); ctx.lineTo(cx + boxW / 2, mapY(st.median)); ctx.lineWidth = 2.5 * s; ctx.stroke();
           st.values.forEach(v => { if (v < wLow || v > wHigh) { ctx.beginPath(); ctx.arc(cx, mapY(v), 2 * s, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); } });
         }
-        ctx.fillStyle = '#94a3b8'; ctx.font = `${10 * s}px Inter, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText(`n=${st.count}`, cx, area.y + area.h + 20 * s);
+        if (!compact) {
+          ctx.fillStyle = '#94a3b8'; ctx.font = `${10 * s}px Inter, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+          ctx.fillText(`n=${st.count}`, cx, panel.y + panel.h + 20 * s);
+        }
       });
-      return;
     }
 
     if (view === 'timeline') {
-      const tps = sm.timePoints;
-      if (tps.length < 2) { drawEmpty(ctx, width, height, 'Timeline needs ≥2 timepoints; this dataset has one.', s); return; }
+      // Prefer the dense track grid; fall back to %-timepoints for datasets without one.
+      // Every token shares the grid, so pointwise averaging across tokens is valid.
+      const moment = pickMoment(cfg.spectralTimelineMoment, availableKeys, 0);
+      const onTrack = sm.trackMoments.some(m => m.key === moment) && sm.trackIndices.length >= 2;
+      const steps = onTrack ? sm.trackIndices : sm.timePoints;
+      if (steps.length < 2) { drawEmpty(ctx, width, height, 'Timeline needs ≥2 positions; this dataset has one.', s); return; }
+      const valueAt = (t: SpeechToken, i: number) =>
+        onTrack ? getSpectralTrackValue(t, sm, moment, i) : getSpectralValue(t, sm, moment, i);
+      // Track samples are an index grid — label them as normalised time 0→1.
+      const first = steps[0], last = steps[steps.length - 1];
+      const axisLabel = onTrack ? 'Normalised time (0 → 1)' : 'Segment position';
+      const tickLabel = (i: number) => onTrack ? `${((i - first) / (last - first)).toFixed(1)}` : `${i}%`;
+
       let vLo = Infinity, vHi = -Infinity;
-      data.forEach(t => tps.forEach(t2 => { const v = getSpectralValue(t, sm, single, t2); if (!isNaN(v)) { vLo = Math.min(vLo, v); vHi = Math.max(vHi, v); } }));
-      if (!isFinite(vLo)) { drawEmpty(ctx, width, height, 'No valid values for the selected moment.', s); return; }
+      data.forEach(t => steps.forEach(i => { const v = valueAt(t, i); if (!isNaN(v)) { vLo = Math.min(vLo, v); vHi = Math.max(vHi, v); } }));
+      if (!isFinite(vLo)) { drawEmpty(ctx, width, height, 'No valid values for the selected measurement.', s); return; }
+
+      // Absolute mode places each token's samples at its own real times, so tokens no
+      // longer share an x-grid. Values are resampled onto a common millisecond grid and
+      // averaged only where enough tokens still reach — short tokens drop out of the
+      // tail rather than dragging the mean toward themselves.
+      const absolute = cfg.spectralContourAbsolute && data.some(t => t.duration > 0);
+      const durMs = (t: SpeechToken) => t.duration * (t.duration < 20 ? 1000 : 1);
+      const maxDur = absolute ? Math.max(...data.map(durMs).filter(d => d > 0), 0) : 0;
+      const MIN_TOKENS_FOR_MEAN = 2;
+      const absGrid = absolute
+        ? Array.from({ length: 40 }, (_, j) => (j / 39) * maxDur)
+        : [];
+      /** Value of a token's contour at an absolute time, by linear interpolation. */
+      const valueAtMs = (t: SpeechToken, ms: number): number => {
+        const d = durMs(t);
+        if (!(d > 0) || ms > d) return NaN;
+        const pos = (ms / d) * (steps.length - 1);
+        const lo = Math.floor(pos), hi = Math.min(steps.length - 1, lo + 1);
+        const a = valueAt(t, steps[lo]), b = valueAt(t, steps[hi]);
+        if (isNaN(a)) return NaN;
+        if (isNaN(b) || lo === hi) return a;
+        return a + (b - a) * (pos - lo);
+      };
+
+      const xValues = absolute ? absGrid : steps;
+      const perGroup = keys.map(k => {
+        const toks = groups[k] || [];
+        const cells = xValues.map((x, j) => {
+          const vals = (absolute ? toks.map(t => valueAtMs(t, x)) : toks.map(t => valueAt(t, steps[j])))
+            .filter(v => !isNaN(v));
+          if (vals.length < (absolute ? MIN_TOKENS_FOR_MEAN : 1)) return { mean: NaN, sd: NaN };
+          const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+          const sd = Math.sqrt(vals.reduce((a, b) => a + (b - mean) ** 2, 0) / vals.length);
+          return { mean, sd };
+        });
+        return { key: k, cells, n: toks.length };
+      });
+      // Bands can exceed the raw value range, so widen the auto range to fit them.
+      if (cfg.spectralShowBand) {
+        perGroup.forEach(g => g.cells.forEach(c => {
+          if (isNaN(c.mean) || isNaN(c.sd)) return;
+          vLo = Math.min(vLo, c.mean - c.sd); vHi = Math.max(vHi, c.mean + c.sd);
+        }));
+      }
       const dpad = (vHi - vLo) * 0.06 || 1; [vLo, vHi] = rangeOr(cfg.spectralYRange, vLo - dpad, vHi + dpad);
-      const mapX = (t2: number) => area.x + ((t2 - tps[0]) / (tps[tps.length - 1] - tps[0])) * area.w;
+      reportRange([0, 0], [vLo, vHi]);
+      const xLo = absolute ? 0 : first, xHi = absolute ? maxDur : last;
+      const mapX = (x: number) => area.x + ((x - xLo) / (xHi - xLo || 1)) * area.w;
       const mapY = (v: number) => area.y + area.h - ((v - vLo) / (vHi - vLo)) * area.h;
-      drawFrame(ctx, area, tps.map(t2 => ({ pos: mapX(t2), label: `${t2}%` })), niceTicks(vLo, vHi).filter(t => t >= vLo && t <= vHi).map(t => ({ pos: mapY(t), label: `${t}` })), 'Segment position', spectralAxisLabel(single), s);
+      const xTicks = absolute
+        ? niceTicks(0, maxDur).filter(t => t >= 0 && t <= maxDur).map(t => ({ pos: mapX(t), label: `${Math.round(t)}` }))
+        : steps.map(i => ({ pos: mapX(i), label: tickLabel(i) }));
+      drawFrame(ctx, area, xTicks,
+        niceTicks(vLo, vHi).filter(t => t >= vLo && t <= vHi).map(t => ({ pos: mapY(t), label: `${t}` })),
+        absolute ? 'Time (ms)' : axisLabel, spectralAxisLabel(moment), s);
+
       if (cfg.spectralShowIndividual) {
         data.forEach(t => {
-          const path = tps.map(t2 => ({ t2, v: getSpectralValue(t, sm, single, t2) })).filter(p => !isNaN(p.v));
+          const path = (absolute
+            ? absGrid.map(x => ({ x, v: valueAtMs(t, x) }))
+            : steps.map(i => ({ x: i, v: valueAt(t, i) }))).filter(p => !isNaN(p.v));
           if (path.length < 2) return;
-          ctx.beginPath(); path.forEach((p, i) => { const x = mapX(p.t2), y = mapY(p.v); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+          ctx.beginPath(); path.forEach((p, j) => { const x = mapX(p.x), y = mapY(p.v); if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
           ctx.strokeStyle = `rgba(${hexToRgb(enc.colorKey ? (enc.colorMap[getLabel(t, enc.colorKey)] || dc) : dc)},0.12)`; ctx.lineWidth = 1 * s; ctx.stroke();
         });
       }
-      keys.forEach(k => {
-        const toks = groups[k] || [], color = colorForKey(k);
-        const means = tps.map(t2 => { const vals = toks.map(t => getSpectralValue(t, sm, single, t2)).filter(v => !isNaN(v)); return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : NaN; });
+
+      // ±1 SD ribbons first, so the mean lines read on top of them.
+      if (cfg.spectralShowBand) {
+        perGroup.forEach(g => {
+          const band = g.cells.map((c, j) => ({ ...c, x: xValues[j] })).filter(c => !isNaN(c.mean) && !isNaN(c.sd));
+          if (band.length < 2) return;
+          ctx.beginPath();
+          band.forEach((c, j) => { const x = mapX(c.x), y = mapY(c.mean + c.sd); if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+          for (let j = band.length - 1; j >= 0; j--) ctx.lineTo(mapX(band[j].x), mapY(band[j].mean - band[j].sd));
+          ctx.closePath();
+          ctx.fillStyle = `rgba(${hexToRgb(colorForKey(g.key))},0.15)`; ctx.fill();
+        });
+      }
+
+      perGroup.forEach(g => {
+        const color = colorForKey(g.key);
         ctx.beginPath(); let started = false;
-        means.forEach((m, i) => { if (isNaN(m)) return; const x = mapX(tps[i]), y = mapY(m); if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); });
+        g.cells.forEach((c, j) => { if (isNaN(c.mean)) { started = false; return; } const x = mapX(xValues[j]), y = mapY(c.mean); if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); });
         ctx.strokeStyle = color; ctx.lineWidth = 3 * s; ctx.stroke();
-        means.forEach((m, i) => { if (isNaN(m)) return; ctx.beginPath(); ctx.arc(mapX(tps[i]), mapY(m), 4 * s, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); });
+        // Absolute mode resamples onto a fine grid, so per-sample dots would be noise.
+        if (!absolute) g.cells.forEach((c, j) => { if (isNaN(c.mean)) return; ctx.beginPath(); ctx.arc(mapX(xValues[j]), mapY(c.mean), 4 * s, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); });
       });
       return;
     }
 
     // density
     {
+      if (!feature) { drawEmpty(ctx, width, height, 'No spectral measurements available.', s); return; }
       let vLo = Infinity, vHi = -Infinity;
-      data.forEach(t => { const v = getSpectralValue(t, sm, single, tp); if (!isNaN(v)) { vLo = Math.min(vLo, v); vHi = Math.max(vHi, v); } });
-      if (!isFinite(vLo)) { drawEmpty(ctx, width, height, 'No valid values for the selected moment/timepoint.', s); return; }
+      data.forEach(t => { const v = featureValue(t); if (!isNaN(v)) { vLo = Math.min(vLo, v); vHi = Math.max(vHi, v); } });
+      if (!isFinite(vLo)) { drawEmpty(ctx, width, height, 'No valid values for the selected measurement.', s); return; }
       const dpad = (vHi - vLo) * 0.05 || 1;
       const [xLo, xHi] = rangeOr(cfg.spectralXRange, vLo - dpad, vHi + dpad);
+      reportRange([xLo, xHi], [0, 0]);
       const grid: number[] = []; const gN = 160; for (let k = 0; k <= gN; k++) grid.push(xLo + (xHi - xLo) * (k / gN));
-      const curves = keys.map(k => ({ key: k, dens: kde((groups[k] || []).map(t => getSpectralValue(t, sm, single, tp)).filter(v => !isNaN(v)), grid) }));
+      const curves = keys.map(k => ({ key: k, dens: kde((groups[k] || []).map(featureValue).filter(v => !isNaN(v)), grid) }));
       const dMax = Math.max(...curves.flatMap(c => c.dens), 1e-9);
       const mapX = (v: number) => area.x + ((v - xLo) / (xHi - xLo)) * area.w;
       const mapY = (d: number) => area.y + area.h - (d / dMax) * area.h * 0.95;
-      drawFrame(ctx, area, niceTicks(xLo, xHi).filter(t => t >= xLo && t <= xHi).map(t => ({ pos: mapX(t), label: `${t}` })), [], spectralAxisLabel(single, tp), 'Density', s);
+      drawFrame(ctx, area, niceTicks(xLo, xHi).filter(t => t >= xLo && t <= xHi).map(t => ({ pos: mapX(t), label: `${t}` })), [], spectralFeatureAxisLabel(feature, flip), 'Density', s);
       curves.forEach(c => {
         const color = colorForKey(c.key);
         ctx.beginPath(); c.dens.forEach((d, k) => { const x = mapX(grid[k]), y = mapY(d); if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
@@ -394,16 +590,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         ctx.strokeStyle = color; ctx.lineWidth = 2 * s; ctx.stroke();
       });
     }
-  }, [sm, availableKeys, layers, layerData, activeConfig, activeData, activeLayer, bgConfig]);
-
-  // ─── Legend (per visible layer, colour/shape/line-type sections) ──
-  const legendLayers = useMemo(() => {
-    const view = activeConfig.spectralMode;
-    const src = view === 'scatter' ? layers.filter(l => l.visible) : [activeLayer];
-    return src.map(layer => ({ layer, enc: computeEncodingMaps(layerData[layer.id] || [], layer.config, layer.styleOverrides), isTraj: view === 'scatter' && layer.config.plotType === 'trajectory' }))
-      .filter(x => x.enc.colorKey || x.enc.shapeKey || x.enc.lineTypeKey);
-  }, [layers, layerData, activeConfig.spectralMode, activeLayer]);
-  const showTitles = legendLayers.length > 1;
+  }, [sm, availableKeys, layers, layerData, activeConfig, activeData, activeLayer, bgConfig, legendLayers]);
 
   // ─── Export handle ────────────────────────────────────────────────
   useImperativeHandle(ref, () => {
@@ -421,7 +608,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       offscreen.width = plotW + legendW + 40 * drawScale; offscreen.height = plotH + titleH + 40 * drawScale;
       const ctx = offscreen.getContext('2d'); if (!ctx) return '';
       ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, offscreen.width, offscreen.height);
-      if (exportConfig.showPlotTitle) { ctx.font = `bold ${(exportConfig.plotTitleSize || 96) * drawScale}px Inter, sans-serif`; ctx.fillStyle = '#0f172a'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(exportConfig.plotTitle || 'Spectral Moments', plotW / 2, titleH / 2); }
+      if (exportConfig.showPlotTitle) { ctx.font = `bold ${(exportConfig.plotTitleSize || 96) * drawScale}px Inter, sans-serif`; ctx.fillStyle = '#0f172a'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(exportConfig.plotTitle || 'Spectral', plotW / 2, titleH / 2); }
       ctx.save(); ctx.translate(0, titleH); renderPlot(ctx, plotW, plotH, 1, drawScale, exportConfig); ctx.restore();
       if (hasLegend) {
         ctx.save(); ctx.translate(plotW + 40 * drawScale, titleH + 40 * drawScale);
@@ -434,7 +621,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
     return {
       exportImage: () => {
         const url = generateImage({ scale: 3, xAxisLabelSize: 96, yAxisLabelSize: 96, tickLabelSize: 64, dataLabelSize: 64, showLegend: true, legendTitleSize: 96, legendItemSize: 40, legendPosition: 'right', showColorLegend: true, colorLegendTitle: 'COLOUR', showShapeLegend: false, shapeLegendTitle: '', showTextureLegend: false, textureLegendTitle: '', showLineTypeLegend: false, lineTypeLegendTitle: '' });
-        if (url) { const a = document.createElement('a'); a.download = 'spectral_moments.png'; a.href = url; a.click(); }
+        if (url) { const a = document.createElement('a'); a.download = 'spectral.png'; a.href = url; a.click(); }
       },
       generateImage,
     };

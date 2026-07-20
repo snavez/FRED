@@ -115,16 +115,32 @@ FRED will load with some demo data so you can explore right away. Upload your ow
 
 ---
 
+## Documentation
+
+**[User Manual](docs/USER_MANUAL.md)** — how to load data, map columns, filter, use every
+plot type (including consonant spectral moments), style groups, and export figures, with
+screenshots throughout.
+
+---
+
 ## What can FRED do?
 
-- **Upload** CSV/TSV files with formant data (F1, F2, F3 trajectories)
+- **Upload** CSV/TSV files with formant data (F1–F5 trajectories, wide or long format)
 - **Auto-detect** column types — no need to rename your columns
 - **Filter** by phoneme, speaker, stress, alignment, and any categorical field
-- **6 plot types**: F1/F2 scatter, F1/F2 trajectories, 3D F1/F2/F3, time-series trajectories, duration box plots, phoneme distributions
+- **Vowel plots**: F1/F2 scatter and trajectories, 3D F1/F2/F3, time-series trajectories
+- **Consonant plots**: spectral moments (COG/SD/skew/kurtosis), measurement tracks and
+  DCT coefficients — scatter, distributions, mean contours, density
+- **General plots**: box-plot summaries of any numeric field, category distributions, table
 - **Multi-layer overlays**: Compare different filtered subsets on the same plot
 - **Customise** colours, shapes, line styles per category per layer
 - **Export** publication-quality PNG images with full layout control
 - **Greyscale mode** for B&W print
+
+FRED reads any CSV that follows the conventions in the
+[user manual](docs/USER_MANUAL.md#1-input-file-format).
+[FormantStudio](https://github.com/snavez/FormantStudio) outputs formant and spectral data
+in FRED-compliant CSV files directly.
 
 ---
 

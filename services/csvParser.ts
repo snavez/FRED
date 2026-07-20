@@ -146,7 +146,10 @@ const SPECTRAL_NAME_TO_ROLE: Record<string, ColumnRole> = {
   skew: 'spectral_skew', skewness: 'spectral_skew',
   kurt: 'spectral_kurt', kurtosis: 'spectral_kurt',
 };
-const SPECTRAL_HEADER_REGEX = /^([a-z]+)(?:_\d+(?:\.\d+)?\s*%?)?(?:_smooth)?$/;
+// Accepts a bare moment name, a timepoint suffix (`_20%`, `_50`), a track-sample
+// suffix (`_t0`…`_tN`) or a coefficient suffix (`_k0`…`_kN`). Grid lengths are never
+// assumed — any index is matched and the counts are discovered from the data.
+const SPECTRAL_HEADER_REGEX = /^([a-z]+)(?:_(?:\d+(?:\.\d+)?\s*%?|t\d+|k\d+))?(?:_smooth)?$/;
 const detectSpectralRole = (lowerHeader: string): ColumnRole | null => {
   const match = lowerHeader.match(SPECTRAL_HEADER_REGEX);
   return match ? (SPECTRAL_NAME_TO_ROLE[match[1]] ?? null) : null;

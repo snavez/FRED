@@ -132,12 +132,23 @@ export interface PlotConfig {
 
   // Spectral Moments Config (consonant analysis: COG/SD/skew/kurt)
   spectralMode: 'scatter' | 'box' | 'timeline' | 'density';
-  spectralXMoment: string;                   // moment key for scatter X (e.g. 'COG')
-  spectralYMoment: string;                   // moment key for scatter Y (e.g. 'SD')
-  spectralMoment: string;                    // single moment for box/trajectory/density
-  spectralTimePoint: number;                 // timepoint for single-value modes (default 50)
+  // Scatter point layers plot any two scalar features. A feature ref is either a
+  // moment at a timepoint ('COG@50') or a shape coefficient ('COG~k1').
+  // Both axes live on the background layer so every layer shares one coordinate
+  // space. Each ref encodes moment + kind + index, so the kind of the X ref is what
+  // the "Data" selector shows; both axes are always kept on the same kind.
+  spectralXFeature: string;                  // scatter X feature ref
+  spectralYFeature: string;                  // scatter Y feature ref
+  spectralFeature: string;                   // single feature for box / density
+  spectralTimelineMoment: string;            // contour moment (e.g. 'COG'); grid from data
+  // Trajectory sweep range, as indices into the active grid ([0,0] = full sweep).
+  spectralTrajRange: [number, number];
   spectralViolin: boolean;                   // box mode: false = box, true = violin
-  spectralShowIndividual: boolean;           // timeline: faded per-token lines
+  spectralShowIndividual: boolean;           // contours: faded per-token lines
+  spectralShowBand: boolean;                 // contours: ±1 SD band around each mean
+  spectralContourAbsolute: boolean;          // contours: absolute (ms) instead of normalised
+  spectralCoeffFacets: boolean;              // box: one mini plot per coefficient
+  spectralFlipSign: boolean;                 // box/density: negate values (k1: neg = rising)
   spectralXRange: [number, number];          // scatter X range ([0,0] = auto)
   spectralYRange: [number, number];          // scatter/box/density value range ([0,0] = auto)
 

@@ -824,6 +824,14 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       }
     });
 
+    // Plot border, matching the Spectral tab. Drawn last so data never sits on top of it,
+    // and inset by half its width so neither edge is clipped by the canvas bounds.
+    const borderW = (1.5 * drawScale) / scale;
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = borderW;
+    ctx.setLineDash([]);
+    ctx.strokeRect(borderW / 2, borderW / 2, width - borderW, height - borderW);
+
     ctx.restore();
   }, [layers, layerData, allMappings, bgConfig, normMethod, speakerStats]);
 

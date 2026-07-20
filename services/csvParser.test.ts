@@ -108,6 +108,25 @@ describe('autoDetectMappings', () => {
     expect(mappings.find(m => m.csvHeader === 'spread_20%')?.role).toBe('spectral_sd');
   });
 
+  it('assigns spectral roles to track and coefficient columns', () => {
+    const headers = ['COG_t0', 'COG_t10', 'SD_t3', 'COG_k0', 'COG_k1', 'SD_k3'];
+    const sampleRows = Array.from({ length: 25 }, (_, i) => [
+      `${400 + i}`, `${500 + i}`, `${300 + i}`, `${1600 + i}`, `${-44 - i}`, `${9 + i}`,
+    ]);
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    for (const h of ['COG_t0', 'COG_t10', 'COG_k0', 'COG_k1']) {
+      expect(mappings.find(m => m.csvHeader === h)?.role).toBe('spectral_cog');
+    }
+    for (const h of ['SD_t3', 'SD_k3']) {
+      expect(mappings.find(m => m.csvHeader === h)?.role).toBe('spectral_sd');
+    }
+    // must survive the high-cardinality ignore heuristic
+    for (const h of headers) {
+      expect(mappings.find(m => m.csvHeader === h)?.isDataField).toBe(true);
+    }
+  });
+
   it('does not misclassify non-moment columns as spectral', () => {
     const headers = ['winms_20%', 'word', 'sda_50'];
     const sampleRows = Array.from({ length: 25 }, (_, i) => [

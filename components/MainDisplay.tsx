@@ -2,7 +2,11 @@
 import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, VariableType, StyleOverrides, Layer, DatasetMeta, NormalizationMethod } from '../types';
 import { SpeakerStatsMap, getRangeStep, getAxisLabel, computeNormalizedRange } from '../utils/normalization';
-import { discoverSpectralMoments, isSpectralRole } from '../utils/spectralMoments';
+import {
+  discoverSpectralMoments, isSpectralRole, listSpectralFeatures, formatSpectralFeature,
+  spectralFeatureLabel, parseSpectralFeature, spectralMomentsOfKind, spectralIndicesOfKind,
+  spectralKindLabel, spectralIndexLabel, SpectralKind, SpectralFeature,
+} from '../utils/spectralMoments';
 import CanvasPlot from './CanvasPlot';
 import TrajectoryTimeSeries from './TrajectoryTimeSeries';
 import TrajectoryF1F2 from './TrajectoryF1F2';
@@ -37,6 +41,27 @@ interface MainDisplayProps {
 // Non-linear opacity slider helpers: x^2 curve gives more travel at the transparent end
 const opacityToSlider = (opacity: number) => Math.sqrt(opacity);
 const sliderToOpacity = (slider: number) => slider * slider;
+
+/**
+ * Tab bar grouping. "General" holds the plots that work on any numeric field —
+ * formants, durations and spectral measures alike — so they serve both vowel and
+ * consonant work rather than being leftovers.
+ */
+const TAB_GROUPS: { label: string; tabs: { id: string; label: string; icon: React.ElementType }[] }[] = [
+  { label: 'Vowels', tabs: [
+    { id: 'vowel', label: 'F1/F2', icon: Grid },
+    { id: '3d', label: '3D F1/F2/F3', icon: Box },
+    { id: 'traj_series', label: 'Time Series', icon: LineChart },
+  ] },
+  { label: 'Consonants', tabs: [
+    { id: 'spectral', label: 'Spectral', icon: Waves },
+  ] },
+  { label: 'General', tabs: [
+    { id: 'duration', label: 'Data Summaries', icon: BarChart2 },
+    { id: 'dist', label: 'Distributions', icon: PieChart },
+    { id: 'table', label: 'Table', icon: Table },
+  ] },
+];
 
 /** Pretty label for a field key */
 const prettyLabel = (key: string, meta?: DatasetMeta | null): string => {
@@ -250,6 +275,116 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
   // Spectral moments present in the active dataset (COG/SD/skew/kurt + timepoints).
   const spectralMeta = useMemo(() => discoverSpectralMoments(activeData, datasetMeta), [activeData, datasetMeta]);
+
+  /** Every scalar the spectral measure picker can offer (box / density). */
+  const spectralFeatureOptions = useMemo(() =>
+    listSpectralFeatures(spectralMeta).map(f => ({
+      value: formatSpectralFeature(f), label: spectralFeatureLabel(f),
+    })), [spectralMeta]);
+
+  /** Moments whose contour can be averaged over time — a track if present, else %-timepoints. */
+  const spectralContourMoments = useMemo(() =>
+    spectralMeta.trackMoments.length > 0 ? spectralMeta.trackMoments : spectralMeta.moments,
+    [spectralMeta]);
+
+  /**
+   * The range the spectral plot actually drew. The range inputs show these numbers while
+   * a config range is still auto ([0,0]), so the arrows step from what is on screen
+   * instead of from a placeholder 0 that would throw the data off the plot.
+   */
+  const [spectralAutoRange, setSpectralAutoRange] = useState<{ x: [number, number], y: [number, number] } | null>(null);
+
+  /** Round to a sensible step for display in a range box. */
+  const roundForInput = (v: number) => {
+    const mag = Math.abs(v);
+    return mag >= 100 ? Math.round(v) : mag >= 1 ? Math.round(v * 10) / 10 : Math.round(v * 1000) / 1000;
+  };
+
+  /**
+   * Value to show in a range box: the manual range once set, else the drawn range.
+   * `axis` picks which auto range to fall back to.
+   */
+  const spectralRangeValue = (cfgRange: [number, number], axis: 'x' | 'y', end: 0 | 1): number => {
+    const isAuto = cfgRange[0] === 0 && cfgRange[1] === 0;
+    if (!isAuto) return cfgRange[end];
+    const auto = spectralAutoRange?.[axis];
+    return auto && (auto[0] !== 0 || auto[1] !== 0) ? roundForInput(auto[end]) : 0;
+  };
+
+  /**
+   * Editing one end of an auto range seeds the other from what is on screen, so the plot
+   * stays sensible instead of collapsing against a 0 the user never chose.
+   */
+  const spectralRangeEdit = (
+    cfgRange: [number, number], axis: 'x' | 'y', end: 0 | 1, raw: string,
+  ): [number, number] => {
+    const next: [number, number] = [
+      spectralRangeValue(cfgRange, axis, 0),
+      spectralRangeValue(cfgRange, axis, 1),
+    ];
+    next[end] = parseFloat(raw) || 0;
+    return next;
+  };
+
+  /** Compact label for an axis-range heading, e.g. "COG @50%" or "COG k1 (slope)". */
+  const spectralAxisChip = (ref: string): string => {
+    const f = parseSpectralFeature(ref);
+    return f ? spectralFeatureLabel(f) : ref;
+  };
+
+  /**
+   * Scatter axis state, derived from the stored feature refs. The X ref's kind is the
+   * "Data" family; both axes are always held on the same kind so you can never compare
+   * a track sample against a %-timepoint by accident.
+   */
+  const spectralAxes = useMemo(() => {
+    const x = parseSpectralFeature(bgConfig.spectralXFeature);
+    const y = parseSpectralFeature(bgConfig.spectralYFeature);
+    const kind: SpectralKind = x?.kind ?? 'point';
+    const kindsAvailable = (['point', 'track', 'coeff'] as SpectralKind[])
+      .filter(k => spectralMomentsOfKind(spectralMeta, k).length > 0);
+    return {
+      x, y, kind, kindsAvailable,
+      moments: spectralMomentsOfKind(spectralMeta, kind),
+      indices: spectralIndicesOfKind(spectralMeta, kind),
+    };
+  }, [bgConfig.spectralXFeature, bgConfig.spectralYFeature, spectralMeta]);
+
+  /** Rewrite both axis refs, keeping them on one kind. */
+  const setSpectralAxis = (which: 'x' | 'y', next: Partial<SpectralFeature>) => {
+    const cur = which === 'x' ? spectralAxes.x : spectralAxes.y;
+    const base: SpectralFeature = cur ?? { moment: 'COG', kind: 'point', index: 50 };
+    const merged = { ...base, ...next };
+    updateLayerConfig(layers[0].id, which === 'x' ? 'spectralXFeature' : 'spectralYFeature',
+      formatSpectralFeature(merged));
+  };
+
+  /** Switching family re-seeds both axes with the first valid feature of that kind. */
+  const setSpectralKind = (kind: SpectralKind) => {
+    const moments = spectralMomentsOfKind(spectralMeta, kind);
+    const indices = spectralIndicesOfKind(spectralMeta, kind);
+    if (!moments.length || !indices.length) return;
+    // Coefficients default to k0 x k1 of one moment — the height/slope shape space.
+    const xf: SpectralFeature = { moment: moments[0].key, kind, index: indices[0] };
+    const yf: SpectralFeature = kind === 'coeff'
+      ? { moment: moments[0].key, kind, index: indices[1] ?? indices[0] }
+      : { moment: (moments[1] ?? moments[0]).key, kind, index: indices[0] };
+    updateLayerConfig(layers[0].id, 'spectralXFeature', formatSpectralFeature(xf));
+    updateLayerConfig(layers[0].id, 'spectralYFeature', formatSpectralFeature(yf));
+  };
+
+  /** Shared position (timepoint / track sample) — moves both axes together. */
+  const setSpectralPosition = (index: number) => {
+    setSpectralAxis('x', { index });
+    setSpectralAxis('y', { index });
+  };
+
+  /** Grid a trajectory sweeps: the track when the axes are on tracks, else %-timepoints. */
+  const spectralSweepGrid = useMemo(() => {
+    const k = spectralAxes.kind;
+    return k === 'track' ? spectralMeta.trackIndices
+      : k === 'point' ? spectralMeta.timePoints : [];
+  }, [spectralAxes.kind, spectralMeta]);
 
   const handleConfig = (key: keyof PlotConfig, val: any) => {
       updateLayerConfig(activeLayerId, key, val);
@@ -557,14 +692,28 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
       {/* Top Bar: Tabs + Toolbar */}
       <div className="flex flex-col space-y-2 shrink-0">
         <div className="flex items-center justify-between">
-          <div className="flex bg-white p-1 rounded-lg border border-slate-200 w-fit shadow-sm overflow-x-auto">
-            <button onClick={() => setActiveTab('vowel')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'vowel' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Grid size={16} /><span>F1/F2</span></button>
-            <button onClick={() => setActiveTab('3d')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === '3d' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Box size={16} /><span>3D F1/F2/F3</span></button>
-            <button onClick={() => setActiveTab('traj_series')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'traj_series' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><LineChart size={16} /><span>Time Series</span></button>
-            <button onClick={() => setActiveTab('spectral')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'spectral' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Waves size={16} /><span>Spectral Moments</span></button>
-            <button onClick={() => setActiveTab('duration')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'duration' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><BarChart2 size={16} /><span>Data Summaries</span></button>
-            <button onClick={() => setActiveTab('dist')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'dist' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><PieChart size={16} /><span>Distributions</span></button>
-            <button onClick={() => setActiveTab('table')} className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === 'table' ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}><Table size={16} /><span>Table</span></button>
+          {/* Tabs grouped by what the plots are for. Every plot stays one click away —
+              the labels are an organisational cue, not a second level of navigation. */}
+          <div className="flex items-end bg-white p-1 rounded-lg border border-slate-200 w-fit shadow-sm overflow-x-auto">
+            {TAB_GROUPS.map((group, gi) => (
+              <React.Fragment key={group.label}>
+                {gi > 0 && <div className="self-stretch w-px bg-slate-200 mx-1.5 my-1"></div>}
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider px-3 pb-1">{group.label}</span>
+                  <div className="flex">
+                    {group.tabs.map(tab => (
+                      <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`flex items-center space-x-2 px-3 py-1.5 rounded-md text-sm font-semibold transition-all whitespace-nowrap ${activeTab === tab.id ? 'bg-slate-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                      >
+                        <tab.icon size={16} /><span>{tab.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </React.Fragment>
+            ))}
           </div>
 
           {activeTab !== 'table' && (
@@ -1040,78 +1189,174 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 {/* ── Spectral Moments Row 1: Mode / Axes / Type / Moment / Time ── */}
                 {activeTab === 'spectral' && !spectralMeta.available && (
                   <span className="text-xs text-slate-400 italic">
-                    No spectral-moment columns (COG / SD / skew / kurt) detected in this dataset.
+                    No spectral columns (COG / SD / skew / kurt, tracks or coefficients) detected in this dataset.
                   </span>
                 )}
                 {activeTab === 'spectral' && spectralMeta.available && (
                   <>
-                    {/* Mode (active layer). In scatter mode all visible layers overlay. */}
+                    {/* Which plot */}
                     <div className="flex items-center gap-2">
-                      <label className="font-semibold text-slate-600">Mode:</label>
+                      <label className="font-semibold text-slate-600">Plot:</label>
                       <select
                         className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
                         value={currentConfig.spectralMode}
                         onChange={e => handleConfig('spectralMode', e.target.value)}
                       >
-                        <option value="scatter">Moment scatter (layers)</option>
-                        <option value="box">Distribution (box / violin)</option>
-                        <option value="timeline">Timeline (moment × position)</option>
+                        <option value="scatter">Scatter</option>
+                        <option value="box">Distribution</option>
+                        <option value="timeline">Mean contours</option>
                         <option value="density">Density</option>
                       </select>
                     </div>
 
-                    {/* Scatter: shared axes (background layer) + per-layer type */}
+                    {/* Which variant of that plot */}
+                    {currentConfig.spectralMode === 'scatter' && (
+                      <HelpTooltip helpMode={helpMode} text={`Points = one marker per token. Trajectory = a path through the axis space over time, swept along whichever data set is chosen below.`}>
+                      <div className="flex items-center gap-2">
+                        <label className="font-semibold text-slate-600">Mode:</label>
+                        <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={currentConfig.plotType}
+                          onChange={e => {
+                            const next = e.target.value;
+                            handleConfig('plotType', next);
+                            // Coefficients cannot be swept, so move the axes onto a
+                            // time-varying kind rather than leaving the plot on a
+                            // selection the Data dropdown can no longer show.
+                            if (next === 'trajectory' && spectralAxes.kind === 'coeff') {
+                              setSpectralKind(spectralAxes.kindsAvailable.find(k => k !== 'coeff') ?? 'point');
+                            }
+                          }}>
+                          <option value="point">Points</option>
+                          <option value="trajectory">Trajectory</option>
+                        </select>
+                      </div>
+                      </HelpTooltip>
+                    )}
+                    {currentConfig.spectralMode === 'box' && (
+                      <div className="flex items-center gap-2">
+                        <label className="font-semibold text-slate-600">Mode:</label>
+                        <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={currentConfig.spectralViolin ? 'violin' : 'box'} onChange={e => handleConfig('spectralViolin', e.target.value === 'violin')}>
+                          <option value="box">Box</option>
+                          <option value="violin">Violin</option>
+                        </select>
+                      </div>
+                    )}
+                    {currentConfig.spectralMode === 'timeline' && (
+                      <HelpTooltip helpMode={helpMode} text="Normalised draws every token on a 0→1 axis, which discards duration — a 30 ms and a 120 ms segment look the same width. Absolute uses each token's real duration in milliseconds; the group mean is drawn only where enough tokens still overlap.">
+                      <div className="flex items-center gap-2">
+                        <label className="font-semibold text-slate-600">Mode:</label>
+                        <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={currentConfig.spectralContourAbsolute ? 'absolute' : 'normalised'} onChange={e => handleConfig('spectralContourAbsolute', e.target.value === 'absolute')}>
+                          <option value="normalised">Normalised</option>
+                          <option value="absolute">Absolute (ms)</option>
+                        </select>
+                      </div>
+                      </HelpTooltip>
+                    )}
+
+                    {/* Scatter: which data set, then the axes within it */}
                     {currentConfig.spectralMode === 'scatter' && (
                       <>
-                        <HelpTooltip helpMode={helpMode} text="Axes define the shared coordinate space for all layers, so they are controlled by the background layer.">
+                        {spectralAxes.kindsAvailable.length > 1 && (
+                          <HelpTooltip helpMode={helpMode} text="Which set of columns to plot. Both axes stay on the same set, so you can never compare a track sample against a %-timepoint by accident. Coefficients describe contour shape (k0 height, k1 slope, k2 curvature) and have no time axis, so they cannot be swept as a trajectory.">
+                          <div className="flex items-center gap-2">
+                            <label className="font-semibold text-slate-600">Data:</label>
+                            <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={spectralAxes.kind}
+                              onChange={e => setSpectralKind(e.target.value as SpectralKind)}>
+                              {spectralAxes.kindsAvailable
+                                .filter(k => currentConfig.plotType !== 'trajectory' || k !== 'coeff')
+                                .map(k => <option key={k} value={k}>{spectralKindLabel(k)}</option>)}
+                            </select>
+                          </div>
+                          </HelpTooltip>
+                        )}
+
+                        <HelpTooltip helpMode={helpMode} text="Axes define the shared coordinate space for every layer, so they live on the background layer.">
                         <div className="flex items-center gap-2">
                           <label className="font-semibold text-slate-600">Axes X:</label>
-                          <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={bgConfig.spectralXMoment} onChange={e => updateLayerConfig(layers[0].id, 'spectralXMoment', e.target.value)}>
-                            {spectralMeta.moments.map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
+                          <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
+                            value={spectralAxes.x?.moment ?? ''}
+                            onChange={e => setSpectralAxis('x', { moment: e.target.value as any })}>
+                            {spectralAxes.moments.map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
                           </select>
+                          {/* Coefficients pick their order per axis — k0 × k1 of one moment is the point */}
+                          {spectralAxes.kind === 'coeff' && (
+                            <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
+                              value={spectralAxes.x?.index ?? 0}
+                              onChange={e => setSpectralAxis('x', { index: parseInt(e.target.value, 10) })}>
+                              {spectralAxes.indices.map(i => <option key={i} value={i}>{spectralIndexLabel('coeff', i)}</option>)}
+                            </select>
+                          )}
                           <label className="font-semibold text-slate-600">Y:</label>
-                          <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={bgConfig.spectralYMoment} onChange={e => updateLayerConfig(layers[0].id, 'spectralYMoment', e.target.value)}>
-                            {spectralMeta.moments.map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
+                          <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
+                            value={spectralAxes.y?.moment ?? ''}
+                            onChange={e => setSpectralAxis('y', { moment: e.target.value as any })}>
+                            {spectralAxes.moments.map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
                           </select>
+                          {spectralAxes.kind === 'coeff' && (
+                            <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
+                              value={spectralAxes.y?.index ?? 0}
+                              onChange={e => setSpectralAxis('y', { index: parseInt(e.target.value, 10) })}>
+                              {spectralAxes.indices.map(i => <option key={i} value={i}>{spectralIndexLabel('coeff', i)}</option>)}
+                            </select>
+                          )}
                         </div>
                         </HelpTooltip>
 
-                        <div className="w-px h-6 bg-slate-200"></div>
-
-                        {/* Active-layer type: points vs moment-space trajectory */}
-                        <HelpTooltip helpMode={helpMode} text={`Editing layer "${activeLayer.name}". Point = one marker per token at the chosen timepoint. Trajectory = a path through moment space across all timepoints (e.g. a stop release from onset to offset).`}>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[9px] font-bold text-slate-500 uppercase">{activeLayer.name}</span>
-                          <label className="font-semibold text-slate-600">Type:</label>
-                          <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={currentConfig.plotType} onChange={e => handleConfig('plotType', e.target.value)}>
-                            <option value="point">Points</option>
-                            <option value="trajectory">Trajectory</option>
-                          </select>
-                        </div>
-                        </HelpTooltip>
+                        {/* Points: one shared position, as with formants. Trajectory: a sweep range. */}
+                        {currentConfig.plotType !== 'trajectory' && spectralAxes.kind !== 'coeff' && spectralAxes.indices.length > 1 && (
+                          <div className="flex items-center gap-2">
+                            <label className="font-semibold text-slate-600">{spectralAxes.kind === 'track' ? 'Sample:' : 'Time:'}</label>
+                            <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
+                              value={spectralAxes.x?.index ?? spectralAxes.indices[0]}
+                              onChange={e => setSpectralPosition(parseFloat(e.target.value))}>
+                              {spectralAxes.indices.map(i => <option key={i} value={i}>{spectralIndexLabel(spectralAxes.kind, i)}</option>)}
+                            </select>
+                          </div>
+                        )}
+                        {currentConfig.plotType === 'trajectory' && spectralSweepGrid.length > 1 && (
+                          <HelpTooltip helpMode={helpMode} text="Trim the sweep to part of the segment — useful when the first or last sample is unreliable (the track is inset by half an analysis window, so the endpoints are not literally the segment edges).">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[9px] font-bold text-slate-500 uppercase">Range</span>
+                            <div className="flex items-center gap-1">
+                              <select className="p-0.5 border rounded text-[10px]"
+                                value={bgConfig.spectralTrajRange[0] || spectralSweepGrid[0]}
+                                onChange={e => updateLayerConfig(layers[0].id, 'spectralTrajRange', [parseFloat(e.target.value), bgConfig.spectralTrajRange[1] || spectralSweepGrid[spectralSweepGrid.length - 1]])}>
+                                {spectralSweepGrid.map(i => <option key={i} value={i}>{spectralIndexLabel(spectralAxes.kind, i)}</option>)}
+                              </select>
+                              <span className="text-slate-400">–</span>
+                              <select className="p-0.5 border rounded text-[10px]"
+                                value={bgConfig.spectralTrajRange[1] || spectralSweepGrid[spectralSweepGrid.length - 1]}
+                                onChange={e => updateLayerConfig(layers[0].id, 'spectralTrajRange', [bgConfig.spectralTrajRange[0] || spectralSweepGrid[0], parseFloat(e.target.value)])}>
+                                {spectralSweepGrid.map(i => <option key={i} value={i}>{spectralIndexLabel(spectralAxes.kind, i)}</option>)}
+                              </select>
+                            </div>
+                          </div>
+                          </HelpTooltip>
+                        )}
                       </>
                     )}
 
-                    {/* Box / timeline / density: single moment picker (active layer) */}
-                    {currentConfig.spectralMode !== 'scatter' && (
+                    {/* Box / density: one scalar feature (active layer) */}
+                    {(currentConfig.spectralMode === 'box' || currentConfig.spectralMode === 'density') && (
+                      <HelpTooltip helpMode={helpMode} text="The value being summarised. Coefficients describe the shape of the measurement contour: k0 its overall height, k1 its slope, k2 its curvature. A box plot of k1 by group turns a visual impression of contour direction into a comparable number.">
                       <div className="flex items-center gap-2">
-                        <label className="font-semibold text-slate-600">Moment:</label>
-                        <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={currentConfig.spectralMoment} onChange={e => handleConfig('spectralMoment', e.target.value)}>
-                          {spectralMeta.moments.map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
+                        <label className="font-semibold text-slate-600">Measure:</label>
+                        <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={currentConfig.spectralFeature} onChange={e => handleConfig('spectralFeature', e.target.value)}>
+                          {spectralFeatureOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
                       </div>
+                      </HelpTooltip>
                     )}
 
-                    {/* Timepoint — hidden for timeline (spans all) and for scatter trajectory layers */}
-                    {currentConfig.spectralMode !== 'timeline'
-                      && !(currentConfig.spectralMode === 'scatter' && currentConfig.plotType === 'trajectory')
-                      && spectralMeta.timePoints.length > 1 && (
+                    {/* Contours: which moment to average */}
+                    {currentConfig.spectralMode === 'timeline' && (
+                      <HelpTooltip helpMode={helpMode} text="Mean contour per group. Because every token shares the grid, pointwise averaging is valid. Caveat: pair this with a duration box plot in Data Summaries — normalised time hides duration differences.">
                       <div className="flex items-center gap-2">
-                        <label className="font-semibold text-slate-600">Time:</label>
-                        <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={currentConfig.spectralTimePoint} onChange={e => handleConfig('spectralTimePoint', parseFloat(e.target.value))}>
-                          {spectralMeta.timePoints.map(tp => <option key={tp} value={tp}>{tp}%</option>)}
+                        <label className="font-semibold text-slate-600">Measure:</label>
+                        <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={currentConfig.spectralTimelineMoment} onChange={e => handleConfig('spectralTimelineMoment', e.target.value)}>
+                          {spectralContourMoments.map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
                         </select>
                       </div>
+                      </HelpTooltip>
                     )}
                   </>
                 )}
@@ -1178,25 +1423,25 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   {activeTab === 'spectral' && currentConfig.spectralMode === 'scatter' && (
                     <>
                       <div className="flex flex-col" title="X axis range — set both to 0 for auto-fit">
-                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">X · {bgConfig.spectralXMoment}</span>
+                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">X · {spectralAxisChip(bgConfig.spectralXFeature)}</span>
                         <div className="flex items-center gap-1">
                           <span className="text-[9px] font-bold text-slate-500">Min</span>
-                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={bgConfig.spectralXRange[0]} onChange={e => updateLayerConfig(layers[0].id, 'spectralXRange', [parseFloat(e.target.value) || 0, bgConfig.spectralXRange[1]])} />
+                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={spectralRangeValue(bgConfig.spectralXRange, 'x', 0)} onChange={e => updateLayerConfig(layers[0].id, 'spectralXRange', spectralRangeEdit(bgConfig.spectralXRange, 'x', 0, e.target.value))} />
                         </div>
                         <div className="flex items-center gap-1">
                           <span className="text-[9px] font-bold text-slate-500">Max</span>
-                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={bgConfig.spectralXRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'spectralXRange', [bgConfig.spectralXRange[0], parseFloat(e.target.value) || 0])} />
+                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={spectralRangeValue(bgConfig.spectralXRange, 'x', 1)} onChange={e => updateLayerConfig(layers[0].id, 'spectralXRange', spectralRangeEdit(bgConfig.spectralXRange, 'x', 1, e.target.value))} />
                         </div>
                       </div>
                       <div className="flex flex-col" title="Y axis range — set both to 0 for auto-fit">
-                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">Y · {bgConfig.spectralYMoment}</span>
+                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">Y · {spectralAxisChip(bgConfig.spectralYFeature)}</span>
                         <div className="flex items-center gap-1">
                           <span className="text-[9px] font-bold text-slate-500">Min</span>
-                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={bgConfig.spectralYRange[0]} onChange={e => updateLayerConfig(layers[0].id, 'spectralYRange', [parseFloat(e.target.value) || 0, bgConfig.spectralYRange[1]])} />
+                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={spectralRangeValue(bgConfig.spectralYRange, 'y', 0)} onChange={e => updateLayerConfig(layers[0].id, 'spectralYRange', spectralRangeEdit(bgConfig.spectralYRange, 'y', 0, e.target.value))} />
                         </div>
                         <div className="flex items-center gap-1">
                           <span className="text-[9px] font-bold text-slate-500">Max</span>
-                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={bgConfig.spectralYRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'spectralYRange', [bgConfig.spectralYRange[0], parseFloat(e.target.value) || 0])} />
+                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={spectralRangeValue(bgConfig.spectralYRange, 'y', 1)} onChange={e => updateLayerConfig(layers[0].id, 'spectralYRange', spectralRangeEdit(bgConfig.spectralYRange, 'y', 1, e.target.value))} />
                         </div>
                       </div>
                     </>
@@ -1204,18 +1449,24 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   {/* Spectral summary modes: value-axis range for the active layer.
                       Density plots the moment on X; box/timeline plot it on Y. */}
                   {activeTab === 'spectral' && currentConfig.spectralMode !== 'scatter' && (() => {
-                    const rangeKey = currentConfig.spectralMode === 'density' ? 'spectralXRange' : 'spectralYRange';
-                    const range = currentConfig[rangeKey] || [0, 0];
+                    const isDensity = currentConfig.spectralMode === 'density';
+                    const rangeKey = isDensity ? 'spectralXRange' : 'spectralYRange';
+                    const axis = isDensity ? 'x' : 'y';
+                    const range = (currentConfig[rangeKey] || [0, 0]) as [number, number];
                     return (
                       <div className="flex flex-col" title="Value axis range — set both to 0 for auto-fit">
-                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">{currentConfig.spectralMoment}</span>
+                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">
+                          {currentConfig.spectralMode === 'timeline'
+                            ? currentConfig.spectralTimelineMoment
+                            : spectralAxisChip(currentConfig.spectralFeature)}
+                        </span>
                         <div className="flex items-center gap-1">
                           <span className="text-[9px] font-bold text-slate-500">Min</span>
-                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={range[0]} onChange={e => handleConfig(rangeKey, [parseFloat(e.target.value) || 0, range[1]])} />
+                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={spectralRangeValue(range, axis, 0)} onChange={e => handleConfig(rangeKey, spectralRangeEdit(range, axis, 0, e.target.value))} />
                         </div>
                         <div className="flex items-center gap-1">
                           <span className="text-[9px] font-bold text-slate-500">Max</span>
-                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={range[1]} onChange={e => handleConfig(rangeKey, [range[0], parseFloat(e.target.value) || 0])} />
+                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={spectralRangeValue(range, axis, 1)} onChange={e => handleConfig(rangeKey, spectralRangeEdit(range, axis, 1, e.target.value))} />
                         </div>
                       </div>
                     );
@@ -1818,17 +2069,30 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 {currentConfig.spectralMode !== 'scatter' && (
                   <>
                     {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
-                    {currentConfig.spectralMode === 'box' && (
-                      <label className="flex items-center gap-1 cursor-pointer ml-1" title="Draw violins instead of boxes">
-                        <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.spectralViolin} onChange={e => handleConfig('spectralViolin', e.target.checked)} />
-                        <span className="text-[10px] font-bold text-slate-600">Violin</span>
+                    {currentConfig.spectralMode === 'box' && spectralMeta.coeffIndices.length > 1 && (
+                      <label className="flex items-center gap-1 cursor-pointer ml-1" title="Show one mini plot per coefficient, sharing the group axis. Each panel gets its own scale, so k0 doesn't dwarf the rest.">
+                        <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.spectralCoeffFacets} onChange={e => handleConfig('spectralCoeffFacets', e.target.checked)} />
+                        <span className="text-[10px] font-bold text-slate-600">All coefficients</span>
+                      </label>
+                    )}
+                    {(currentConfig.spectralMode === 'box' || currentConfig.spectralMode === 'density')
+                      && parseSpectralFeature(currentConfig.spectralFeature)?.kind === 'coeff' && (
+                      <label className="flex items-center gap-1 cursor-pointer ml-1" title="Negate the coefficient. A rising contour has a negative k1, so flipping the sign makes 'higher = rising' read naturally.">
+                        <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.spectralFlipSign} onChange={e => handleConfig('spectralFlipSign', e.target.checked)} />
+                        <span className="text-[10px] font-bold text-slate-600">Flip sign</span>
                       </label>
                     )}
                     {currentConfig.spectralMode === 'timeline' && (
-                      <label className="flex items-center gap-1 cursor-pointer ml-1" title="Show faded individual-token lines behind the means">
-                        <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.spectralShowIndividual} onChange={e => handleConfig('spectralShowIndividual', e.target.checked)} />
-                        <span className="text-[10px] font-bold text-slate-600">Individual lines</span>
-                      </label>
+                      <>
+                        <label className="flex items-center gap-1 cursor-pointer ml-1" title="Shade ±1 standard deviation around each group mean">
+                          <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.spectralShowBand} onChange={e => handleConfig('spectralShowBand', e.target.checked)} />
+                          <span className="text-[10px] font-bold text-slate-600">±1 SD band</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer ml-1" title="Show faded individual-token lines behind the means">
+                          <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.spectralShowIndividual} onChange={e => handleConfig('spectralShowIndividual', e.target.checked)} />
+                          <span className="text-[10px] font-bold text-slate-600">Individual lines</span>
+                        </label>
+                      </>
                     )}
                   </>
                 )}
@@ -2247,6 +2511,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             activeLayerId={activeLayerId}
             datasetMeta={datasetMeta}
             onLegendClick={handleLegendClick}
+            onAutoRange={setSpectralAutoRange}
           />
         )}
         {activeTab === 'duration' && (

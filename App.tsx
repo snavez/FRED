@@ -96,14 +96,19 @@ const INITIAL_CONFIG: PlotConfig = {
   distHistOverlap: 'stacked',
   distHistOpacity: 0.6,
 
-  // Spectral Moments defaults
+  // Spectral defaults
   spectralMode: 'scatter',
-  spectralXMoment: 'COG',
-  spectralYMoment: 'SD',
-  spectralMoment: 'COG',
-  spectralTimePoint: 50,
+  spectralXFeature: 'COG@50',
+  spectralYFeature: 'SD@50',
+  spectralFeature: 'COG@50',
+  spectralTimelineMoment: 'COG',
+  spectralTrajRange: [0, 0],
   spectralViolin: false,
   spectralShowIndividual: true,
+  spectralShowBand: true,
+  spectralContourAbsolute: false,
+  spectralCoeffFacets: false,
+  spectralFlipSign: false,
   spectralXRange: [0, 0],
   spectralYRange: [0, 0],
 
