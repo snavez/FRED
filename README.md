@@ -6,6 +6,20 @@ A browser-based tool for visualising acoustic speech data. Upload your formant d
 
 ---
 
+## Use FRED now — no installation
+
+FRED is hosted at:
+
+**https://snavez.github.io/FRED/**
+
+Open that link and start plotting. Your data stays in your browser — nothing is uploaded
+to a server, hosted or not.
+
+The steps below are only for running FRED from the source code (for development, or for
+fully offline use).
+
+---
+
 ## Quick Start (5 minutes)
 
 ### Step 1: Install Node.js

@@ -7,8 +7,9 @@ distributions, and consonant spectral data. You can export each plot as an image
 FRED operates fully in your browser. It does not send your data to a server. You do not
 need an account.
 
-> **To install FRED**, refer to the [README](../README.md). It gives the steps to install
-> Node.js and to start the program.
+> **You do not have to install FRED.** The program is available at
+> <https://snavez.github.io/FRED/>. To run FRED from the source code instead, refer to the
+> [README](../README.md).
 
 ![The FRED window. It shows an F1/F2 vowel space and the sidebar filters.](images/f1f2-overview.png)
 
