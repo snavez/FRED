@@ -341,6 +341,25 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     return result;
   }, [layers, layerData]);
 
+  // Whether the on-screen legend has anything to show (mirrors Legend's own logic:
+  // trajectory layers ignore shapeKey). Drives the right-hand gutter reservation.
+  const hasLegend = useMemo(() => layers.some(l => {
+    if (!l.visible) return false;
+    const m = allMappings[l.id];
+    if (!m) return false;
+    return !!(m.colorKey || m.lineTypeKey || (l.config.plotType !== 'trajectory' && m.shapeKey));
+  }), [layers, allMappings]);
+
+  /**
+   * Data area of the live canvas, matching the Spectral tab: room on the left/bottom for
+   * ticks and axis titles, and a right-hand gutter so the frame sits entirely to the
+   * left of the on-screen legend. Export keeps the full area — it lays out its own
+   * margins, labels and legend around the plot.
+   */
+  const plotArea = (width: number, height: number, exporting: boolean) => exporting
+    ? { x: 0, y: 0, w: width, h: height }
+    : { x: 82, y: 24, w: width - 82 - (hasLegend ? 288 : 24), h: height - 24 - 56 };
+
   // Spatial grid index for O(1) hover hit-testing (rebuilt when data/config changes)
   const spatialGrid = useMemo(() => {
     const canvas = canvasRef.current;
@@ -359,13 +378,15 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     const rows = Math.ceil(gridH / CELL_SIZE);
     const grid: { token: SpeechToken; layerId: string; x: number; y: number }[][] = new Array(cols * rows);
 
+    // Must mirror renderPlot's live mapping exactly, or hover misses the markers.
+    const area = plotArea(width, height, false);
     const mapX = (f2: number) => {
       const norm = (f2 - bgConfig.f2Range[0]) / (bgConfig.f2Range[1] - bgConfig.f2Range[0]);
-      return bgConfig.invertX ? (1 - norm) * width : norm * width;
+      return area.x + (bgConfig.invertX ? (1 - norm) : norm) * area.w;
     };
     const mapY = (f1: number) => {
       const norm = (f1 - bgConfig.f1Range[0]) / (bgConfig.f1Range[1] - bgConfig.f1Range[0]);
-      return bgConfig.invertY ? norm * height : (1 - norm) * height;
+      return area.y + (bgConfig.invertY ? norm : (1 - norm)) * area.h;
     };
 
     const addToGrid = (px: number, py: number, token: SpeechToken, layerId: string) => {
@@ -405,7 +426,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     });
 
     return { grid, cols, rows, cellSize: CELL_SIZE, originX, originY };
-  }, [layers, layerData, bgConfig.f1Range, bgConfig.f2Range, bgConfig.invertX, bgConfig.invertY, normMethod, speakerStats]);
+  }, [layers, layerData, bgConfig.f1Range, bgConfig.f2Range, bgConfig.invertX, bgConfig.invertY, normMethod, speakerStats, hasLegend]);
 
   // Helper functions for drawing individual layers
   const drawTrajectoryLayer = (
@@ -757,14 +778,18 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     ctx.translate(translate.x, translate.y);
     ctx.scale(scale, scale);
 
-    // Grid/axes always use background (layers[0]) config for coordinate space
+    // Grid/axes always use background (layers[0]) config for coordinate space.
+    // The live view maps into an inset area (spectral-style frame with outside ticks
+    // and axis titles); export maps the full plot and adds its own labels around it.
+    const isExport = !!exportConfig;
+    const area = plotArea(width, height, isExport);
     const mapX = (f2: number) => {
       const norm = (f2 - bgConfig.f2Range[0]) / (bgConfig.f2Range[1] - bgConfig.f2Range[0]);
-      return bgConfig.invertX ? (1 - norm) * width : norm * width;
+      return area.x + (bgConfig.invertX ? (1 - norm) : norm) * area.w;
     };
     const mapY = (f1: number) => {
       const norm = (f1 - bgConfig.f1Range[0]) / (bgConfig.f1Range[1] - bgConfig.f1Range[0]);
-      return bgConfig.invertY ? norm * height : (1 - norm) * height;
+      return area.y + (bgConfig.invertY ? norm : (1 - norm)) * area.h;
     };
 
     // Grid
@@ -772,10 +797,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     ctx.lineWidth = (1 * drawScale) / scale;
     ctx.fillStyle = '#94a3b8';
 
-    const isExport = !!exportConfig;
-    const tickBaseSize = exportConfig ? exportConfig.tickLabelSize : (isExport ? 28 : 11);
-    const tickFontSize = (tickBaseSize * drawScale) / scale;
-
+    const tickFontSize = ((exportConfig ? exportConfig.tickLabelSize : 11) * drawScale) / scale;
     ctx.font = `bold ${tickFontSize}px Inter`;
 
     const f2Span = bgConfig.f2Range[1] - bgConfig.f2Range[0];
@@ -786,29 +808,58 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     const f1Step = getTickStep(normMethod, f1Span);
     const startF1 = Math.ceil(bgConfig.f1Range[0] / f1Step) * f1Step;
 
-    const tickOffset = isExport ? (10 * drawScale) : (4 * drawScale);
+    const tickOffset = isExport ? (10 * drawScale) : (6 * drawScale) / scale;
     const cornerThreshold = 30 * drawScale / scale;
 
     for (let f2 = startF2; f2 <= bgConfig.f2Range[1]; f2 += f2Step) {
       const x = mapX(f2);
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
-      if (x > cornerThreshold) {
-          const xOffset = exportConfig ? (exportConfig.xAxisTickX || 0) * drawScale : 0;
-          const yOffset = exportConfig ? (exportConfig.xAxisTickY || 0) * drawScale : 0;
-          ctx.fillText(formatTick(f2, normMethod), x + (2*drawScale) + xOffset, height - tickOffset + yOffset);
+      ctx.beginPath(); ctx.moveTo(x, area.y); ctx.lineTo(x, area.y + area.h); ctx.stroke();
+      if (isExport) {
+        if (x > cornerThreshold) {
+          const xOffset = (exportConfig!.xAxisTickX || 0) * drawScale;
+          const yOffset = (exportConfig!.xAxisTickY || 0) * drawScale;
+          ctx.fillText(formatTick(f2, normMethod), x + (2*drawScale) + xOffset, height - (10*drawScale) + yOffset);
+        }
+      } else {
+        ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillText(formatTick(f2, normMethod), x, area.y + area.h + tickOffset);
+        ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
       }
     }
     for (let f1 = startF1; f1 <= bgConfig.f1Range[1]; f1 += f1Step) {
       const y = mapY(f1);
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
-      if (y < height - cornerThreshold) {
-          const xOffset = exportConfig ? (exportConfig.yAxisTickX || 0) * drawScale : 0;
-          const yOffset = exportConfig ? (exportConfig.yAxisTickY || 0) * drawScale : 0;
-          ctx.fillText(formatTick(f1, normMethod), tickOffset + xOffset, y - (2*drawScale) + yOffset);
+      ctx.beginPath(); ctx.moveTo(area.x, y); ctx.lineTo(area.x + area.w, y); ctx.stroke();
+      if (isExport) {
+        if (y < height - cornerThreshold) {
+          const xOffset = (exportConfig!.yAxisTickX || 0) * drawScale;
+          const yOffset = (exportConfig!.yAxisTickY || 0) * drawScale;
+          ctx.fillText(formatTick(f1, normMethod), (10*drawScale) + xOffset, y - (2*drawScale) + yOffset);
+        }
+      } else {
+        ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+        ctx.fillText(formatTick(f1, normMethod), area.x - tickOffset, y);
+        ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
       }
     }
 
-    // Draw each visible layer in order
+    // Axis titles (live view only — export draws its own, sized from ExportConfig)
+    if (!isExport) {
+      ctx.fillStyle = '#334155';
+      ctx.font = `600 ${(13 * drawScale) / scale}px Inter, sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      ctx.fillText(getAxisLabel('F2', normMethod), area.x + area.w / 2, area.y + area.h + (40 * drawScale) / scale);
+      ctx.save();
+      ctx.translate(area.x - (52 * drawScale) / scale, area.y + area.h / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText(getAxisLabel('F1', normMethod), 0, 0);
+      ctx.restore();
+      ctx.textAlign = 'start';
+    }
+
+    // Draw each visible layer in order. The live view clips to the frame so tokens
+    // outside the axis ranges do not spill into the margins; export keeps the full
+    // area (its margins are laid out around the plot, so nothing can spill).
+    if (!isExport) { ctx.save(); ctx.beginPath(); ctx.rect(area.x, area.y, area.w, area.h); ctx.clip(); }
     layers.forEach(layer => {
       if (!layer.visible) return;
       const data = layerData[layer.id] || [];
@@ -823,17 +874,23 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         drawPointLayer(ctx, data, layer.config, mappings, groups, mapX, mapY, scale, drawScale, exportConfig);
       }
     });
+    if (!isExport) ctx.restore();
 
-    // Plot border, matching the Spectral tab. Drawn last so data never sits on top of it,
-    // and inset by half its width so neither edge is clipped by the canvas bounds.
+    // Plot border, matching the Spectral tab. Drawn last so data never sits on top of it.
+    // Live view frames the inset data area (legend and titles sit outside it); export
+    // frames the full plot, inset by half the stroke so the edges are not clipped.
     const borderW = (1.5 * drawScale) / scale;
     ctx.strokeStyle = '#94a3b8';
     ctx.lineWidth = borderW;
     ctx.setLineDash([]);
-    ctx.strokeRect(borderW / 2, borderW / 2, width - borderW, height - borderW);
+    if (isExport) {
+      ctx.strokeRect(borderW / 2, borderW / 2, width - borderW, height - borderW);
+    } else {
+      ctx.strokeRect(area.x, area.y, area.w, area.h);
+    }
 
     ctx.restore();
-  }, [layers, layerData, allMappings, bgConfig, normMethod, speakerStats]);
+  }, [layers, layerData, allMappings, bgConfig, normMethod, speakerStats, hasLegend]);
 
   const drawLegend = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
       let curY = y;
