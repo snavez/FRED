@@ -160,6 +160,7 @@ export interface PlotConfig {
   tableAnalysisGroupBy: string;              // grouping variable key (default: 'none')
   tableAnalysisFormantTime: number;          // time point for formant DV (default: 50)
   tableAlpha: number;                        // significance threshold (default: 0.05)
+  statsTestChoice: string;                   // 'auto' or a forced test key (see TestChoice)
   tableSummaryGroupBy: string;               // grouping variable for summary mode (default: 'none')
   tableSummaryMeasures: string[];             // selected numeric measures (default: ['duration'])
   tableSummaryLayout: 'combined' | 'separate'; // table layout mode (default: 'separate')

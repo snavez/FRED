@@ -282,6 +282,28 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 ### Data Table
 - Tabular view of filtered tokens (first 1,000 rows)
 - Shows: Word, Phoneme, Produced, Duration, F1/F2/F3 averages
+- Modes: **Browse** and **Summary** (per-group descriptives). The former Analysis mode is
+  now the Statistics tab; a persisted `tableMode: 'analysis'` falls back to Browse.
+
+### Statistics (tab, `activeTab === 'stats'`)
+- Renders `AnalysisView` (exported from TablePanel) on the active layer's **filtered**
+  data — the sidebar filters apply to the tests exactly as to the plots.
+- Engine in `services/statistics.ts` (jstat-esm for distribution CDFs): Shapiro-Wilk
+  (AS R94/Royston), Levene (Brown-Forsythe), Student/Welch t, Mann-Whitney U, one-way and
+  Welch ANOVA, Kruskal-Wallis, Tukey HSD, Dunn (Bonferroni), two-way factorial ANOVA with
+  Type III SS + simple effects, chi-square / Fisher's exact with standardized residuals,
+  effect sizes (Cohen's d, η², η²H, rank-biserial r, Cramér's V, partial η²).
+- **Continuous**: multi-select Measures (≤10; formants at a chosen timepoint, duration,
+  spectral features, custom numeric fields), Factor A, optional Factor B (two-way).
+- **Test choice** (`statsTestChoice`, one-way only): `'auto'` runs assumption checks and
+  selects the test with a reasoning line; a forced test still runs the checks and the
+  result card shows an amber advisory naming the recommended test
+  (`TestResult.advisory`, built in `runAnalysis(grouped, alpha, testChoice)`).
+  `applicableTests(k)` gates 2-group vs k-group tests; an inapplicable forced choice
+  falls back to the recommendation.
+- **Categorical**: Row/Col variables → contingency table, chi-square (Fisher's exact for
+  sparse 2×2), standardized residuals.
+- Adjustable α; Copy/LaTeX/CSV export on every results table.
 
 ---
 
@@ -554,7 +576,7 @@ Replaces raw X/Y offset inputs with directional arrows (↑↓←→) + reset bu
   level of navigation:
   - **Vowels** — F1/F2, 3D F1/F2/F3, Time Series
   - **Consonants** — Spectral
-  - **General** — Data Summaries, Distributions, Table (these work on any numeric field,
+  - **General** — Data Summaries, Distributions, Statistics, Table (these work on any numeric field,
     spectral measures included, so they serve both vowel and consonant work)
 - Config toolbar (context-sensitive per active tab)
 - Plot area (fills remaining space)

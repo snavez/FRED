@@ -529,7 +529,7 @@ const TD = 'px-3 py-1.5 text-slate-700 text-[12px] font-mono';
 const TD_LEFT = 'px-3 py-1.5 text-slate-700 text-[12px] font-medium';
 
 // ── Shared: Test Result Card ──
-const TestResultCard: React.FC<{ testResult: { testName: string; statistic: number; statisticName: string; df: number | [number, number]; pValue: number; effectSize: { name: string; value: number; magnitude: string }; reasoning: string }; alpha: number }> = ({ testResult, alpha }) => (
+const TestResultCard: React.FC<{ testResult: { testName: string; statistic: number; statisticName: string; df: number | [number, number]; pValue: number; effectSize: { name: string; value: number; magnitude: string }; reasoning: string; advisory?: string }; alpha: number }> = ({ testResult, alpha }) => (
   <div className="bg-sky-50 border border-sky-200 rounded-lg p-5">
     <div className="flex items-center gap-3 mb-3">
       <h3 className="text-sm font-bold text-sky-900">{testResult.testName}</h3>
@@ -544,6 +544,11 @@ const TestResultCard: React.FC<{ testResult: { testName: string; statistic: numb
       <div><span className="text-slate-500 font-medium">Effect size:</span> {testResult.effectSize.name} = {testResult.effectSize.value.toFixed(3)} <span className="text-slate-400">({testResult.effectSize.magnitude})</span></div>
     </div>
     <div className="mt-3 text-[11px] text-slate-500 italic border-t border-sky-200 pt-2">{testResult.reasoning}</div>
+    {testResult.advisory && (
+      <div className="mt-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+        ⚠ {testResult.advisory}
+      </div>
+    )}
   </div>
 );
 
@@ -923,6 +928,7 @@ const ContinuousAnalysisView: React.FC<{
   const groupBy2Field = config.tableAnalysisGroupBy2 || 'none';
   const formantTime = config.tableAnalysisFormantTime ?? 50;
   const alpha = config.tableAlpha ?? 0.05;
+  const testChoice = config.statsTestChoice || 'auto';
   const isTwoWay = groupBy2Field !== 'none';
   const factorALabel = prettyLabel(groupByField, datasetMeta);
   const factorBLabel = prettyLabel(groupBy2Field, datasetMeta);
@@ -960,10 +966,10 @@ const ContinuousAnalysisView: React.FC<{
           grouped.get(groupVal)!.push(v);
         }
         if (grouped.size < 2) return { dvField, dvLabel, result: { error: `Need at least 2 groups. Found ${grouped.size}.` } as AnalysisError, isTwoWay: false };
-        return { dvField, dvLabel, result: runAnalysis(grouped, alpha), isTwoWay: false };
+        return { dvField, dvLabel, result: runAnalysis(grouped, alpha, testChoice), isTwoWay: false };
       }
     });
-  }, [data, measures, groupByField, groupBy2Field, formantTime, alpha, datasetMeta, isTwoWay]);
+  }, [data, measures, groupByField, groupBy2Field, formantTime, alpha, datasetMeta, isTwoWay, testChoice]);
 
   if (groupByField === 'none') {
     return <div className="flex items-center justify-center h-full text-slate-400 italic text-sm">Select Measures and Factor A in the config bar above to run analysis.</div>;
@@ -1009,7 +1015,7 @@ const ContinuousAnalysisView: React.FC<{
 };
 
 // ── Main Analysis Router ──
-const AnalysisView: React.FC<{
+export const AnalysisView: React.FC<{
   data: SpeechToken[];
   config: PlotConfig;
   datasetMeta: DatasetMeta | null;

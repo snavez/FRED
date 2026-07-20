@@ -30,6 +30,7 @@ need an account.
    - [Spectral (consonants)](#spectral-consonants)
    - [Data summaries](#data-summaries)
    - [Distributions](#distributions)
+   - [Statistics](#statistics)
    - [Table](#table)
 7. [How to identify a token](#7-how-to-identify-a-token)
 8. [How to export a figure](#8-how-to-export-a-figure)
@@ -176,7 +177,7 @@ the sidebar.
 - **Tab bar (top)** — the plots, in three groups:
   - **Vowels** — F1/F2, 3D F1/F2/F3, Time series
   - **Consonants** — Spectral
-  - **General** — Data summaries, Distributions, Table
+  - **General** — Data summaries, Distributions, Statistics, Table
   The groups show what each plot is for. All plots stay available with one click. The
   plots in the **General** group accept any numeric field, which includes spectral data.
 - **Config bar (below the tabs)** — two rows. The first row has the data controls, such as
@@ -459,10 +460,51 @@ The **Layout** boxes set the geometry: **Bar width** (0 = automatic), **Group ga
 **Bar gap** (the space between bars inside a cluster). The **Values** control changes
 between counts and percentages.
 
+### Statistics
+
+This tab runs statistical tests on the filtered data. The filters in the sidebar apply
+here exactly as they apply to the plots — what you removed from a plot is also removed
+from the tests.
+
+Two analysis types are available.
+
+**Continuous** compares a numeric measure between groups:
+
+1. Select one or more **Measures** (duration, formants, spectral measures, or your own
+   numeric fields).
+2. Select **Factor A** — the grouping to compare.
+3. Optionally select **Factor B** for a two-way factorial design with an interaction.
+
+FRED first examines the data: a Shapiro-Wilk normality test for each group, and Levene's
+test for equal variances. With **Test** set to **Automatic**, FRED then selects the
+correct test from these checks and tells you why:
+
+- Two groups — Student's t-test, Welch's t-test, or Mann-Whitney U.
+- Three or more groups — one-way ANOVA, Welch's ANOVA, or Kruskal-Wallis.
+- Two factors — factorial ANOVA with the interaction, simple effects when the
+  interaction is significant.
+
+You can also select a test yourself. FRED runs your choice, but shows a warning when the
+assumption checks recommend a different test. Significant omnibus tests get post-hoc
+pairwise comparisons (Tukey HSD, or Dunn's test with Bonferroni correction), and every
+result reports an effect size with its magnitude. The α threshold is adjustable.
+
+**Categorical** cross-tabulates two category fields and tests their association with a
+chi-square test of independence (or Fisher's exact test for small 2×2 tables), with
+standardized residuals to show which cells drive the association.
+
+Every table has **Copy / LaTeX / CSV** buttons for direct use in a manuscript.
+
+> **Note.** These tests treat tokens as independent observations. Speech data usually has
+> repeated measures (many tokens per speaker or word), which inflates significance. Treat
+> the results as exploratory; use mixed-effects models in R for publication-grade
+> inference.
+
 ### Table
 
 This view shows the tokens that agree with the filters. Use it to examine the data that
-FRED plots. Click a column name to sort the table.
+FRED plots. Click a column name to sort the table. The **Summary** mode gives per-group
+descriptive statistics for any measure.
 
 ![The Table view](images/table-view.png)
 

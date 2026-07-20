@@ -119,6 +119,7 @@ const INITIAL_CONFIG: PlotConfig = {
   tableAnalysisGroupBy: 'none',
   tableAnalysisFormantTime: 50,
   tableAlpha: 0.05,
+  statsTestChoice: 'auto',
   tableSummaryGroupBy: 'none',
   tableSummaryMeasures: ['duration'],
   tableSummaryLayout: 'separate',

@@ -14,10 +14,10 @@ import DurationPlot from './DurationPlot';
 import SpectralMomentsPlot from './SpectralMomentsPlot';
 import PhonemeDistributionPlot from './PhonemeDistributionPlot';
 import Scatter3DPlot from './Scatter3DPlot';
-import TablePanel from './TablePanel';
+import TablePanel, { AnalysisView } from './TablePanel';
 import StyleEditor from './StyleEditor';
 import ExportDialog from './ExportDialog';
-import { Grid, LineChart, Table, Settings2, MoveUpRight, Printer, Check, Download, BarChart2, PieChart, Box, Waves, ArrowDown, ArrowUp, ArrowUpDown, Eye, EyeOff, Plus, X, ChevronUp, ChevronDown, Layers, MessageSquare, HelpCircle } from 'lucide-react';
+import { Grid, LineChart, Table, Settings2, MoveUpRight, Printer, Check, Download, BarChart2, PieChart, Box, Waves, Sigma, ArrowDown, ArrowUp, ArrowUpDown, Eye, EyeOff, Plus, X, ChevronUp, ChevronDown, Layers, MessageSquare, HelpCircle } from 'lucide-react';
 
 interface MainDisplayProps {
   layers: Layer[];
@@ -59,6 +59,7 @@ const TAB_GROUPS: { label: string; tabs: { id: string; label: string; icon: Reac
   { label: 'General', tabs: [
     { id: 'duration', label: 'Data Summaries', icon: BarChart2 },
     { id: 'dist', label: 'Distributions', icon: PieChart },
+    { id: 'stats', label: 'Statistics', icon: Sigma },
     { id: 'table', label: 'Table', icon: Table },
   ] },
 ];
@@ -716,7 +717,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             ))}
           </div>
 
-          {activeTab !== 'table' && (
+          {activeTab !== 'table' && activeTab !== 'stats' && (
              <div className="flex items-center gap-2">
                {/* Layer Panel Button — visible on all tabs */}
                {(
@@ -1016,7 +1017,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
         </div>
 
         {/* Dynamic Config Toolbar */}
-        {activeTab !== 'table' && (
+        {activeTab !== 'table' && activeTab !== 'stats' && (
           <div className="bg-slate-100 rounded-lg p-3 border border-slate-200 text-xs">
 
             {/* ═══ F1/F2 & 3D: Two-Row Layout ═══ */}
@@ -2182,7 +2183,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
         )}
 
         {/* ═══ Table Tab Config Bar ═══ */}
-        {activeTab === 'table' && (
+        {(activeTab === 'table' || activeTab === 'stats') && (
           <div className="bg-slate-100 rounded-lg p-3 border border-slate-200 text-xs">
             <div className="flex flex-wrap items-center gap-4 min-h-[44px]">
               <div className="flex items-center gap-2 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
@@ -2190,22 +2191,23 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 <span>Config</span>
               </div>
 
-              {/* Mode selector */}
+              {/* Mode selector (Table only — Statistics has its own controls) */}
+              {activeTab === 'table' && (
               <div className="flex flex-col gap-0.5">
                 <span className="text-[9px] font-bold text-slate-500 uppercase">Mode</span>
                 <select className="p-1 border border-slate-300 rounded text-[10px]"
-                  value={currentConfig.tableMode || 'browse'}
+                  value={['browse', 'summary'].includes(currentConfig.tableMode) ? currentConfig.tableMode : 'browse'}
                   onChange={e => handleConfig('tableMode', e.target.value)}>
                   <option value="browse">Browse</option>
                   <option value="summary">Summary</option>
-                  <option value="analysis">Analysis</option>
                 </select>
               </div>
+              )}
 
               <div className="h-6 w-px bg-slate-300"></div>
 
               {/* Browse mode controls */}
-              {(currentConfig.tableMode || 'browse') === 'browse' && availableTimePoints.length > 1 && (
+              {activeTab === 'table' && (currentConfig.tableMode || 'browse') === 'browse' && availableTimePoints.length > 1 && (
                 <>
                   <div className="flex flex-col gap-0.5">
                     <span className="text-[9px] font-bold text-slate-500 uppercase">Time</span>
@@ -2226,7 +2228,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
               )}
 
               {/* Summary mode controls */}
-              {currentConfig.tableMode === 'summary' && (() => {
+              {activeTab === 'table' && currentConfig.tableMode === 'summary' && (() => {
                 const selectedMeasures = currentConfig.tableSummaryMeasures || ['duration'];
                 const hasFormantMeasure = selectedMeasures.some(m => formantValueKeys.has(m));
                 return (
@@ -2324,7 +2326,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
               })()}
 
               {/* Analysis mode controls */}
-              {currentConfig.tableMode === 'analysis' && (() => {
+              {activeTab === 'stats' && (() => {
                 const analysisType = currentConfig.tableAnalysisType || 'continuous';
                 const selectedAnalysisMeasures = currentConfig.tableAnalysisMeasures || ['duration'];
                 const hasFormantAnalysisMeasure = selectedAnalysisMeasures.some(m => formantValueKeys.has(m));
@@ -2424,6 +2426,31 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       {currentConfig.tableAnalysisGroupBy && currentConfig.tableAnalysisGroupBy !== 'none' &&
                         renderVariableSelect('Factor B', currentConfig.tableAnalysisGroupBy2 || 'none', v => handleConfig('tableAnalysisGroupBy2', v))
                       }
+
+                      {/* Test choice — one-way only; two-way always uses factorial ANOVA */}
+                      {currentConfig.tableAnalysisGroupBy && currentConfig.tableAnalysisGroupBy !== 'none'
+                        && (!currentConfig.tableAnalysisGroupBy2 || currentConfig.tableAnalysisGroupBy2 === 'none') && (
+                        <HelpTooltip helpMode={helpMode} text="Automatic runs the assumption checks (Shapiro-Wilk normality, Levene's variances) and picks the appropriate test. Select a test yourself to override — the result panel warns you when your choice disagrees with the checks.">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase">Test</span>
+                          <select className="p-1 border border-slate-300 rounded text-[10px]"
+                            value={currentConfig.statsTestChoice || 'auto'}
+                            onChange={e => handleConfig('statsTestChoice', e.target.value)}>
+                            <option value="auto">Automatic (recommended)</option>
+                            <optgroup label="Two groups">
+                              <option value="student-t">Student's t-test</option>
+                              <option value="welch-t">Welch's t-test</option>
+                              <option value="mann-whitney">Mann-Whitney U</option>
+                            </optgroup>
+                            <optgroup label="Three or more groups">
+                              <option value="anova">One-way ANOVA</option>
+                              <option value="welch-anova">Welch's ANOVA</option>
+                              <option value="kruskal">Kruskal-Wallis</option>
+                            </optgroup>
+                          </select>
+                        </div>
+                        </HelpTooltip>
+                      )}
                     </>
                   )}
 
@@ -2439,7 +2466,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             </div>
 
             {/* Row 2: Alpha threshold */}
-            {currentConfig.tableMode === 'analysis' && (
+            {activeTab === 'stats' && (
               (currentConfig.tableAnalysisType === 'categorical'
                 ? (currentConfig.tableAnalysisCatVar1 && currentConfig.tableAnalysisCatVar1 !== 'none' && currentConfig.tableAnalysisCatVar2 && currentConfig.tableAnalysisCatVar2 !== 'none')
                 : (currentConfig.tableAnalysisGroupBy && currentConfig.tableAnalysisGroupBy !== 'none')
@@ -2537,6 +2564,16 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
         )}
         {activeTab === 'table' && (
           <TablePanel
+            data={activeData}
+            config={currentConfig}
+            datasetMeta={datasetMeta}
+            availableTimePoints={availableTimePoints}
+            variableOptions={variableOptions}
+            numericVariableOptions={numericVariableOptions}
+          />
+        )}
+        {activeTab === 'stats' && (
+          <AnalysisView
             data={activeData}
             config={currentConfig}
             datasetMeta={datasetMeta}

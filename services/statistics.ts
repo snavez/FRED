@@ -30,7 +30,29 @@ export interface TestResult {
   pValue: number;
   effectSize: { name: string; value: number; magnitude: string };
   reasoning: string;
+  /** Set when the user forced a test that differs from the recommendation. */
+  advisory?: string;
 }
+
+/** User-selectable continuous tests. 'auto' lets the decision engine choose. */
+export type TestChoice = 'auto' | 'student-t' | 'welch-t' | 'mann-whitney'
+  | 'anova' | 'welch-anova' | 'kruskal';
+
+export const TEST_CHOICE_LABELS: Record<TestChoice, string> = {
+  'auto': 'Automatic (recommended)',
+  'student-t': "Student's t-test",
+  'welch-t': "Welch's t-test",
+  'mann-whitney': 'Mann-Whitney U',
+  'anova': 'One-way ANOVA',
+  'welch-anova': "Welch's ANOVA",
+  'kruskal': 'Kruskal-Wallis',
+};
+
+/** Which tests apply for a given number of groups. */
+export const applicableTests = (k: number): TestChoice[] =>
+  k === 2
+    ? ['auto', 'student-t', 'welch-t', 'mann-whitney']
+    : ['auto', 'anova', 'welch-anova', 'kruskal'];
 
 export interface NormalityResult {
   group: string;
@@ -711,7 +733,8 @@ export const effectMagnitude = (name: string, absValue: number): string => {
  */
 export const runAnalysis = (
   groupedData: Map<string, number[]>,
-  alpha: number = 0.05
+  alpha: number = 0.05,
+  testChoice: TestChoice = 'auto'
 ): AnalysisResult | AnalysisError => {
   const groupNames = Array.from(groupedData.keys());
   const groups = Array.from(groupedData.values());
@@ -737,98 +760,100 @@ export const runAnalysis = (
   const varianceTest = levenesTest(groups);
   const equalVar = varianceTest.isEqual;
 
-  // Select and run test
+  // The recommendation from the assumption checks, with its justification
+  const recommended: TestChoice = k === 2
+    ? (allNormal ? (equalVar ? 'student-t' : 'welch-t') : 'mann-whitney')
+    : (allNormal ? (equalVar ? 'anova' : 'welch-anova') : 'kruskal');
+  const checksSummary = allNormal
+    ? (equalVar
+      ? `Data is normally distributed (all Shapiro-Wilk p > ${alpha}) with equal variances (Levene's p = ${varianceTest.pValue.toFixed(3)}).`
+      : `Data is normally distributed but variances are unequal (Levene's p = ${varianceTest.pValue.toFixed(3)}).`)
+    : `Data is not normally distributed (at least one group fails Shapiro-Wilk at α = ${alpha}).`;
+
+  // The test that actually runs: the recommendation, unless the user forced one
+  const chosen: TestChoice = testChoice === 'auto' ? recommended
+    : applicableTests(k).includes(testChoice) ? testChoice : recommended;
+  const advisory = chosen !== recommended
+    ? `You selected ${TEST_CHOICE_LABELS[chosen]}, but the assumption checks recommend ${TEST_CHOICE_LABELS[recommended]}: ${checksSummary}`
+    : undefined;
+  const reasoning = chosen === recommended
+    ? checksSummary
+    : `Test selected by the user (recommendation: ${TEST_CHOICE_LABELS[recommended]}).`;
+
+  // Run the chosen test
   let testResult: TestResult;
   let postHoc: PostHocResult[] | null = null;
+  const N = groups.reduce((s, g) => s + g.length, 0);
 
-  if (k === 2) {
-    // Two-sample tests
-    if (allNormal && equalVar) {
+  switch (chosen) {
+    case 'student-t': {
       const res = independentTTest(groups[0], groups[1]);
       const d = cohensD(groups[0], groups[1]);
       testResult = {
-        testName: "Independent t-test",
-        statistic: res.t,
-        statisticName: 't',
-        df: res.df,
+        testName: "Independent t-test", statistic: res.t, statisticName: 't', df: res.df,
         pValue: res.pValue,
         effectSize: { name: "Cohen's d", value: d, magnitude: effectMagnitude("Cohen's d", Math.abs(d)) },
-        reasoning: `Data is normally distributed (all Shapiro-Wilk p > ${alpha}) with equal variances (Levene's p = ${varianceTest.pValue.toFixed(3)}).`,
+        reasoning, advisory,
       };
-    } else if (allNormal && !equalVar) {
+      break;
+    }
+    case 'welch-t': {
       const res = welchsTTest(groups[0], groups[1]);
       const d = cohensD(groups[0], groups[1]);
       testResult = {
-        testName: "Welch's t-test",
-        statistic: res.t,
-        statisticName: 't',
-        df: parseFloat(res.df.toFixed(1)),
-        pValue: res.pValue,
+        testName: "Welch's t-test", statistic: res.t, statisticName: 't',
+        df: parseFloat(res.df.toFixed(1)), pValue: res.pValue,
         effectSize: { name: "Cohen's d", value: d, magnitude: effectMagnitude("Cohen's d", Math.abs(d)) },
-        reasoning: `Data is normally distributed but variances are unequal (Levene's p = ${varianceTest.pValue.toFixed(3)}).`,
+        reasoning, advisory,
       };
-    } else {
+      break;
+    }
+    case 'mann-whitney': {
       const res = mannWhitneyU(groups[0], groups[1]);
       const r = rankBiserialR(res.U, groups[0].length, groups[1].length);
       testResult = {
-        testName: "Mann-Whitney U test",
-        statistic: res.U,
-        statisticName: 'U',
-        df: NaN,
+        testName: "Mann-Whitney U test", statistic: res.U, statisticName: 'U', df: NaN,
         pValue: res.pValue,
         effectSize: { name: 'r', value: r, magnitude: effectMagnitude('r', Math.abs(r)) },
-        reasoning: `Data is not normally distributed (at least one group fails Shapiro-Wilk at α = ${alpha}). Non-parametric test used.`,
+        reasoning, advisory,
       };
+      break;
     }
-  } else {
-    // 3+ group tests
-    if (allNormal && equalVar) {
+    case 'anova': {
       const res = oneWayAnova(groups);
       const eta2 = etaSquared(res.ssBetween, res.ssTotal);
       testResult = {
-        testName: "One-way ANOVA",
-        statistic: res.F,
-        statisticName: 'F',
-        df: [res.df1, res.df2],
-        pValue: res.pValue,
+        testName: "One-way ANOVA", statistic: res.F, statisticName: 'F',
+        df: [res.df1, res.df2], pValue: res.pValue,
         effectSize: { name: 'η²', value: eta2, magnitude: effectMagnitude('η²', eta2) },
-        reasoning: `Data is normally distributed with equal variances (Levene's p = ${varianceTest.pValue.toFixed(3)}).`,
+        reasoning, advisory,
       };
-      if (res.pValue < alpha) {
-        postHoc = tukeyHSD(groups, groupNames, alpha);
-      }
-    } else if (allNormal && !equalVar) {
+      if (res.pValue < alpha) postHoc = tukeyHSD(groups, groupNames, alpha);
+      break;
+    }
+    case 'welch-anova': {
       const res = welchsAnova(groups);
       const eta2 = etaSquared(res.ssBetween, res.ssTotal);
       testResult = {
-        testName: "Welch's ANOVA",
-        statistic: res.F,
-        statisticName: 'F',
-        df: [res.df1, parseFloat(res.df2.toFixed(1))],
-        pValue: res.pValue,
+        testName: "Welch's ANOVA", statistic: res.F, statisticName: 'F',
+        df: [res.df1, parseFloat(res.df2.toFixed(1))], pValue: res.pValue,
         effectSize: { name: 'η²', value: eta2, magnitude: effectMagnitude('η²', eta2) },
-        reasoning: `Data is normally distributed but variances are unequal (Levene's p = ${varianceTest.pValue.toFixed(3)}).`,
+        reasoning, advisory,
       };
-      if (res.pValue < alpha) {
-        postHoc = tukeyHSD(groups, groupNames, alpha); // Tukey acceptable, Games-Howell ideal
-      }
-    } else {
+      if (res.pValue < alpha) postHoc = tukeyHSD(groups, groupNames, alpha); // Tukey acceptable, Games-Howell ideal
+      break;
+    }
+    default: {
       const res = kruskalWallis(groups);
-      // Epsilon-squared for Kruskal-Wallis
-      const N = groups.reduce((s, g) => s + g.length, 0);
-      const eta2H = (res.H - k + 1) / (N - k);
+      const eta2H = (res.H - k + 1) / (N - k);   // epsilon-squared style estimate
       testResult = {
-        testName: "Kruskal-Wallis test",
-        statistic: res.H,
-        statisticName: 'H',
-        df: res.df,
+        testName: "Kruskal-Wallis test", statistic: res.H, statisticName: 'H', df: res.df,
         pValue: res.pValue,
         effectSize: { name: 'η²H', value: Math.max(0, eta2H), magnitude: effectMagnitude('η²', Math.max(0, eta2H)) },
-        reasoning: `Data is not normally distributed (at least one group fails Shapiro-Wilk at α = ${alpha}). Non-parametric test used.`,
+        reasoning, advisory,
       };
-      if (res.pValue < alpha) {
-        postHoc = dunnsTest(groups, groupNames, alpha);
-      }
+      if (res.pValue < alpha) postHoc = dunnsTest(groups, groupNames, alpha);
+      break;
     }
   }
 
