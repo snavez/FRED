@@ -295,12 +295,27 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
   effect sizes (Cohen's d, η², η²H, rank-biserial r, Cramér's V, partial η²).
 - **Continuous**: multi-select Measures (≤10; formants at a chosen timepoint, duration,
   spectral features, custom numeric fields), Factor A, optional Factor B (two-way).
+- **Speaker structure / unit of analysis**: `detectDesign()` classifies the factor as
+  between-speaker (each speaker in one level) or within-speaker (speakers span levels)
+  and counts complete speakers. With repeated tokens per speaker, `statsUnit` defaults to
+  `'speakers'`: one mean per speaker per level. Between → independent tests on speaker
+  means; within → `runRepeatedAnalysis()` on the complete-speaker matrix: paired t /
+  Wilcoxon signed-rank (2 conditions), repeated-measures ANOVA with Greenhouse-Geisser
+  correction / Friedman (3+), paired Bonferroni post-hocs, effect sizes dz / partial η² /
+  Kendall's W / r. Normality target: differences (k=2) or model residuals (k≥3).
+  `statsUnit: 'tokens'` is allowed with an amber banner (correlated tokens → optimistic
+  p-values). Two-way with speaker unit aggregates to speaker×cell means. No speaker
+  column: `statsSpeakerAssumption` ('unknown'|'single'|'multiple') records what the user
+  knows and shapes the banner. A design banner above the results states speakers,
+  tokens/speaker, design and unit.
 - **Test choice** (`statsTestChoice`, one-way only): `'auto'` runs assumption checks and
   selects the test with a reasoning line; a forced test still runs the checks and the
   result card shows an amber advisory naming the recommended test
-  (`TestResult.advisory`, built in `runAnalysis(grouped, alpha, testChoice)`).
-  `applicableTests(k)` gates 2-group vs k-group tests; an inapplicable forced choice
-  falls back to the recommendation.
+  (`TestResult.advisory`, built in `runAnalysis(grouped, alpha, testChoice)` /
+  `runRepeatedAnalysis(matrix, names, alpha, testChoice)`).
+  `applicableTests(k)` / `applicableRepeatedTests(k)` gate the choices; the Test dropdown
+  offers paired options when the design is within-speaker and the unit is speaker means.
+  An inapplicable forced choice falls back to the recommendation.
 - **Categorical**: Row/Col variables → contingency table, chi-square (Fisher's exact for
   sparse 2×2), standardized residuals.
 - Adjustable α; Copy/LaTeX/CSV export on every results table.

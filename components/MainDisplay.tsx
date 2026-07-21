@@ -7,6 +7,7 @@ import {
   spectralFeatureLabel, parseSpectralFeature, spectralMomentsOfKind, spectralIndicesOfKind,
   spectralKindLabel, spectralIndexLabel, SpectralKind, SpectralFeature,
 } from '../utils/spectralMoments';
+import { getLabel } from '../utils/getLabel';
 import CanvasPlot from './CanvasPlot';
 import TrajectoryTimeSeries from './TrajectoryTimeSeries';
 import TrajectoryF1F2 from './TrajectoryF1F2';
@@ -326,6 +327,31 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     next[end] = parseFloat(raw) || 0;
     return next;
   };
+
+  /**
+   * Speaker structure of the current stats selection: whether speakers exist, whether
+   * they contribute several tokens (repeated measures), and whether Factor A varies
+   * within speakers. Drives the Unit and Test controls on the Statistics tab.
+   */
+  const statsSpeakerInfo = useMemo(() => {
+    const withSpeaker = activeData.filter(t => t.speaker);
+    const speakers = new Set(withSpeaker.map(t => t.speaker));
+    const hasSpeakers = speakers.size > 0;
+    const repeated = hasSpeakers && withSpeaker.length > speakers.size;
+    let within = false;
+    const f = currentConfig.tableAnalysisGroupBy;
+    if (hasSpeakers && f && f !== 'none') {
+      const seen = new Map<string, Set<string>>();
+      for (const t of withSpeaker) {
+        const l = getLabel(t, f);
+        if (!l) continue;
+        if (!seen.has(t.speaker)) seen.set(t.speaker, new Set());
+        seen.get(t.speaker)!.add(l);
+      }
+      within = [...seen.values()].some(s => s.size > 1);
+    }
+    return { hasSpeakers, repeated, within };
+  }, [activeData, currentConfig.tableAnalysisGroupBy]);
 
   /** Compact label for an axis-range heading, e.g. "COG @50%" or "COG k1 (slope)". */
   const spectralAxisChip = (ref: string): string => {
@@ -2427,26 +2453,75 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         renderVariableSelect('Factor B', currentConfig.tableAnalysisGroupBy2 || 'none', v => handleConfig('tableAnalysisGroupBy2', v))
                       }
 
-                      {/* Test choice — one-way only; two-way always uses factorial ANOVA */}
+                      {/* Unit of analysis — only meaningful with repeated tokens per speaker */}
+                      {statsSpeakerInfo.repeated && (
+                        <HelpTooltip helpMode={helpMode} text="Tokens from one speaker are correlated. Speaker means uses one mean per speaker per group, which keeps the observations independent. Tokens uses every token and can overstate significance.">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase">Unit</span>
+                          <select className="p-1 border border-slate-300 rounded text-[10px]"
+                            value={(currentConfig.statsUnit || 'speakers')}
+                            onChange={e => handleConfig('statsUnit', e.target.value)}>
+                            <option value="speakers">Speaker means (recommended)</option>
+                            <option value="tokens">Tokens</option>
+                          </select>
+                        </div>
+                        </HelpTooltip>
+                      )}
+
+                      {/* No speaker column: record what the user knows about the speakers */}
+                      {!statsSpeakerInfo.hasSpeakers && (
+                        <HelpTooltip helpMode={helpMode} text="The data has no speaker column. Record what you know: with one speaker the tokens are independent; with several speakers the results can overstate significance.">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase">Speakers</span>
+                          <select className="p-1 border border-slate-300 rounded text-[10px]"
+                            value={currentConfig.statsSpeakerAssumption || 'unknown'}
+                            onChange={e => handleConfig('statsSpeakerAssumption', e.target.value)}>
+                            <option value="unknown">Unknown</option>
+                            <option value="single">One speaker</option>
+                            <option value="multiple">Several speakers</option>
+                          </select>
+                        </div>
+                        </HelpTooltip>
+                      )}
+
+                      {/* Test choice — one-way only; two-way always uses factorial ANOVA.
+                          The options follow the design: paired tests when Factor A varies
+                          within speakers and speaker means are the unit. */}
                       {currentConfig.tableAnalysisGroupBy && currentConfig.tableAnalysisGroupBy !== 'none'
                         && (!currentConfig.tableAnalysisGroupBy2 || currentConfig.tableAnalysisGroupBy2 === 'none') && (
-                        <HelpTooltip helpMode={helpMode} text="Automatic runs the assumption checks (Shapiro-Wilk normality, Levene's variances) and picks the appropriate test. Select a test yourself to override — the result panel warns you when your choice disagrees with the checks.">
+                        <HelpTooltip helpMode={helpMode} text="Automatic runs the assumption checks (Shapiro-Wilk normality; Levene's variances for independent designs) and picks the appropriate test. Select a test yourself to override — the result panel warns you when your choice disagrees with the checks.">
                         <div className="flex flex-col gap-0.5">
                           <span className="text-[9px] font-bold text-slate-500 uppercase">Test</span>
                           <select className="p-1 border border-slate-300 rounded text-[10px]"
                             value={currentConfig.statsTestChoice || 'auto'}
                             onChange={e => handleConfig('statsTestChoice', e.target.value)}>
                             <option value="auto">Automatic (recommended)</option>
-                            <optgroup label="Two groups">
-                              <option value="student-t">Student's t-test</option>
-                              <option value="welch-t">Welch's t-test</option>
-                              <option value="mann-whitney">Mann-Whitney U</option>
-                            </optgroup>
-                            <optgroup label="Three or more groups">
-                              <option value="anova">One-way ANOVA</option>
-                              <option value="welch-anova">Welch's ANOVA</option>
-                              <option value="kruskal">Kruskal-Wallis</option>
-                            </optgroup>
+                            {statsSpeakerInfo.repeated && statsSpeakerInfo.within
+                              && (currentConfig.statsUnit || 'speakers') === 'speakers' ? (
+                              <>
+                                <optgroup label="Two conditions (paired)">
+                                  <option value="paired-t">Paired t-test</option>
+                                  <option value="wilcoxon">Wilcoxon signed-rank</option>
+                                </optgroup>
+                                <optgroup label="Three or more conditions (repeated)">
+                                  <option value="rm-anova">Repeated-measures ANOVA</option>
+                                  <option value="friedman">Friedman test</option>
+                                </optgroup>
+                              </>
+                            ) : (
+                              <>
+                                <optgroup label="Two groups">
+                                  <option value="student-t">Student's t-test</option>
+                                  <option value="welch-t">Welch's t-test</option>
+                                  <option value="mann-whitney">Mann-Whitney U</option>
+                                </optgroup>
+                                <optgroup label="Three or more groups">
+                                  <option value="anova">One-way ANOVA</option>
+                                  <option value="welch-anova">Welch's ANOVA</option>
+                                  <option value="kruskal">Kruskal-Wallis</option>
+                                </optgroup>
+                              </>
+                            )}
                           </select>
                         </div>
                         </HelpTooltip>

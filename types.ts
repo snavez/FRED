@@ -161,6 +161,8 @@ export interface PlotConfig {
   tableAnalysisFormantTime: number;          // time point for formant DV (default: 50)
   tableAlpha: number;                        // significance threshold (default: 0.05)
   statsTestChoice: string;                   // 'auto' or a forced test key (see TestChoice)
+  statsUnit: string;                         // 'speakers' (means per speaker) | 'tokens'
+  statsSpeakerAssumption: string;            // no speaker column: 'unknown' | 'single' | 'multiple'
   tableSummaryGroupBy: string;               // grouping variable for summary mode (default: 'none')
   tableSummaryMeasures: string[];             // selected numeric measures (default: ['duration'])
   tableSummaryLayout: 'combined' | 'separate'; // table layout mode (default: 'separate')

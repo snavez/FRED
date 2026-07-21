@@ -120,6 +120,8 @@ const INITIAL_CONFIG: PlotConfig = {
   tableAnalysisFormantTime: 50,
   tableAlpha: 0.05,
   statsTestChoice: 'auto',
+  statsUnit: 'speakers',
+  statsSpeakerAssumption: 'unknown',
   tableSummaryGroupBy: 'none',
   tableSummaryMeasures: ['duration'],
   tableSummaryLayout: 'separate',

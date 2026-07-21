@@ -3,6 +3,7 @@ import { SpeechToken, PlotConfig, DatasetMeta } from '../types';
 import { getLabel } from '../utils/getLabel';
 import {
   runAnalysis, twoWayAnova, runContingencyAnalysis, sigStars, formatP,
+  runRepeatedAnalysis, detectDesign,
   type AnalysisResult, type AnalysisError,
   type TwoWayAnovaResult, type ContingencyTableResult,
   type CellStats, type GroupStats,
@@ -526,6 +527,12 @@ const getNumericValue = (t: SpeechToken, field: string, formantTime: number): nu
 
 const TH = 'px-3 py-2 font-bold text-slate-500 uppercase tracking-tighter text-[11px]';
 const TD = 'px-3 py-1.5 text-slate-700 text-[12px] font-mono';
+
+/** Format a test statistic: fixed decimals normally, exponent for degenerate extremes. */
+const formatStat = (v: number): string => {
+  if (!isFinite(v)) return v > 0 ? '∞' : '-∞';
+  return Math.abs(v) >= 1e6 ? v.toExponential(2) : v.toFixed(3);
+};
 const TD_LEFT = 'px-3 py-1.5 text-slate-700 text-[12px] font-medium';
 
 // ── Shared: Test Result Card ──
@@ -538,10 +545,10 @@ const TestResultCard: React.FC<{ testResult: { testName: string; statistic: numb
       </span>
     </div>
     <div className="grid grid-cols-2 gap-x-8 gap-y-1.5 text-[12px] text-slate-700">
-      <div><span className="text-slate-500 font-medium">Statistic:</span> {testResult.statisticName} = {testResult.statistic.toFixed(3)}</div>
+      <div><span className="text-slate-500 font-medium">Statistic:</span> {testResult.statisticName} = {formatStat(testResult.statistic)}</div>
       <div><span className="text-slate-500 font-medium">df:</span> {Array.isArray(testResult.df) ? `${testResult.df[0]}, ${testResult.df[1]}` : isNaN(testResult.df) ? '\u2014' : testResult.df.toFixed(1)}</div>
       <div><span className="text-slate-500 font-medium">p-value:</span> <span className="font-mono">{formatP(testResult.pValue)}</span> <span className="font-bold text-slate-500">{sigStars(testResult.pValue)}</span></div>
-      <div><span className="text-slate-500 font-medium">Effect size:</span> {testResult.effectSize.name} = {testResult.effectSize.value.toFixed(3)} <span className="text-slate-400">({testResult.effectSize.magnitude})</span></div>
+      <div><span className="text-slate-500 font-medium">Effect size:</span> {testResult.effectSize.name} = {formatStat(testResult.effectSize.value)} <span className="text-slate-400">({testResult.effectSize.magnitude})</span></div>
     </div>
     <div className="mt-3 text-[11px] text-slate-500 italic border-t border-sky-200 pt-2">{testResult.reasoning}</div>
     {testResult.advisory && (
@@ -557,7 +564,7 @@ const PostHocTable: React.FC<{ postHoc: { pair: [string, string]; meanDiff: numb
   <div>
     <div className="flex items-center justify-between mb-2">
       <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Post-Hoc Pairwise Comparisons</h3>
-      <ExportButtons headers={['Pair', 'Mean Diff', 'Statistic', 'p-value', 'Sig']} rows={postHoc.map(ph => [`${ph.pair[0]} vs ${ph.pair[1]}`, ph.meanDiff.toFixed(3), ph.statistic.toFixed(3), formatP(ph.pValue), sigStars(ph.pValue)])} filename={filename} />
+      <ExportButtons headers={['Pair', 'Mean Diff', 'Statistic', 'p-value', 'Sig']} rows={postHoc.map(ph => [`${ph.pair[0]} vs ${ph.pair[1]}`, ph.meanDiff.toFixed(3), formatStat(ph.statistic), formatP(ph.pValue), sigStars(ph.pValue)])} filename={filename} />
     </div>
     <table className="w-full text-left border border-slate-200 rounded-lg overflow-hidden">
       <thead className="bg-slate-50 border-b border-slate-200">
@@ -574,7 +581,7 @@ const PostHocTable: React.FC<{ postHoc: { pair: [string, string]; meanDiff: numb
           <tr key={i} className={ph.significant ? 'bg-emerald-50/40' : ''}>
             <td className={TD_LEFT}>{ph.pair[0]} vs {ph.pair[1]}</td>
             <td className={`${TD} text-right`}>{ph.meanDiff.toFixed(3)}</td>
-            <td className={`${TD} text-right`}>{ph.statistic.toFixed(3)}</td>
+            <td className={`${TD} text-right`}>{formatStat(ph.statistic)}</td>
             <td className={`${TD} text-right`}>{formatP(ph.pValue)} {sigStars(ph.pValue)}</td>
             <td className={`${TD} text-center`}>{ph.significant ? <span className="text-emerald-600 font-bold">{sigStars(ph.pValue)}</span> : <span className="text-slate-400">ns</span>}</td>
           </tr>
@@ -936,6 +943,21 @@ const ContinuousAnalysisView: React.FC<{
   // Collapsible sections for multi-DV
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
+  // Speaker structure of the design — this decides the unit of analysis
+  const design = useMemo(() => {
+    if (groupByField === 'none' || data.length === 0) return null;
+    const rows = data
+      .map(t => ({ speaker: t.speaker || '', level: getLabel(t, groupByField) }))
+      .filter(r => r.level);
+    const levels = Array.from(new Set<string>(rows.map(r => r.level))).sort();
+    return detectDesign(rows, levels);
+  }, [data, groupByField]);
+
+  // Aggregation applies when speakers exist and contribute several tokens each
+  const canAggregate = !!design && design.hasSpeakers && design.repeatedMeasures;
+  const unit: 'speakers' | 'tokens' = canAggregate && (config.statsUnit || 'speakers') === 'speakers'
+    ? 'speakers' : 'tokens';
+
   // Compute results for all measures
   const results = useMemo(() => {
     if (groupByField === 'none' || data.length === 0) return null;
@@ -943,33 +965,85 @@ const ContinuousAnalysisView: React.FC<{
       const dvLabel = prettyLabel(dvField, datasetMeta);
       if (isTwoWay) {
         // Two-way: build { value, factorA, factorB }[] data
-        const twoWayData: { value: number; factorA: string; factorB: string }[] = [];
+        let twoWayData: { value: number; factorA: string; factorB: string }[] = [];
         for (const token of data) {
           const a = getLabel(token, groupByField);
           const b = getLabel(token, groupBy2Field);
           if (!a || !b) continue;
           const v = getNumericValue(token, dvField, formantTime);
-          if (!isNaN(v)) twoWayData.push({ value: v, factorA: a, factorB: b });
+          if (!isNaN(v)) twoWayData.push({ value: v, factorA: a, factorB: b, speaker: token.speaker || '' } as any);
+        }
+        if (unit === 'speakers') {
+          // One mean per speaker per A×B cell, so tokens from one speaker
+          // cannot masquerade as independent observations
+          const cells = new Map<string, { sum: number; n: number; factorA: string; factorB: string }>();
+          for (const d of twoWayData as ({ value: number; factorA: string; factorB: string; speaker: string })[]) {
+            const key = `${d.speaker}|${d.factorA}|${d.factorB}`;
+            const c = cells.get(key) || { sum: 0, n: 0, factorA: d.factorA, factorB: d.factorB };
+            c.sum += d.value; c.n++;
+            cells.set(key, c);
+          }
+          twoWayData = [...cells.values()].map(c => ({ value: c.sum / c.n, factorA: c.factorA, factorB: c.factorB }));
         }
         if (twoWayData.length < 6) return { dvField, dvLabel, result: { error: 'Need at least 6 observations.' } as AnalysisError, isTwoWay: true };
         const anovaResult = twoWayAnova(twoWayData, alpha);
         return { dvField, dvLabel, result: anovaResult, isTwoWay: true };
-      } else {
-        // One-way: existing logic
-        const grouped = new Map<string, number[]>();
+      }
+
+      if (unit === 'speakers' && design) {
+        // One mean per speaker per level
+        const bySpeaker = new Map<string, Map<string, { sum: number; n: number }>>();
         for (const token of data) {
-          const groupVal = getLabel(token, groupByField);
-          if (!groupVal) continue;
+          const level = getLabel(token, groupByField);
+          if (!level || !token.speaker) continue;
           const v = getNumericValue(token, dvField, formantTime);
           if (isNaN(v)) continue;
-          if (!grouped.has(groupVal)) grouped.set(groupVal, []);
-          grouped.get(groupVal)!.push(v);
+          if (!bySpeaker.has(token.speaker)) bySpeaker.set(token.speaker, new Map());
+          const m = bySpeaker.get(token.speaker)!;
+          const cell = m.get(level) || { sum: 0, n: 0 };
+          cell.sum += v; cell.n++;
+          m.set(level, cell);
         }
+        const levels = Array.from(new Set<string>(data.map(t => getLabel(t, groupByField)).filter(Boolean))).sort();
+
+        if (design.design === 'within') {
+          // Paired / repeated-measures path on complete speakers
+          const matrix: number[][] = [];
+          bySpeaker.forEach(m => {
+            if (levels.every(l => m.has(l))) matrix.push(levels.map(l => { const c = m.get(l)!; return c.sum / c.n; }));
+          });
+          if (matrix.length < 3) {
+            return { dvField, dvLabel, result: { error: `Only ${matrix.length} speaker(s) have data in every level of ${factorALabel} — need at least 3 for a repeated-measures test. Switch Unit to Tokens (with caution) or filter to fewer levels.` } as AnalysisError, isTwoWay: false };
+          }
+          return { dvField, dvLabel, result: runRepeatedAnalysis(matrix, levels, alpha, testChoice), isTwoWay: false };
+        }
+
+        // Between-speaker: independent tests on the speaker means
+        const grouped = new Map<string, number[]>();
+        bySpeaker.forEach(m => {
+          m.forEach((cell, level) => {
+            if (!grouped.has(level)) grouped.set(level, []);
+            grouped.get(level)!.push(cell.sum / cell.n);
+          });
+        });
         if (grouped.size < 2) return { dvField, dvLabel, result: { error: `Need at least 2 groups. Found ${grouped.size}.` } as AnalysisError, isTwoWay: false };
         return { dvField, dvLabel, result: runAnalysis(grouped, alpha, testChoice), isTwoWay: false };
       }
+
+      // Token-level (no speakers, single tokens, or user override)
+      const grouped = new Map<string, number[]>();
+      for (const token of data) {
+        const groupVal = getLabel(token, groupByField);
+        if (!groupVal) continue;
+        const v = getNumericValue(token, dvField, formantTime);
+        if (isNaN(v)) continue;
+        if (!grouped.has(groupVal)) grouped.set(groupVal, []);
+        grouped.get(groupVal)!.push(v);
+      }
+      if (grouped.size < 2) return { dvField, dvLabel, result: { error: `Need at least 2 groups. Found ${grouped.size}.` } as AnalysisError, isTwoWay: false };
+      return { dvField, dvLabel, result: runAnalysis(grouped, alpha, testChoice), isTwoWay: false };
     });
-  }, [data, measures, groupByField, groupBy2Field, formantTime, alpha, datasetMeta, isTwoWay, testChoice]);
+  }, [data, measures, groupByField, groupBy2Field, formantTime, alpha, datasetMeta, isTwoWay, testChoice, unit, design, factorALabel]);
 
   if (groupByField === 'none') {
     return <div className="flex items-center justify-center h-full text-slate-400 italic text-sm">Select Measures and Factor A in the config bar above to run analysis.</div>;
@@ -978,8 +1052,39 @@ const ContinuousAnalysisView: React.FC<{
 
   const multiDV = measures.length > 1;
 
+  // Design banner: how the speakers relate to the factor, and which unit is in use
+  const speakerAssumption = config.statsSpeakerAssumption || 'unknown';
+  const designBanner = (() => {
+    if (!design) return null;
+    if (!design.hasSpeakers) {
+      const text = speakerAssumption === 'single'
+        ? 'No speaker column; you confirmed the data is from one speaker. Tokens are treated as independent observations.'
+        : speakerAssumption === 'multiple'
+          ? 'No speaker column, but the data is from several speakers. Tokens from one speaker are correlated, so these results can overstate significance — treat them as exploratory.'
+          : 'No speaker column. If several speakers produced these tokens, the results can overstate significance. Set "Speakers" in the config bar to record what you know.';
+      return { tone: speakerAssumption === 'single' ? 'info' : 'warn', text };
+    }
+    if (!design.repeatedMeasures) {
+      return { tone: 'info', text: `${design.nSpeakers} speakers, one token each — tokens are independent observations.` };
+    }
+    if (unit === 'speakers') {
+      const designText = design.design === 'within'
+        ? `${factorALabel} varies within speakers — paired / repeated-measures tests on ${design.completeSpeakers} speaker(s) with data in every level.`
+        : `each speaker is in one ${factorALabel} group — independent tests on the speaker means.`;
+      return { tone: 'info', text: `${design.nSpeakers} speakers, ${design.tokensPerSpeaker.toFixed(1)} tokens/speaker. Unit of analysis: speaker means; ${designText}` };
+    }
+    return { tone: 'warn', text: `${design.nSpeakers} speakers with ${design.tokensPerSpeaker.toFixed(1)} tokens each, analysed at token level. Tokens from one speaker are correlated, so p-values are optimistic — prefer Unit: Speaker means.` };
+  })();
+
   return (
     <div className="h-full overflow-auto p-6 space-y-6">
+      {designBanner && (
+        <div className={`text-[12px] rounded-lg px-4 py-2.5 border ${designBanner.tone === 'warn'
+          ? 'bg-amber-50 border-amber-200 text-amber-800'
+          : 'bg-sky-50 border-sky-200 text-slate-600'}`}>
+          {designBanner.text}
+        </div>
+      )}
       {results.map(({ dvField, dvLabel, result, isTwoWay: is2w }) => {
         const isCollapsed = collapsed[dvField] ?? false;
         const isError = 'error' in result && !('testResult' in result) && !('effects' in result);

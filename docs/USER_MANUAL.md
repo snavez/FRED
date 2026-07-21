@@ -475,19 +475,43 @@ Two analysis types are available.
 2. Select **Factor A** — the grouping to compare.
 3. Optionally select **Factor B** for a two-way factorial design with an interaction.
 
-FRED first examines the data: a Shapiro-Wilk normality test for each group, and Levene's
-test for equal variances. With **Test** set to **Automatic**, FRED then selects the
-correct test from these checks and tells you why:
+**Speakers and the unit of analysis.** Tokens from one speaker are correlated — a
+speaker's vowels share their voice, dialect, and speech rate. If FRED counted 50 tokens
+from each of 20 speakers as 1,000 independent observations, the p-values would be far
+too small. When your data has a speaker column, FRED examines the design and reports it
+in a banner above the results:
 
-- Two groups — Student's t-test, Welch's t-test, or Mann-Whitney U.
-- Three or more groups — one-way ANOVA, Welch's ANOVA, or Kruskal-Wallis.
+- **Unit: Speaker means** (the default) uses one mean per speaker per group.
+- If each speaker is in one group only (a between-speaker factor, such as dialect),
+  FRED compares the speaker means with the independent tests.
+- If the factor varies within speakers (such as vowel or stress), FRED uses the paired
+  and repeated-measures tests on the speakers that have data in every level.
+- **Unit: Tokens** uses every token. FRED permits this but shows a warning, because the
+  results can overstate significance.
+
+If the data has no speaker column, a **Speakers** control lets you record what you know
+(one speaker / several speakers / unknown), and the banner explains the consequences.
+
+FRED then examines the distributions: a Shapiro-Wilk normality test (per group for
+independent designs; on the paired differences or model residuals for repeated designs)
+and Levene's test for equal variances. With **Test** set to **Automatic**, FRED selects
+the correct test from these checks and tells you why:
+
+- Two independent groups — Student's t-test, Welch's t-test, or Mann-Whitney U.
+- Three or more independent groups — one-way ANOVA, Welch's ANOVA, or Kruskal-Wallis.
+- Two conditions within speakers — paired t-test or Wilcoxon signed-rank.
+- Three or more conditions within speakers — repeated-measures ANOVA (with
+  Greenhouse-Geisser correction) or the Friedman test.
 - Two factors — factorial ANOVA with the interaction, simple effects when the
-  interaction is significant.
+  interaction is significant. With Unit: Speaker means, the factorial ANOVA runs on one
+  mean per speaker per cell.
 
 You can also select a test yourself. FRED runs your choice, but shows a warning when the
 assumption checks recommend a different test. Significant omnibus tests get post-hoc
-pairwise comparisons (Tukey HSD, or Dunn's test with Bonferroni correction), and every
-result reports an effect size with its magnitude. The α threshold is adjustable.
+pairwise comparisons (Tukey HSD, Dunn's test, or paired comparisons — with Bonferroni
+correction where applicable), and every result reports an effect size with its magnitude
+(Cohen's d or dz, η², partial η², Kendall's W, rank-biserial r). The α threshold is
+adjustable.
 
 **Categorical** cross-tabulates two category fields and tests their association with a
 chi-square test of independence (or Fisher's exact test for small 2×2 tables), with
@@ -495,10 +519,11 @@ standardized residuals to show which cells drive the association.
 
 Every table has **Copy / LaTeX / CSV** buttons for direct use in a manuscript.
 
-> **Note.** These tests treat tokens as independent observations. Speech data usually has
-> repeated measures (many tokens per speaker or word), which inflates significance. Treat
-> the results as exploratory; use mixed-effects models in R for publication-grade
-> inference.
+> **Note.** Speaker means control for the speaker, but not for other grouping structure
+> such as the word. For publication-grade inference over crossed random effects
+> (speakers *and* words), use a mixed-effects model in R (lme4). FRED's results with
+> Unit: Speaker means follow the standard aggregation approach and are a sound first
+> analysis.
 
 ### Table
 

@@ -36,7 +36,8 @@ export interface TestResult {
 
 /** User-selectable continuous tests. 'auto' lets the decision engine choose. */
 export type TestChoice = 'auto' | 'student-t' | 'welch-t' | 'mann-whitney'
-  | 'anova' | 'welch-anova' | 'kruskal';
+  | 'anova' | 'welch-anova' | 'kruskal'
+  | 'paired-t' | 'wilcoxon' | 'rm-anova' | 'friedman';
 
 export const TEST_CHOICE_LABELS: Record<TestChoice, string> = {
   'auto': 'Automatic (recommended)',
@@ -46,13 +47,23 @@ export const TEST_CHOICE_LABELS: Record<TestChoice, string> = {
   'anova': 'One-way ANOVA',
   'welch-anova': "Welch's ANOVA",
   'kruskal': 'Kruskal-Wallis',
+  'paired-t': 'Paired t-test',
+  'wilcoxon': 'Wilcoxon signed-rank',
+  'rm-anova': 'Repeated-measures ANOVA',
+  'friedman': 'Friedman test',
 };
 
-/** Which tests apply for a given number of groups. */
+/** Which independent-samples tests apply for a given number of groups. */
 export const applicableTests = (k: number): TestChoice[] =>
   k === 2
     ? ['auto', 'student-t', 'welch-t', 'mann-whitney']
     : ['auto', 'anova', 'welch-anova', 'kruskal'];
+
+/** Which within-speaker tests apply for a given number of conditions. */
+export const applicableRepeatedTests = (k: number): TestChoice[] =>
+  k === 2
+    ? ['auto', 'paired-t', 'wilcoxon']
+    : ['auto', 'rm-anova', 'friedman'];
 
 export interface NormalityResult {
   group: string;
@@ -287,6 +298,8 @@ export const shapiroWilk = (x: number[]): { W: number; pValue: number } => {
   let num = 0;
   for (let i = 0; i < n; i++) num += a[i] * sorted[i];
   const W = (num * num) / ss;
+  // A perfect fit gives log(1 - W) = -Infinity in the p-value approximation
+  if (1 - W < 1e-10) return { W: 1, pValue: 1 };
 
   // P-value via Royston's approximation
   let pValue: number;
@@ -603,6 +616,329 @@ export const dunnsTest = (groups: number[][], names: string[], alpha = 0.05): Po
     }
   }
   return results;
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Section 6b: Repeated-Measures Tests (within-speaker designs)
+// ═══════════════════════════════════════════════════════════════════
+
+/** Paired t-test on difference scores. Normality assumption applies to the differences. */
+export const pairedTTest = (a: number[], b: number[]): { t: number; df: number; pValue: number; dz: number } => {
+  const n = a.length;
+  const diffs = a.map((v, i) => v - b[i]);
+  const m = mean(diffs);
+  const s = sd(diffs);
+  const df = n - 1;
+  // Zero-variance differences: every pair shifts by the same amount. A zero shift
+  // is no evidence (p = 1); a constant non-zero shift is perfectly consistent.
+  if (s === 0) {
+    return m === 0
+      ? { t: 0, df, pValue: 1, dz: 0 }
+      : { t: m > 0 ? Infinity : -Infinity, df, pValue: 0, dz: m > 0 ? Infinity : -Infinity };
+  }
+  const t = m / (s / Math.sqrt(n));
+  const pValue = 2 * (1 - jStat.studentt.cdf(Math.abs(t), df));
+  const dz = m / s;   // Cohen's dz — standardized mean of the paired differences
+  return { t, df, pValue, dz };
+};
+
+/**
+ * Wilcoxon signed-rank test (normal approximation with tie correction and
+ * continuity correction). Zero differences are dropped, per convention.
+ */
+export const wilcoxonSignedRank = (a: number[], b: number[]): { W: number; z: number; pValue: number; r: number; nUsed: number } => {
+  const diffs = a.map((v, i) => v - b[i]).filter(d => d !== 0);
+  const n = diffs.length;
+  if (n === 0) return { W: 0, z: 0, pValue: 1, r: 0, nUsed: 0 };
+
+  const absRanks = ranks(diffs.map(d => Math.abs(d)));
+  let wPlus = 0, wMinus = 0;
+  diffs.forEach((d, i) => { if (d > 0) wPlus += absRanks[i]; else wMinus += absRanks[i]; });
+  const W = Math.min(wPlus, wMinus);
+
+  // Tie correction for the variance
+  const counts = new Map<number, number>();
+  diffs.forEach(d => { const k = Math.abs(d); counts.set(k, (counts.get(k) || 0) + 1); });
+  let tieSum = 0;
+  counts.forEach(c => { if (c > 1) tieSum += c ** 3 - c; });
+
+  const muW = n * (n + 1) / 4;
+  const sigmaW = Math.sqrt(n * (n + 1) * (2 * n + 1) / 24 - tieSum / 48);
+  if (sigmaW === 0) return { W, z: 0, pValue: 1, r: 0, nUsed: n };
+  const z = (W - muW + 0.5) / sigmaW;   // continuity-corrected
+  const pValue = 2 * jStat.normal.cdf(-Math.abs(z), 0, 1);
+  const r = Math.abs(z) / Math.sqrt(n); // effect size r = |z|/sqrt(n)
+  return { W, z, pValue: Math.min(1, pValue), r, nUsed: n };
+};
+
+/**
+ * One-way repeated-measures ANOVA on a complete speakers × conditions matrix.
+ * The p-value uses Greenhouse-Geisser corrected degrees of freedom, which is
+ * safe whether or not sphericity holds (epsilon = 1 leaves the df unchanged).
+ */
+export const rmOneWayAnova = (matrix: number[][]): {
+  F: number; df1: number; df2: number; pValue: number; epsilon: number;
+  ssCond: number; ssSubj: number; ssErr: number; partialEtaSq: number;
+} => {
+  const n = matrix.length;          // speakers
+  const k = matrix[0].length;       // conditions
+  const grand = mean(matrix.flat());
+
+  const condMeans = Array.from({ length: k }, (_, j) => mean(matrix.map(row => row[j])));
+  const subjMeans = matrix.map(row => mean(row));
+
+  let ssCond = 0;
+  condMeans.forEach(m => { ssCond += n * (m - grand) ** 2; });
+  let ssSubj = 0;
+  subjMeans.forEach(m => { ssSubj += k * (m - grand) ** 2; });
+  let ssTotal = 0;
+  matrix.forEach(row => row.forEach(v => { ssTotal += (v - grand) ** 2; }));
+  const ssErr = ssTotal - ssCond - ssSubj;
+
+  const df1 = k - 1;
+  const df2 = (n - 1) * (k - 1);
+  const msCond = ssCond / df1;
+  const msErr = ssErr / Math.max(df2, 1);
+  const F = msErr > 0 ? msCond / msErr : 0;
+
+  // Greenhouse-Geisser epsilon from the double-centred covariance matrix
+  const S: number[][] = Array.from({ length: k }, () => new Array(k).fill(0));
+  for (let j1 = 0; j1 < k; j1++) {
+    for (let j2 = 0; j2 < k; j2++) {
+      let s = 0;
+      for (let i = 0; i < n; i++) s += (matrix[i][j1] - condMeans[j1]) * (matrix[i][j2] - condMeans[j2]);
+      S[j1][j2] = s / (n - 1);
+    }
+  }
+  const rowMeansS = S.map(row => mean(row));
+  const meanS = mean(S.flat());
+  let num = 0, den = 0;
+  for (let j1 = 0; j1 < k; j1++) {
+    for (let j2 = 0; j2 < k; j2++) {
+      const centred = S[j1][j2] - rowMeansS[j1] - rowMeansS[j2] + meanS;
+      den += centred ** 2;
+      if (j1 === j2) num += centred;
+    }
+  }
+  const epsRaw = den > 0 ? (num * num) / ((k - 1) * den) : 1;
+  const epsilon = Math.max(1 / (k - 1), Math.min(1, epsRaw));
+
+  const pValue = df2 > 0
+    ? 1 - jStat.centralF.cdf(F, df1 * epsilon, df2 * epsilon)
+    : 1;
+  const partialEtaSq = (ssCond + ssErr) > 0 ? ssCond / (ssCond + ssErr) : 0;
+  return { F, df1, df2, pValue, epsilon, ssCond, ssSubj, ssErr, partialEtaSq };
+};
+
+/** Friedman test on a complete speakers × conditions matrix, with tie correction. */
+export const friedmanTest = (matrix: number[][]): { chiSq: number; df: number; pValue: number; kendallsW: number } => {
+  const n = matrix.length;
+  const k = matrix[0].length;
+
+  // Rank within each speaker's row
+  const rankSums = new Array(k).fill(0);
+  let tieCorrection = 0;
+  for (const row of matrix) {
+    const r = ranks(row);
+    r.forEach((rv, j) => { rankSums[j] += rv; });
+    const counts = new Map<number, number>();
+    row.forEach(v => counts.set(v, (counts.get(v) || 0) + 1));
+    counts.forEach(c => { if (c > 1) tieCorrection += c ** 3 - c; });
+  }
+
+  let sumSq = 0;
+  rankSums.forEach(R => { sumSq += R * R; });
+  const raw = (12 / (n * k * (k + 1))) * sumSq - 3 * n * (k + 1);
+  const correction = 1 - tieCorrection / (n * k * (k * k - 1));
+  const chiSq = correction > 0 ? raw / correction : raw;
+
+  const df = k - 1;
+  const pValue = 1 - jStat.chisquare.cdf(chiSq, df);
+  const kendallsW = chiSq / (n * (k - 1));   // agreement across speakers, 0..1
+  return { chiSq, df, pValue, kendallsW: Math.max(0, Math.min(1, kendallsW)) };
+};
+
+/** Pairwise paired post-hocs (paired t or Wilcoxon), Bonferroni-corrected. */
+export const pairedPostHoc = (
+  matrix: number[][], names: string[], useParametric: boolean, alpha = 0.05,
+): PostHocResult[] => {
+  const k = names.length;
+  const nComparisons = k * (k - 1) / 2;
+  const results: PostHocResult[] = [];
+  for (let i = 0; i < k; i++) {
+    for (let j = i + 1; j < k; j++) {
+      const a = matrix.map(row => row[i]);
+      const b = matrix.map(row => row[j]);
+      const diff = mean(a) - mean(b);
+      let statistic: number, rawP: number;
+      if (useParametric) {
+        const res = pairedTTest(a, b);
+        statistic = res.t; rawP = res.pValue;
+      } else {
+        const res = wilcoxonSignedRank(a, b);
+        statistic = res.z; rawP = res.pValue;
+      }
+      const pValue = Math.min(1, rawP * nComparisons);   // Bonferroni
+      results.push({ pair: [names[i], names[j]], meanDiff: diff, statistic, pValue, significant: pValue < alpha });
+    }
+  }
+  return results;
+};
+
+/**
+ * Full within-speaker pipeline on a complete speakers × conditions matrix of
+ * per-speaker condition means. Mirrors runAnalysis: assumption checks, an
+ * automatic recommendation, optional forced test with advisory, post-hocs.
+ *
+ * Normality targets follow convention: the differences for two conditions,
+ * the model residuals for three or more.
+ */
+export const runRepeatedAnalysis = (
+  matrix: number[][], condNames: string[], alpha = 0.05, testChoice: TestChoice = 'auto',
+): AnalysisResult | AnalysisError => {
+  const n = matrix.length;
+  const k = condNames.length;
+
+  const stats = condNames.map((name, j) => groupStatsFor(name, matrix.map(row => row[j])));
+  if (k < 2) return { error: 'Need at least 2 conditions for comparison.', groupStats: stats };
+  if (n < 3) return { error: `Need at least 3 speakers with data in every condition (found ${n}).`, groupStats: stats };
+
+  // Normality check on the appropriate target
+  let normalityTests: NormalityResult[];
+  if (k === 2) {
+    const diffs = matrix.map(row => row[0] - row[1]);
+    const sw = shapiroWilk(diffs);
+    normalityTests = [{ group: 'Differences', W: sw.W, pValue: sw.pValue, isNormal: sw.pValue > alpha }];
+  } else {
+    const grand = mean(matrix.flat());
+    const condMeans = Array.from({ length: k }, (_, j) => mean(matrix.map(row => row[j])));
+    const subjMeans = matrix.map(row => mean(row));
+    const residuals = matrix.flatMap((row, i) => row.map((v, j) => v - condMeans[j] - subjMeans[i] + grand));
+    const sw = shapiroWilk(residuals);
+    normalityTests = [{ group: 'Residuals', W: sw.W, pValue: sw.pValue, isNormal: sw.pValue > alpha }];
+  }
+  const allNormal = normalityTests.every(r => r.isNormal);
+
+  const recommended: TestChoice = k === 2
+    ? (allNormal ? 'paired-t' : 'wilcoxon')
+    : (allNormal ? 'rm-anova' : 'friedman');
+  const checksSummary = k === 2
+    ? (allNormal
+      ? `The paired differences are normally distributed (Shapiro-Wilk p = ${normalityTests[0].pValue.toFixed(3)}).`
+      : `The paired differences are not normally distributed (Shapiro-Wilk p = ${formatP(normalityTests[0].pValue)}).`)
+    : (allNormal
+      ? `The model residuals are normally distributed (Shapiro-Wilk p = ${normalityTests[0].pValue.toFixed(3)}).`
+      : `The model residuals are not normally distributed (Shapiro-Wilk p = ${formatP(normalityTests[0].pValue)}).`);
+
+  const chosen: TestChoice = testChoice === 'auto' ? recommended
+    : applicableRepeatedTests(k).includes(testChoice) ? testChoice : recommended;
+  const advisory = chosen !== recommended
+    ? `You selected ${TEST_CHOICE_LABELS[chosen]}, but the assumption checks recommend ${TEST_CHOICE_LABELS[recommended]}: ${checksSummary}`
+    : undefined;
+  const reasoning = (chosen === recommended
+    ? checksSummary
+    : `Test selected by the user (recommendation: ${TEST_CHOICE_LABELS[recommended]}).`)
+    + ` Unit of analysis: ${n} speakers (one mean per speaker per condition).`;
+
+  let testResult: TestResult;
+  let postHoc: PostHocResult[] | null = null;
+
+  switch (chosen) {
+    case 'paired-t': {
+      const res = pairedTTest(matrix.map(r => r[0]), matrix.map(r => r[1]));
+      testResult = {
+        testName: 'Paired t-test', statistic: res.t, statisticName: 't', df: res.df,
+        pValue: res.pValue,
+        effectSize: { name: "Cohen's dz", value: res.dz, magnitude: effectMagnitude("Cohen's d", Math.abs(res.dz)) },
+        reasoning, advisory,
+      };
+      break;
+    }
+    case 'wilcoxon': {
+      const res = wilcoxonSignedRank(matrix.map(r => r[0]), matrix.map(r => r[1]));
+      testResult = {
+        testName: 'Wilcoxon signed-rank test', statistic: res.W, statisticName: 'W', df: NaN,
+        pValue: res.pValue,
+        effectSize: { name: 'r', value: res.r, magnitude: effectMagnitude('r', Math.abs(res.r)) },
+        reasoning, advisory,
+      };
+      break;
+    }
+    case 'rm-anova': {
+      const res = rmOneWayAnova(matrix);
+      testResult = {
+        testName: 'Repeated-measures ANOVA', statistic: res.F, statisticName: 'F',
+        df: [parseFloat((res.df1 * res.epsilon).toFixed(2)), parseFloat((res.df2 * res.epsilon).toFixed(1))],
+        pValue: res.pValue,
+        effectSize: { name: 'partial η²', value: res.partialEtaSq, magnitude: effectMagnitude('η²', res.partialEtaSq) },
+        reasoning: reasoning + ` Greenhouse-Geisser corrected (ε = ${res.epsilon.toFixed(3)}).`,
+        advisory,
+      };
+      if (res.pValue < alpha) postHoc = pairedPostHoc(matrix, condNames, true, alpha);
+      break;
+    }
+    default: {
+      const res = friedmanTest(matrix);
+      testResult = {
+        testName: 'Friedman test', statistic: res.chiSq, statisticName: 'χ²', df: res.df,
+        pValue: res.pValue,
+        effectSize: { name: "Kendall's W", value: res.kendallsW, magnitude: effectMagnitude('r', res.kendallsW) },
+        reasoning, advisory,
+      };
+      if (res.pValue < alpha) postHoc = pairedPostHoc(matrix, condNames, false, alpha);
+      break;
+    }
+  }
+
+  return { groupStats: stats, normalityTests, varianceTest: null, testResult, postHoc };
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Section 6c: Design Detection (speaker structure)
+// ═══════════════════════════════════════════════════════════════════
+
+export interface DesignInfo {
+  hasSpeakers: boolean;
+  nSpeakers: number;
+  tokensPerSpeaker: number;         // mean, over speakers present
+  repeatedMeasures: boolean;        // any speaker contributes >1 token
+  /** 'between' = each speaker in one level; 'within' = speakers span levels. */
+  design: 'between' | 'within' | 'none';
+  /** Speakers with data in every level (usable for paired/RM tests). */
+  completeSpeakers: number;
+}
+
+/** Inspect how speakers are distributed over the levels of a factor. */
+export const detectDesign = (
+  rows: { speaker: string; level: string }[], levels: string[],
+): DesignInfo => {
+  const bySpeaker = new Map<string, Map<string, number>>();
+  for (const r of rows) {
+    if (!r.speaker) continue;
+    if (!bySpeaker.has(r.speaker)) bySpeaker.set(r.speaker, new Map());
+    const m = bySpeaker.get(r.speaker)!;
+    m.set(r.level, (m.get(r.level) || 0) + 1);
+  }
+  const nSpeakers = bySpeaker.size;
+  if (nSpeakers === 0) {
+    return { hasSpeakers: false, nSpeakers: 0, tokensPerSpeaker: 0, repeatedMeasures: false, design: 'none', completeSpeakers: 0 };
+  }
+  let totalTokens = 0, multiLevel = 0, complete = 0;
+  bySpeaker.forEach(m => {
+    let t = 0; m.forEach(c => { t += c; });
+    totalTokens += t;
+    if (m.size > 1) multiLevel++;
+    if (levels.every(l => (m.get(l) || 0) > 0)) complete++;
+  });
+  const tokensPerSpeaker = totalTokens / nSpeakers;
+  return {
+    hasSpeakers: true,
+    nSpeakers,
+    tokensPerSpeaker,
+    repeatedMeasures: tokensPerSpeaker > 1.0001,
+    design: multiLevel > 0 ? 'within' : 'between',
+    completeSpeakers: complete,
+  };
 };
 
 // ═══════════════════════════════════════════════════════════════════
