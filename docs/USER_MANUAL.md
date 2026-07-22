@@ -513,6 +513,36 @@ correction where applicable), and every result reports an effect size with its m
 (Cohen's d or dz, η², partial η², Kendall's W, rank-biserial r). The α threshold is
 adjustable.
 
+**Mixed-effects model.** When the data has a speaker column and repeated tokens, the
+**Test** menu offers **Mixed-effects model (random intercepts)**. This model uses every
+token. It does not aggregate. It fits a random intercept for each speaker, and also for
+each word when the data has a word column. The intercepts absorb the correlation between
+the tokens of one speaker. This is the standard model in phonetic research.
+
+For each measure, FRED reports:
+
+- The model formula, for example `F1 ~ vowel + (1|speaker)`.
+- A likelihood-ratio test for the factor. This is the headline p-value. It compares the
+  model with the factor against the model without it.
+- The fixed effects: the estimate, the standard error, and *t* for each level against
+  the first level. A mixed model has no exact degrees of freedom for *t*. Use the
+  likelihood-ratio test for the factor, and |*t*| > 2 as a rough guide for one level.
+- The variance components: how much variation the speakers (and the words) cause, and
+  how much remains between tokens.
+
+FRED fits random intercepts only. For random slopes and larger models, use the export
+that follows.
+
+**Export for R.** The **Export for R (lme4)** button is on the design banner. It
+downloads two files:
+
+- `fred_data.csv` — the filtered data with your measures, factors, speaker, and word.
+- `fred_analysis.R` — a complete lme4 / lmerTest script. The script fits the same
+  models, runs the likelihood-ratio tests, and contains commented lines for random
+  slopes and pairwise comparisons.
+
+Put the two files in one folder. Then run the script in R or RStudio.
+
 **Categorical** cross-tabulates two category fields and tests their association with a
 chi-square test of independence (or Fisher's exact test for small 2×2 tables), with
 standardized residuals to show which cells drive the association.
@@ -520,10 +550,8 @@ standardized residuals to show which cells drive the association.
 Every table has **Copy / LaTeX / CSV** buttons for direct use in a manuscript.
 
 > **Note.** Speaker means control for the speaker, but not for other grouping structure
-> such as the word. For publication-grade inference over crossed random effects
-> (speakers *and* words), use a mixed-effects model in R (lme4). FRED's results with
-> Unit: Speaker means follow the standard aggregation approach and are a sound first
-> analysis.
+> such as the word. The mixed-effects model controls for both when the data has a word
+> column. When you must report random slopes, use the R export.
 
 ### Table
 

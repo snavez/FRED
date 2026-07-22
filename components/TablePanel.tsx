@@ -4,6 +4,10 @@ import { getLabel } from '../utils/getLabel';
 import {
   runAnalysis, twoWayAnova, runContingencyAnalysis, sigStars, formatP,
   runRepeatedAnalysis, detectDesign,
+} from '../services/statistics';
+import { lmmLRT, LmmFit, LmmLRT } from '../services/lmm';
+import { downloadRExport } from '../services/rExport';
+import {
   type AnalysisResult, type AnalysisError,
   type TwoWayAnovaResult, type ContingencyTableResult,
   type CellStats, type GroupStats,
@@ -528,10 +532,13 @@ const getNumericValue = (t: SpeechToken, field: string, formantTime: number): nu
 const TH = 'px-3 py-2 font-bold text-slate-500 uppercase tracking-tighter text-[11px]';
 const TD = 'px-3 py-1.5 text-slate-700 text-[12px] font-mono';
 
-/** Format a test statistic: fixed decimals normally, exponent for degenerate extremes. */
+/** Format a statistic: fixed decimals normally, exponent for very large or very small. */
 const formatStat = (v: number): string => {
   if (!isFinite(v)) return v > 0 ? '∞' : '-∞';
-  return Math.abs(v) >= 1e6 ? v.toExponential(2) : v.toFixed(3);
+  const a = Math.abs(v);
+  if (a >= 1e6) return v.toExponential(2);
+  if (a > 0 && a < 5e-4) return v.toExponential(2);
+  return v.toFixed(3);
 };
 const TD_LEFT = 'px-3 py-1.5 text-slate-700 text-[12px] font-medium';
 
@@ -627,6 +634,71 @@ const OneWayResults: React.FC<{ result: AnalysisResult; dvLabel: string; alpha: 
     </div>
   );
 };
+
+// ── Mixed-Effects Model Results ──
+const LmmResults: React.FC<{ result: LmmFit & { lrt: LmmLRT }; dvLabel: string; alpha: number }> = ({ result: r, dvLabel, alpha }) => (
+  <div className="space-y-5">
+    <div className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-[12px] text-slate-600 font-mono">
+      {r.formula.replace('value', dvLabel).replace('factor', 'group')}
+      <span className="ml-3 text-slate-400 font-sans">N = {r.n}; REML estimates; inference by likelihood ratio (ML)</span>
+    </div>
+
+    {/* Likelihood-ratio test — the headline result */}
+    <div className="bg-sky-50 border border-sky-200 rounded-lg p-5">
+      <div className="flex items-center gap-3 mb-3">
+        <h3 className="text-sm font-bold text-sky-900">Likelihood-ratio test for the fixed factor</h3>
+        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${r.lrt.pValue < alpha ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+          {r.lrt.pValue < alpha ? 'Significant' : 'Not significant'}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-x-8 gap-y-1.5 text-[12px] text-slate-700">
+        <div><span className="text-slate-500 font-medium">Statistic:</span> χ² = {formatStat(r.lrt.chiSq)}</div>
+        <div><span className="text-slate-500 font-medium">df:</span> {r.lrt.df}</div>
+        <div><span className="text-slate-500 font-medium">p-value:</span> <span className="font-mono">{formatP(r.lrt.pValue)}</span> <span className="font-bold text-slate-500">{sigStars(r.lrt.pValue)}</span></div>
+        <div><span className="text-slate-500 font-medium">Deviance:</span> {r.lrt.devNull.toFixed(1)} → {r.lrt.devFull.toFixed(1)}</div>
+      </div>
+      <div className="mt-3 text-[11px] text-slate-500 italic border-t border-sky-200 pt-2">
+        Comparison of maximum-likelihood fits with and without the factor, keeping the same random intercepts.
+      </div>
+    </div>
+
+    {/* Fixed effects */}
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Fixed effects (REML)</h3>
+        <ExportButtons headers={['Term', 'Estimate', 'SE', 't']} rows={r.fixed.map(f => [f.name, f.estimate.toFixed(4), f.se.toFixed(4), f.t.toFixed(2)])} filename={`lmm_fixed_${dvLabel}.csv`} />
+      </div>
+      <table className="w-full text-left border border-slate-200 rounded-lg overflow-hidden">
+        <thead className="bg-slate-50 border-b border-slate-200"><tr><th className={TH}>Term</th><th className={`${TH} text-right`}>Estimate</th><th className={`${TH} text-right`}>SE</th><th className={`${TH} text-right`}>t</th></tr></thead>
+        <tbody className="divide-y divide-slate-100">
+          {r.fixed.map(f => (
+            <tr key={f.name}><td className={TD_LEFT}>{f.name}</td><td className={`${TD} text-right`}>{formatStat(f.estimate)}</td><td className={`${TD} text-right`}>{formatStat(f.se)}</td><td className={`${TD} text-right`}>{formatStat(f.t)}</td></tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="text-[10px] text-slate-400 mt-1 italic">t-values have no exact degrees of freedom in a mixed model; use the likelihood-ratio test above for the factor, and |t| &gt; 2 as a rough per-term guide.</div>
+    </div>
+
+    {/* Variance components */}
+    <div>
+      <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Variance components</h3>
+      <table className="w-full text-left border border-slate-200 rounded-lg overflow-hidden">
+        <thead className="bg-slate-50 border-b border-slate-200"><tr><th className={TH}>Group</th><th className={`${TH} text-right`}>Variance</th><th className={`${TH} text-right`}>SD</th><th className={`${TH} text-right`}>Levels</th></tr></thead>
+        <tbody className="divide-y divide-slate-100">
+          {r.varComps.map(v => (
+            <tr key={v.group}><td className={TD_LEFT}>{v.group}</td><td className={`${TD} text-right`}>{formatStat(v.variance)}</td><td className={`${TD} text-right`}>{formatStat(v.sd)}</td><td className={`${TD} text-right`}>{v.group === 'Residual' ? '—' : v.levels}</td></tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+
+    {r.warnings.length > 0 && (
+      <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-2 space-y-1">
+        {r.warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}
+      </div>
+    )}
+  </div>
+);
 
 // ── Two-Way ANOVA Results ──
 const TwoWayResults: React.FC<{ result: TwoWayAnovaResult; dvLabel: string; factorALabel: string; factorBLabel: string; alpha: number }> = (props) => {
@@ -957,6 +1029,16 @@ const ContinuousAnalysisView: React.FC<{
   const canAggregate = !!design && design.hasSpeakers && design.repeatedMeasures;
   const unit: 'speakers' | 'tokens' = canAggregate && (config.statsUnit || 'speakers') === 'speakers'
     ? 'speakers' : 'tokens';
+  const isLmm = testChoice === 'lmm' && !!design?.hasSpeakers && !isTwoWay;
+
+  // A word-like field enables crossed (1|speaker) + (1|word) intercepts
+  const wordField = useMemo(() => {
+    const fromMeta = datasetMeta?.columnMappings.find(m =>
+      (m.fieldName || m.csvHeader).toLowerCase() === 'word' && m.role !== 'ignore');
+    const key = fromMeta ? (fromMeta.fieldName || fromMeta.csvHeader) : 'word';
+    const values = new Set(data.map(t => getLabel(t, key)).filter(Boolean));
+    return values.size >= 2 ? key : null;
+  }, [data, datasetMeta]);
 
   // Compute results for all measures
   const results = useMemo(() => {
@@ -988,6 +1070,27 @@ const ContinuousAnalysisView: React.FC<{
         if (twoWayData.length < 6) return { dvField, dvLabel, result: { error: 'Need at least 6 observations.' } as AnalysisError, isTwoWay: true };
         const anovaResult = twoWayAnova(twoWayData, alpha);
         return { dvField, dvLabel, result: anovaResult, isTwoWay: true };
+      }
+
+      if (isLmm) {
+        // Mixed-effects model on tokens: random intercepts absorb the speaker
+        // (and word) correlation, so no aggregation is needed
+        const y: number[] = [];
+        const levels: string[] = [];
+        const speakers: string[] = [];
+        const words: string[] = [];
+        for (const token of data) {
+          const level = getLabel(token, groupByField);
+          if (!level || !token.speaker) continue;
+          const v = getNumericValue(token, dvField, formantTime);
+          if (isNaN(v)) continue;
+          y.push(v); levels.push(level); speakers.push(token.speaker);
+          if (wordField) words.push(getLabel(token, wordField) || '(none)');
+        }
+        const groupings = [{ name: 'speaker', labels: speakers }];
+        if (wordField) groupings.push({ name: 'word', labels: words });
+        const fit = lmmLRT({ y, fixedLevels: levels, groupings });
+        return { dvField, dvLabel, result: fit, isTwoWay: false, isLmm: true };
       }
 
       if (unit === 'speakers' && design) {
@@ -1043,7 +1146,7 @@ const ContinuousAnalysisView: React.FC<{
       if (grouped.size < 2) return { dvField, dvLabel, result: { error: `Need at least 2 groups. Found ${grouped.size}.` } as AnalysisError, isTwoWay: false };
       return { dvField, dvLabel, result: runAnalysis(grouped, alpha, testChoice), isTwoWay: false };
     });
-  }, [data, measures, groupByField, groupBy2Field, formantTime, alpha, datasetMeta, isTwoWay, testChoice, unit, design, factorALabel]);
+  }, [data, measures, groupByField, groupBy2Field, formantTime, alpha, datasetMeta, isTwoWay, testChoice, unit, design, factorALabel, isLmm, wordField]);
 
   if (groupByField === 'none') {
     return <div className="flex items-center justify-center h-full text-slate-400 italic text-sm">Select Measures and Factor A in the config bar above to run analysis.</div>;
@@ -1056,6 +1159,10 @@ const ContinuousAnalysisView: React.FC<{
   const speakerAssumption = config.statsSpeakerAssumption || 'unknown';
   const designBanner = (() => {
     if (!design) return null;
+    if (isLmm) {
+      const ranef = wordField ? 'speaker and word' : 'speaker';
+      return { tone: 'info', text: `Mixed-effects model on all tokens with random intercepts for ${ranef} (${design.nSpeakers} speakers, ${design.tokensPerSpeaker.toFixed(1)} tokens/speaker). The intercepts absorb the within-${ranef.split(' ')[0]} correlation, so no aggregation is needed. Random slopes are not fitted — use the R export for those.` };
+    }
     if (!design.hasSpeakers) {
       const text = speakerAssumption === 'single'
         ? 'No speaker column; you confirmed the data is from one speaker. Tokens are treated as independent observations.'
@@ -1079,15 +1186,28 @@ const ContinuousAnalysisView: React.FC<{
   return (
     <div className="h-full overflow-auto p-6 space-y-6">
       {designBanner && (
-        <div className={`text-[12px] rounded-lg px-4 py-2.5 border ${designBanner.tone === 'warn'
+        <div className={`flex items-start justify-between gap-4 text-[12px] rounded-lg px-4 py-2.5 border ${designBanner.tone === 'warn'
           ? 'bg-amber-50 border-amber-200 text-amber-800'
           : 'bg-sky-50 border-sky-200 text-slate-600'}`}>
-          {designBanner.text}
+          <span>{designBanner.text}</span>
+          <button
+            className="shrink-0 px-2 py-1 text-[10px] font-bold border border-slate-300 rounded bg-white text-slate-600 hover:bg-slate-50"
+            title="Download fred_data.csv and fred_analysis.R — an lme4 script matching this selection, for random slopes and larger mixed models"
+            onClick={() => downloadRExport({
+              data, datasetMeta,
+              measures: measures.map(f => ({ field: f, label: prettyLabel(f, datasetMeta), value: (t: SpeechToken) => getNumericValue(t, f, formantTime) })),
+              factorA: groupByField,
+              factorB: isTwoWay ? groupBy2Field : null,
+              wordField,
+            })}
+          >Export for R (lme4)</button>
         </div>
       )}
-      {results.map(({ dvField, dvLabel, result, isTwoWay: is2w }) => {
+      {results.map(res => {
+        const { dvField, dvLabel, result, isTwoWay: is2w } = res;
+        const isLmmResult = (res as any).isLmm === true && !('error' in result);
         const isCollapsed = collapsed[dvField] ?? false;
-        const isError = 'error' in result && !('testResult' in result) && !('effects' in result);
+        const isError = 'error' in result && !('testResult' in result) && !('effects' in result) && !('lrt' in result);
 
         return (
           <div key={dvField} className={multiDV ? 'border border-slate-200 rounded-lg p-4' : ''}>
@@ -1108,9 +1228,11 @@ const ContinuousAnalysisView: React.FC<{
             {!isCollapsed && (
               isError
                 ? <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-amber-800 text-sm">{(result as AnalysisError).error}</div>
-                : is2w
-                  ? <TwoWayResults result={result as TwoWayAnovaResult} dvLabel={dvLabel} factorALabel={factorALabel} factorBLabel={factorBLabel} alpha={alpha} />
-                  : <OneWayResults result={result as AnalysisResult} dvLabel={dvLabel} alpha={alpha} />
+                : isLmmResult
+                  ? <LmmResults result={result as LmmFit & { lrt: LmmLRT }} dvLabel={dvLabel} alpha={alpha} />
+                  : is2w
+                    ? <TwoWayResults result={result as TwoWayAnovaResult} dvLabel={dvLabel} factorALabel={factorALabel} factorBLabel={factorBLabel} alpha={alpha} />
+                    : <OneWayResults result={result as AnalysisResult} dvLabel={dvLabel} alpha={alpha} />
             )}
           </div>
         );

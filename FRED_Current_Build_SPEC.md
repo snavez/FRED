@@ -316,6 +316,24 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
   `applicableTests(k)` / `applicableRepeatedTests(k)` gate the choices; the Test dropdown
   offers paired options when the design is within-speaker and the unit is speaker means.
   An inapplicable forced choice falls back to the recommendation.
+- **Mixed-effects model** (`statsTestChoice: 'lmm'`, one-way with a speaker column and
+  repeated tokens): `services/lmm.ts` fits a random-intercepts linear mixed model on all
+  tokens — `measure ~ factor + (1|speaker)` (plus `(1|word)` when a word field with ≥2
+  values exists). Profiled REML/ML deviance per lme4 (Bates et al. 2015): sparse-free
+  dense Cholesky of Λ'Z'ZΛ+I, penalized least squares, Nelder-Mead / golden-section over
+  θ ≥ 0 with restarts; capped at `LMM_MAX_LEVELS` (1200) grouping levels. Inference by
+  likelihood-ratio test on ML fits (`lmmLRT`), avoiding the mixed-model df problem;
+  estimates reported from the REML fit. `TablePanel` renders formula, LRT card, fixed
+  effects (treatment coding vs. first level) with SEs and t (|t| > 2 guide), variance
+  components with near-zero warnings. Random intercepts only — random slopes via R export.
+  Validated in `services/lmm.test.ts` against balanced-design closed forms
+  (σ̂² = MS_within, σ̂_b² = (MS_between−MS_within)/r, SE(diff) = √(2σ²/m)), scale/shift
+  invariances, and crossed-effects variance recovery.
+- **Export for R (lme4)**: button on the design banner (`services/rExport.ts`) downloads
+  `fred_data.csv` (token rows: measures, factors, speaker, word; `NA` for missing;
+  `rName()` mirrors R's `make.names`) and `fred_analysis.R` — an lmerTest script per
+  measure: ML full/null `anova()` LRT, REML `summary()`, commented random-slope and
+  emmeans lines.
 - **Categorical**: Row/Col variables → contingency table, chi-square (Fisher's exact for
   sparse 2×2), standardized residuals.
 - Adjustable α; Copy/LaTeX/CSV export on every results table.
@@ -640,6 +658,11 @@ FRED/
   services/
     csvParser.ts                       # CSV/TSV parsing, auto-detection, alias table
     csvParser.test.ts                  # Parser tests
+    statistics.ts                      # Statistical test engine (see Statistics tab)
+    statistics.test.ts                 # Paired/RM test + pipeline tests
+    lmm.ts                             # Random-intercepts mixed model (profiled REML/ML)
+    lmm.test.ts                        # Closed-form / invariance / recovery validation
+    rExport.ts                         # Export-for-R: fred_data.csv + lme4 script
   utils/
     getLabel.ts                        # Shared label extraction utility (checks fields dict)
     getLabel.test.ts                   # Label utility tests

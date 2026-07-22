@@ -2496,6 +2496,11 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                             value={currentConfig.statsTestChoice || 'auto'}
                             onChange={e => handleConfig('statsTestChoice', e.target.value)}>
                             <option value="auto">Automatic (recommended)</option>
+                            {statsSpeakerInfo.hasSpeakers && statsSpeakerInfo.repeated && (
+                              <optgroup label="Model (all tokens)">
+                                <option value="lmm">Mixed-effects model (random intercepts)</option>
+                              </optgroup>
+                            )}
                             {statsSpeakerInfo.repeated && statsSpeakerInfo.within
                               && (currentConfig.statsUnit || 'speakers') === 'speakers' ? (
                               <>
