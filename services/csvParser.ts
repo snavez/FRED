@@ -1,5 +1,6 @@
 
 import { SpeechToken, TrajectoryPoint, ColumnMapping, ColumnRole, DatasetMeta, TrajectoryFormat, TrajectoryUnit, TrajectorySpacing } from '../types';
+import { detectSpectralRole, spectralColumnRegion } from '../utils/spectralMoments';
 
 /** Threshold: ≥ this many non-target timepoints per formant = trajectory data. */
 export const TRAJECTORY_MIN_POINTS = 4;
@@ -128,32 +129,6 @@ const FORMANT_NUMERIC_REGEX = /^(f[12345])_(\d+)(?:%|ms|sec)?(?:_(.+))?$/i;
 const FORMANT_BARE_REGEX = /^(f[12345])$/i;
 const FORMANT_NAMED_REGEX = /^(f[12345])_([a-z][a-z0-9]*)(?:_(.+))?$/i;
 const PITCH_REGEX = /^f0_(\d+)(?:%|ms|sec)?(?:_(.+))?$/i;
-
-/**
- * Spectral-moment columns for consonant analysis: COG/SD/skew/kurt (plus common
- * synonyms), optionally with a numeric timepoint suffix — e.g. COG_20%, sd_50,
- * kurtosis_80%, SpecDiff, centroid. Detected columns get a dedicated spectral role
- * (spectral_cog / spectral_sd / spectral_skew / spectral_kurt) so the Spectral
- * Moments tab can find them regardless of naming; users can also assign these roles
- * manually in the mapping dialog. The explicit roles double as protection from the
- * generic "mostly numeric, many unique" ignore heuristic.
- */
-const SPECTRAL_NAME_TO_ROLE: Record<string, ColumnRole> = {
-  cog: 'spectral_cog', centroid: 'spectral_cog',
-  centerofgravity: 'spectral_cog', centreofgravity: 'spectral_cog',
-  sd: 'spectral_sd', stdev: 'spectral_sd', std: 'spectral_sd', sdev: 'spectral_sd',
-  spread: 'spectral_sd', specdiff: 'spectral_sd', diffusion: 'spectral_sd',
-  skew: 'spectral_skew', skewness: 'spectral_skew',
-  kurt: 'spectral_kurt', kurtosis: 'spectral_kurt',
-};
-// Accepts a bare moment name, a timepoint suffix (`_20%`, `_50`), a track-sample
-// suffix (`_t0`…`_tN`) or a coefficient suffix (`_k0`…`_kN`). Grid lengths are never
-// assumed — any index is matched and the counts are discovered from the data.
-const SPECTRAL_HEADER_REGEX = /^([a-z]+)(?:_(?:\d+(?:\.\d+)?\s*%?|t\d+|k\d+))?(?:_smooth)?$/;
-const detectSpectralRole = (lowerHeader: string): ColumnRole | null => {
-  const match = lowerHeader.match(SPECTRAL_HEADER_REGEX);
-  return match ? (SPECTRAL_NAME_TO_ROLE[match[1]] ?? null) : null;
-};
 
 /** Names that should populate SpeechToken.xmin (now detected as regular fields) */
 const XMIN_NAMES = new Set(['xmin', 'onset', 'start', 'start_time']);
@@ -342,6 +317,14 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
   const namedTargetIndex: Record<string, number> = {};
   namedTargetOrder.forEach((t, i) => { namedTargetIndex[t] = namedTargetBase + i; });
 
+  /** Whether a column's sampled values are numbers (empty samples count as numeric). */
+  const isMostlyNumeric = (header: string): boolean => {
+    const colIdx = headers.indexOf(header);
+    const values = sampleRows.map(row => row[colIdx] || '').filter(v => v !== '');
+    if (values.length === 0) return true;
+    return values.filter(v => !isNaN(parseFloat(v))).length / values.length > 0.8;
+  };
+
   // Pass 2: build mappings
   const result: ColumnMapping[] = headers.map(header => {
     const lower = header.toLowerCase().trim();
@@ -414,17 +397,24 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
       };
     }
 
-    // 2c-bis. Spectral-moment columns (COG/SD/skew/kurt and synonyms, with or without
-    // a timepoint suffix) → dedicated spectral role feeding the Spectral Moments tab.
-    const spectralRole = detectSpectralRole(lower);
+    // 2c-bis. Spectral-moment columns (COG/SD/skew/kurt and synonyms) → dedicated
+    // spectral role feeding the Spectral Moments tab. The name may carry a region
+    // label and a position: COG_20%, COG_closure_20%, SD_release_t3, kurt_k1.
+    // A region-labelled name is only accepted when the column really holds numbers,
+    // so a categorical column such as `skew_notes` is not swept up as a measurement.
+    const spectralRole = detectSpectralRole(header);
     if (spectralRole) {
-      return {
-        csvHeader: header,
-        role: spectralRole,
-        fieldName: header,
-        showInSidebar: false,
-        isDataField: true,
-      };
+      const region = spectralColumnRegion(header);
+      if (!region || isMostlyNumeric(header)) {
+        return {
+          csvHeader: header,
+          role: spectralRole,
+          fieldName: header,
+          spectralRegion: region || undefined,
+          showInSidebar: false,
+          isDataField: true,
+        };
+      }
     }
 
     // 2d. Check pitch time-point pattern (f0_50, f0_50%, f0_80_smooth, etc.)

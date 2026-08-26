@@ -15,6 +15,7 @@ import {
   parseSpectralColumn,
   parseSpectralTimePointSuffix,
   spectralColumnChip,
+  spectralColumnRegion,
   SpectralKind,
 } from '../utils/spectralMoments';
 
@@ -207,7 +208,13 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
     || effectiveFormat === 'time-slice';
 
   const updateMapping = (idx: number, updates: Partial<ColumnMapping>) => {
-    setMappings(prev => prev.map((m, i) => i === idx ? { ...m, ...updates } : m));
+    updateMappings([idx], updates);
+  };
+
+  /** Apply the same change to several columns — used by grouped spectral families. */
+  const updateMappings = (idxs: number[], updates: Partial<ColumnMapping>) => {
+    const target = new Set(idxs);
+    setMappings(prev => prev.map((m, i) => target.has(i) ? { ...m, ...updates } : m));
     setValidationError(null);
   };
 
@@ -336,10 +343,12 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
     // with ≥2 members rolls up — unlike formant trajectories (TRAJECTORY_MIN_POINTS).
     for (const [key, members] of bySpectral) {
       if (members.length >= 2) {
-        const kind = parseSpectralColumn(members[0].m.csvHeader).kind;
+        const first = members[0].m;
+        const kind = parseSpectralColumn(first.csvHeader).kind;
+        const region = first.spectralRegion ?? spectralColumnRegion(first.csvHeader);
         groups.push({
           kind: 'group', groupKey: key,
-          label: `${roleLabel(members[0].m.role)} ${SPECTRAL_GROUP_NOUN[kind]}`,
+          label: `${roleLabel(first.role)} ${SPECTRAL_GROUP_NOUN[kind]}${region ? ` · ${region}` : ''}`,
           badge: 'Spectral · Data', isSpectral: true, members,
         });
       } else {
@@ -517,9 +526,17 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
               : ref.kind === 'coeff' ? 'Shape coefficient order, read from the column name'
               : 'Timepoint parsed from the column name; bare names default to the 50% midpoint';
             return (
-              <div className="flex items-center gap-1" title={hint}>
-                <span className="text-[11px] text-slate-400">@</span>
-                <span className="text-xs bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded font-bold">{spectralColumnChip(m.csvHeader)}</span>
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] text-slate-400" title={hint}>@</span>
+                <span className="text-xs bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded font-bold" title={hint}>{spectralColumnChip(m.csvHeader)}</span>
+                <input
+                  type="text"
+                  className="text-xs p-1 border border-slate-200 rounded w-24"
+                  value={m.spectralRegion ?? spectralColumnRegion(m.csvHeader)}
+                  onChange={e => updateMapping(idx, { spectralRegion: e.target.value.trim() })}
+                  placeholder="region"
+                  title="Region of the segment this column measures (e.g. closure, release). Read from the column name; edit to label it yourself. Measurements are kept apart by region."
+                />
               </div>
             );
           })()}
@@ -874,21 +891,37 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
                     <React.Fragment key={`group_${row.groupKey}`}>
                       <tr className="border-b border-slate-100 bg-emerald-50/40">
                         <td colSpan={6} className="py-1">
-                          <button
-                            onClick={() => toggleGroup(row.groupKey)}
-                            className="flex items-center gap-2 hover:bg-emerald-100/50 rounded px-2 py-1 w-full text-left transition-colors"
-                          >
-                            {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                            <span className="font-mono text-xs font-bold text-slate-700">
-                              {row.label}
-                            </span>
-                            <span className="text-[11px] text-slate-500">
-                              {describeGroup(row.members, row.isSpectral)}
-                            </span>
-                            <span className="ml-auto text-[11px] px-2 py-0.5 bg-amber-100 text-amber-700 rounded font-bold">
-                              {row.badge}
-                            </span>
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => toggleGroup(row.groupKey)}
+                              className="flex items-center gap-2 hover:bg-emerald-100/50 rounded px-2 py-1 flex-1 text-left transition-colors"
+                            >
+                              {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                              <span className="font-mono text-xs font-bold text-slate-700">
+                                {row.label}
+                              </span>
+                              <span className="text-[11px] text-slate-500">
+                                {describeGroup(row.members, row.isSpectral)}
+                              </span>
+                              <span className="ml-auto text-[11px] px-2 py-0.5 bg-amber-100 text-amber-700 rounded font-bold">
+                                {row.badge}
+                              </span>
+                            </button>
+                            {/* One region for the whole family — closure and release stay separable */}
+                            {row.isSpectral && (
+                              <div className="flex items-center gap-1 pr-2">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase">Region</span>
+                                <input
+                                  type="text"
+                                  className="text-xs p-1 border border-slate-200 rounded w-24 bg-white"
+                                  value={row.members[0].m.spectralRegion ?? spectralColumnRegion(row.members[0].m.csvHeader)}
+                                  onChange={e => updateMappings(row.members.map(mem => mem.idx), { spectralRegion: e.target.value.trim() })}
+                                  placeholder="none"
+                                  title="Region of the segment these columns measure (e.g. closure, release). Read from the column names; edit to label them yourself."
+                                />
+                              </div>
+                            )}
+                          </div>
                         </td>
                       </tr>
                       {isExpanded && row.members.map(mem => renderMappingRow(mem.m, mem.idx, true))}

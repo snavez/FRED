@@ -5,10 +5,12 @@ import {
   drawShape, ShapeIcon, hexToRgb, computeEncodingMaps, EncodingMaps,
 } from '../utils/plotEncoding';
 import {
-  discoverSpectralMoments, getSpectralValue, spectralAxisLabel, getSpectralMomentDef,
+  discoverSpectralMoments, spectralAxisLabel, getSpectralMomentDef,
   SpectralMomentKey, SpectralMomentMeta, SpectralFeature,
   resolveSpectralFeature, getSpectralFeatureValue, spectralFeatureAxisLabel,
-  spectralFeatureLabel, getSpectralTrackValue, getSpectralCoeffValue, coefficientLabel,
+  spectralFeatureLabel, getSpectralCoeffValue, coefficientLabel,
+  spectralFeatureAt, spectralIndicesOfKind, spectralMomentsOfKind, resolveSpectralAxes,
+  parseSpectralMomentRef, hasSpectralFeature,
 } from '../utils/spectralMoments';
 
 interface SpectralMomentsPlotProps {
@@ -56,9 +58,30 @@ const kde = (values: number[], grid: number[]): number[] => {
   return grid.map(g => { let s = 0; for (const v of values) { const u = (g - v) / bw; s += Math.exp(-0.5 * u * u); } return s * norm; });
 };
 
-const momentKey = (s: string): SpectralMomentKey => s as SpectralMomentKey;
-const pickMoment = (want: string, available: SpectralMomentKey[], fallbackIdx = 0): SpectralMomentKey =>
-  available.includes(momentKey(want)) ? momentKey(want) : (available[fallbackIdx] ?? available[0]);
+/**
+ * The contour family a timeline should draw: the stored `region:moment` ref when the
+ * dataset still holds it, else the first family that has a grid to sweep. Tracks are
+ * preferred over %-points — a denser grid over the same segment.
+ */
+const resolveContourFamily = (
+  ref: string, meta: SpectralMomentMeta,
+): { moment: SpectralMomentKey; region: string; kind: 'track' | 'point' } | null => {
+  const gridKinds: ('track' | 'point')[] = ['track', 'point'];
+  const usable = (moment: SpectralMomentKey, region: string, kind: 'track' | 'point') =>
+    spectralIndicesOfKind(meta, kind, region).length >= 2
+    && spectralMomentsOfKind(meta, kind, region).some(m => m.key === moment);
+  const want = parseSpectralMomentRef(ref);
+  for (const kind of gridKinds) {
+    if (want.moment && usable(want.moment, want.region, kind)) return { ...want, kind };
+  }
+  for (const kind of gridKinds) {
+    for (const region of meta.regions) {
+      const moment = spectralMomentsOfKind(meta, kind, region)[0];
+      if (moment && usable(moment.key, region, kind)) return { moment: moment.key, region, kind };
+    }
+  }
+  return null;
+};
 
 /** A coloured/shaped group of tokens sharing colour (and optionally shape or line-type). */
 interface EncGroup { key: string; tokens: SpeechToken[]; color: string; shape: string; dash: number[]; label: string; }
@@ -107,7 +130,6 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
 
   const allTokens = useMemo(() => Object.values(layerData).flat(), [layerData]);
   const sm = useMemo<SpectralMomentMeta>(() => discoverSpectralMoments(allTokens, datasetMeta), [allTokens, datasetMeta]);
-  const availableKeys = useMemo(() => sm.moments.map(m => m.key), [sm]);
 
   const defaultColor = (cfg: PlotConfig) => cfg.bwMode ? '#000000' : '#64748b';
 
@@ -181,8 +203,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
 
     // ═══ SCATTER (multi-layer, feature × feature) ═══
     if (view === 'scatter') {
-      const xF = resolveSpectralFeature(bgConfig.spectralXFeature, sm, 0);
-      const yF = resolveSpectralFeature(bgConfig.spectralYFeature, sm, 1);
+      const { x: xF, y: yF } = resolveSpectralAxes(bgConfig.spectralXFeature, bgConfig.spectralYFeature, sm);
       if (!xF || !yF) { drawEmpty(ctx, width, height, 'No spectral measurements available for the axes.', s); return; }
       const visible = layers.filter(l => l.visible);
 
@@ -192,10 +213,12 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       // axis, so a coefficient axis falls back to plotting points.
       const onTrack = xF.kind === 'track';
       const sweepable = xF.kind !== 'coeff' && yF.kind !== 'coeff';
-      const sweepAt = (t: SpeechToken, i: number) => onTrack
-        ? { x: getSpectralTrackValue(t, sm, xF.moment, i), y: getSpectralTrackValue(t, sm, yF.moment, i) }
-        : { x: getSpectralValue(t, sm, xF.moment, i), y: getSpectralValue(t, sm, yF.moment, i) };
-      const fullGrid = onTrack ? sm.trackIndices : sm.timePoints;
+      const sweepAt = (t: SpeechToken, i: number) => ({
+        x: getSpectralFeatureValue(t, sm, spectralFeatureAt(xF, i)),
+        y: getSpectralFeatureValue(t, sm, spectralFeatureAt(yF, i)),
+      });
+      // Both axes share a kind, so one grid serves both; the X axis names the region.
+      const fullGrid = spectralIndicesOfKind(sm, xF.kind, xF.region);
       // Range trims the sweep; [0,0] means the whole grid.
       const [rFrom, rTo] = bgConfig.spectralTrajRange || [0, 0];
       const sweepSteps = (rFrom === 0 && rTo === 0)
@@ -401,9 +424,13 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
 
       // "All coefficients" small multiples: one panel per coefficient, each on its own
       // scale — k0 runs to ~19000 while k1 is ~±1500, so a shared axis would flatten them.
-      if (cfg.spectralCoeffFacets && sm.coeffMoments.length > 0 && sm.coeffIndices.length > 1) {
-        const moment = feature.kind === 'coeff' ? feature.moment : sm.coeffMoments[0].key;
-        const panels = sm.coeffIndices.filter(i => sm.coeffKeyMap[`${moment}~k${i}`]);
+      const coeffRegion = feature.kind === 'coeff' ? (feature.region ?? '') : (sm.regions[0] ?? '');
+      const coeffMoments = spectralMomentsOfKind(sm, 'coeff', coeffRegion);
+      const coeffIndices = spectralIndicesOfKind(sm, 'coeff', coeffRegion);
+      if (cfg.spectralCoeffFacets && coeffMoments.length > 0 && coeffIndices.length > 1) {
+        const moment = feature.kind === 'coeff' ? feature.moment : coeffMoments[0].key;
+        const panels = coeffIndices.filter(i =>
+          hasSpectralFeature(sm, { moment, kind: 'coeff', index: i, region: coeffRegion }));
         if (panels.length === 0) { drawEmpty(ctx, width, height, 'No coefficients available.', s); return; }
         const cols = Math.min(panels.length, 2);
         const rows = Math.ceil(panels.length / cols);
@@ -413,7 +440,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
           const cx = idx % cols, cy = Math.floor(idx / cols);
           drawBoxPanel(
             { x: area.x + cx * (pw + gapX), y: area.y + cy * (ph + gapY), w: pw, h: ph },
-            t => { const v = getSpectralCoeffValue(t, sm, moment, k); return flip ? -v : v; },
+            t => { const v = getSpectralCoeffValue(t, sm, moment, k, coeffRegion); return flip ? -v : v; },
             `${getSpectralMomentDef(moment).short} ${coefficientLabel(k)}`,
             false, true,
           );
@@ -462,12 +489,13 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
     if (view === 'timeline') {
       // Prefer the dense track grid; fall back to %-timepoints for datasets without one.
       // Every token shares the grid, so pointwise averaging across tokens is valid.
-      const moment = pickMoment(cfg.spectralTimelineMoment, availableKeys, 0);
-      const onTrack = sm.trackMoments.some(m => m.key === moment) && sm.trackIndices.length >= 2;
-      const steps = onTrack ? sm.trackIndices : sm.timePoints;
-      if (steps.length < 2) { drawEmpty(ctx, width, height, 'Timeline needs ≥2 positions; this dataset has one.', s); return; }
+      const family = resolveContourFamily(cfg.spectralTimelineMoment, sm);
+      if (!family) { drawEmpty(ctx, width, height, 'Timeline needs ≥2 positions; this dataset has one.', s); return; }
+      const { moment, region } = family;
+      const onTrack = family.kind === 'track';
+      const steps = spectralIndicesOfKind(sm, family.kind, region);
       const valueAt = (t: SpeechToken, i: number) =>
-        onTrack ? getSpectralTrackValue(t, sm, moment, i) : getSpectralValue(t, sm, moment, i);
+        getSpectralFeatureValue(t, sm, { moment, kind: family.kind, index: i, region });
       // Track samples are an index grid — label them as normalised time 0→1.
       const first = steps[0], last = steps[steps.length - 1];
       const axisLabel = onTrack ? 'Normalised time (0 → 1)' : 'Segment position';
@@ -530,7 +558,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         : steps.map(i => ({ pos: mapX(i), label: tickLabel(i) }));
       drawFrame(ctx, area, xTicks,
         niceTicks(vLo, vHi).filter(t => t >= vLo && t <= vHi).map(t => ({ pos: mapY(t), label: `${t}` })),
-        absolute ? 'Time (ms)' : axisLabel, spectralAxisLabel(moment), s);
+        absolute ? 'Time (ms)' : axisLabel, spectralAxisLabel(moment, undefined, region), s);
 
       if (cfg.spectralShowIndividual) {
         data.forEach(t => {
@@ -590,7 +618,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         ctx.strokeStyle = color; ctx.lineWidth = 2 * s; ctx.stroke();
       });
     }
-  }, [sm, availableKeys, layers, layerData, activeConfig, activeData, activeLayer, bgConfig, legendLayers]);
+  }, [sm, layers, layerData, activeConfig, activeData, activeLayer, bgConfig, legendLayers]);
 
   // ─── Export handle ────────────────────────────────────────────────
   useImperativeHandle(ref, () => {

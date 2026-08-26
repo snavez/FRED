@@ -26,7 +26,7 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 | `pitch` | Pitch / F0 data | pattern `f0_<time>[_<variant>]`, `pitch`, `voice_pitch` |
 | `token_id` | Groups long-format rows into tokens | `segment_id`, `item_id`, `obs_id`, … |
 | `timepoint` | Time column for long format | `times_norm`, `time_rel`, `timepoint`, … |
-| `spectral_cog` / `spectral_sd` / `spectral_skew` / `spectral_kurt` | Consonant spectral measurements (see Spectral section) | moment synonyms with `_N%`, `_tN` or `_kN` suffix |
+| `spectral_cog` / `spectral_sd` / `spectral_skew` / `spectral_kurt` | Consonant spectral measurements (see Spectral section) | moment synonyms with an optional region label and `_N%`, `_tN` or `_kN` suffix |
 | `field` | Generic field (categorical or data) | *(any unrecognized column)* |
 | `ignore` | Column is not imported | |
 
@@ -142,34 +142,55 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
     (`getSpectralCoeffValue`).
   `parseSpectralColumn` classifies a column by suffix (`_tN` / `_kN` tested before `_N%`).
   **Grid lengths are always read from the data** — a dataset may carry any number of track
-  samples or coefficients (`meta.trackIndices`, `meta.coeffIndices`).
+  samples or coefficients (`spectralIndicesOfKind`).
+- **Regions**: a column may name the phase of the segment it measures, between the moment
+  and the position — `COG_closure_20%`, `SD_release_t3`. Region labels are free text read
+  from the header (`splitMomentAndRegion`; the longest leading run of parts spelling a
+  moment wins, so `centre_of_gravity_burst_50%` is COG in the `burst` region). Every
+  measurement is addressed by **moment × region × kind × position**, so closure never
+  shares a slot with release. `meta.regions` lists them in the order the dataset presents
+  them, and `spectralMomentsOfKind` / `spectralIndicesOfKind` / `spectralKindsAvailable` /
+  `spectralRegionsOfKind` answer what each region carries — regions need not be symmetric.
+  A dataset with no region labels behaves exactly as before (region `''`).
 - **Features** (`SpectralFeature`) are the scalars an axis or measure picker can offer:
-  a moment at a timepoint (`COG@50`) or a coefficient (`COG~k1`). `listSpectralFeatures`
-  enumerates them, `resolveSpectralFeature` falls back when a stored ref is absent, and
+  a moment at a timepoint in a region (`release:COG@50`) or a coefficient
+  (`closure:COG~k1`); refs without a region prefix (`COG@50`) mean the unlabelled family,
+  so configs saved before regions existed still resolve. `listSpectralFeatures` enumerates
+  them (optionally within one region), `resolveSpectralFeature` falls back when a stored
+  ref is absent, `resolveSpectralAxes` resolves a scatter pair together (an unusable Y
+  falls back to X's partner — the next moment in X's own region at the same position), and
   `getSpectralFeatureValue` reads one. Tracks are excluded — they are vectors, selected by
-  moment alone.
+  moment alone. `spectralFeatureAt` moves a feature along its grid, which is how a
+  trajectory sweeps.
 - **Explicit mapping roles**: the Data Mapping dialog offers **Spectral COG / Spectral
   Diffusion (SD) / Spectral Skew / Spectral Kurtosis** roles (`spectral_cog` / `spectral_sd`
   / `spectral_skew` / `spectral_kurt` in `ColumnRole`), so columns with *any* name can feed
   the Spectral tab. Role-mapped columns are authoritative in `discoverSpectralMoments`
   (claimed first; the header-pattern scan fills remaining slots). The role names the
-  *moment*; which of the three forms a column holds is read from its name suffix.
-- The CSV parser auto-assigns these roles by header (COG/centroid, SD/stdev/spread/SpecDiff/
-  diffusion, skew(ness), kurt(osis) — bare, or with a `_N%`, `_tN` or `_kN` suffix);
-  mis-assignments can be corrected in the dialog. The explicit roles also keep spectral
-  columns clear of the high-cardinality "ignore" heuristic. Values are stored in
-  `token.fields` under the column name, and spectral columns appear in the Data Summaries
-  numeric Y-axis options. Analysis metadata that shares the `_N%` suffix (`winms_20%`,
-  `nsamples_20%`, `winsource_20%`) is correctly left alone — the *base* name must be a
-  moment synonym.
+  *moment*; which of the three forms a column holds is read from its name suffix, and its
+  region from `ColumnMapping.spectralRegion` (auto-filled from the header, editable in the
+  dialog — so a hand-named column can be labelled `release` by hand).
+- The CSV parser auto-assigns these roles by header via the shared `detectSpectralRole`
+  (COG/centroid, SD/stdev/spread/SpecDiff/diffusion, skew(ness), kurt(osis) — bare, or with
+  a region label and/or a `_N%`, `_tN` or `_kN` suffix); mis-assignments can be corrected in
+  the dialog. The explicit roles also keep spectral columns clear of the high-cardinality
+  "ignore" heuristic. Values are stored in `token.fields` under the column name, and
+  spectral columns appear in the Data Summaries numeric Y-axis options. Analysis metadata
+  that shares the suffix (`winms_closure_20%`, `nsamples_20%`, `winsource_20%`) is left
+  alone — the *head* of the name must spell a moment — and a region-labelled name is only
+  accepted when the column's sampled values are actually numeric, so a categorical
+  `skew_notes` is not swept up. Per-region durations (`closure_dur`, `release_dur`) stay
+  duration fields, usable on the Data Summaries Y axis.
 - **Family roll-ups in the mapping dialog**: spectral columns sharing a role, kind and base
-  name collapse into one group row per family, so tracks stay separate from point moments:
-  - "Spectral COG at timepoints · 3 columns · 20% to 80%"
-  - "Spectral COG track · 11 columns · t0 to t10"
+  name (region included) collapse into one group row per family, so tracks stay separate
+  from point moments and closure from release:
+  - "Spectral COG at timepoints · closure · 3 columns · 20% to 80%"
+  - "Spectral COG track · release · 11 columns · t0 to t10"
   - "Spectral COG coefficients · 4 columns · k0 to k3"
-  Expanding shows each member with its role dropdown and a chip giving its position
-  (`50%`, `t3`, `k1` — `spectralColumnChip`). Remapping a member removes it from the group
-  live. (Formant groups need `TRAJECTORY_MIN_POINTS` (4) columns; spectral families group
+  Each spectral group row carries a **Region** box that relabels the whole family at once.
+  Expanding shows each member with its role dropdown, a chip giving its position
+  (`50%`, `t3`, `k1` — `spectralColumnChip`) and its own region box. Remapping a member
+  removes it from the group live. (Formant groups need `TRAJECTORY_MIN_POINTS` (4) columns; spectral families group
   from 2.)
 - **Control row** reads Plot → Mode → Data → Axes → position → ranges:
   - **Plot** (`spectralMode`) — Scatter / Distribution / Mean contours / Density.
@@ -181,7 +202,11 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
     kind** — a track sample can never be compared against a %-timepoint. Coefficients are
     withheld while Mode is Trajectory, since they have no time axis.
   - **Axes X/Y** list moments only; for coefficients each axis gains its own order picker
-    (k0 × k1 of one moment being the headline plot).
+    (k0 × k1 of one moment being the headline plot). When the dataset labels regions, each
+    axis also gains a **region** dropdown — the two axes may sit in *different* regions, so
+    closure COG × release COG plots the two phases of each token against each other.
+    Changing an axis's region snaps its moment and position back into what that region
+    actually carries.
   - **Time / Sample** is one shared position dropdown moving both axes together, mirroring
     the formant tabs. **Range** (`spectralTrajRange`, `[0,0]` = full) trims the trajectory
     sweep, mirroring the Time Series range control.
@@ -199,8 +224,8 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
     (`spectralCoeffFacets`) draws small multiples — one panel per coefficient sharing the
     group axis, each on **its own scale**, because k0 runs into the tens of thousands while
     k1 is a few hundred and a shared axis would flatten all but k0.
-  - **Mean contours** — per-group mean of one moment (`spectralTimelineMoment`) across the
-    track grid, with an optional **±1 SD band** (`spectralShowBand`) and faded per-token
+  - **Mean contours** — per-group mean of one measurement family (`spectralTimelineMoment`,
+    a `region:moment` ref such as `release:COG`) across the track grid, with an optional **±1 SD band** (`spectralShowBand`) and faded per-token
     lines (`spectralShowIndividual`). Falls back to %-timepoints when the dataset has no
     track. Normalised (0→1) averages pointwise, which is valid because every token shares
     the grid. **Absolute** (`spectralContourAbsolute`) instead places each token's samples

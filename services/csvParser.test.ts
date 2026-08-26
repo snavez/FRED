@@ -140,6 +140,49 @@ describe('autoDetectMappings', () => {
     }
   });
 
+  it('detects region-labelled spectral columns and records the region', () => {
+    const headers = ['COG_closure_20%', 'COG_release_20%', 'SD_release_t3', 'kurt_closure_k1'];
+    const sampleRows = Array.from({ length: 25 }, (_, i) => [
+      `${400 + i}`, `${3000 + i}`, `${1200 + i}`, `${4 + i * 0.1}`,
+    ]);
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    const byHeader = (h: string) => mappings.find(m => m.csvHeader === h)!;
+    expect(byHeader('COG_closure_20%').role).toBe('spectral_cog');
+    expect(byHeader('COG_closure_20%').spectralRegion).toBe('closure');
+    expect(byHeader('COG_release_20%').spectralRegion).toBe('release');
+    expect(byHeader('SD_release_t3').role).toBe('spectral_sd');
+    expect(byHeader('SD_release_t3').spectralRegion).toBe('release');
+    expect(byHeader('kurt_closure_k1').role).toBe('spectral_kurt');
+    expect(byHeader('kurt_closure_k1').spectralRegion).toBe('closure');
+    for (const h of headers) expect(byHeader(h).isDataField).toBe(true);
+  });
+
+  it('leaves region-labelled metadata and duration columns out of the spectral roles', () => {
+    const headers = ['winms_closure_20%', 'nsamples_release_50%', 'winsource_release_50%',
+      'closure_dur', 'release_dur'];
+    const sampleRows = Array.from({ length: 25 }, (_, i) => [
+      `${23 + i}`, `${370 + i}`, 'proportional', `${0.05 + i / 1000}`, `${0.03 + i / 1000}`,
+    ]);
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    for (const h of headers) {
+      expect(mappings.find(m => m.csvHeader === h)!.role).not.toMatch(/^spectral_/);
+    }
+    // The per-region durations stay usable as duration measures
+    expect(mappings.find(m => m.csvHeader === 'closure_dur')?.role).toBe('duration');
+    expect(mappings.find(m => m.csvHeader === 'release_dur')?.role).toBe('duration');
+  });
+
+  it('does not read a categorical column as a region-labelled measurement', () => {
+    const headers = ['skew_notes', 'COG_release_50%'];
+    const sampleRows = Array.from({ length: 25 }, (_, i) => [`checked by ${i % 3}`, `${3000 + i}`]);
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    expect(mappings.find(m => m.csvHeader === 'skew_notes')!.role).not.toMatch(/^spectral_/);
+    expect(mappings.find(m => m.csvHeader === 'COG_release_50%')!.role).toBe('spectral_cog');
+  });
+
   it('stores spectral-role columns in token.fields when parsing', () => {
     const csv = 'speaker,sibilance_centre,COG_50%\nspk1,4200,5100\n';
     const mappings: ColumnMapping[] = [

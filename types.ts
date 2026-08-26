@@ -140,7 +140,7 @@ export interface PlotConfig {
   spectralXFeature: string;                  // scatter X feature ref
   spectralYFeature: string;                  // scatter Y feature ref
   spectralFeature: string;                   // single feature for box / density
-  spectralTimelineMoment: string;            // contour moment (e.g. 'COG'); grid from data
+  spectralTimelineMoment: string;            // contour family ref (e.g. 'release:COG'); grid from data
   // Trajectory sweep range, as indices into the active grid ([0,0] = full sweep).
   spectralTrajRange: [number, number];
   spectralViolin: boolean;                   // box mode: false = box, true = violin
@@ -338,6 +338,7 @@ export interface ColumnMapping {
   isSmooth?: boolean;
   formantLabel?: string;
   formantTarget?: string;       // Named target (e.g. "onset", "midpoint") for non-numeric timepoints
+  spectralRegion?: string;      // Segment region for spectral columns (e.g. "closure", "release")
   showInSidebar?: boolean;
   isDataField?: boolean;      // true = data/plot value (no sidebar), false/undefined = filter/label
 }

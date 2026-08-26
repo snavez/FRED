@@ -5,7 +5,9 @@ import { SpeakerStatsMap, getRangeStep, getAxisLabel, computeNormalizedRange } f
 import {
   discoverSpectralMoments, isSpectralRole, listSpectralFeatures, formatSpectralFeature,
   spectralFeatureLabel, parseSpectralFeature, spectralMomentsOfKind, spectralIndicesOfKind,
-  spectralKindLabel, spectralIndexLabel, SpectralKind, SpectralFeature,
+  spectralKindsAvailable, spectralRegionsOfKind, hasSpectralRegions, spectralRegionLabel,
+  formatSpectralMomentRef, resolveSpectralFeature, resolveSpectralAxes,
+  spectralKindLabel, spectralIndexLabel, SpectralKind, SpectralFeature, SpectralMomentMeta,
 } from '../utils/spectralMoments';
 import { getLabel } from '../utils/getLabel';
 import CanvasPlot from './CanvasPlot';
@@ -284,10 +286,25 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
       value: formatSpectralFeature(f), label: spectralFeatureLabel(f),
     })), [spectralMeta]);
 
-  /** Moments whose contour can be averaged over time — a track if present, else %-timepoints. */
-  const spectralContourMoments = useMemo(() =>
-    spectralMeta.trackMoments.length > 0 ? spectralMeta.trackMoments : spectralMeta.moments,
-    [spectralMeta]);
+  /**
+   * Families whose contour can be averaged over time: every moment that has a grid of
+   * ≥2 positions in some region — the dense track when the dataset carries one, else the
+   * %-timepoints. Each option is a `region:moment` ref so closure and release stay apart.
+   */
+  const spectralContourOptions = useMemo(() => {
+    const kind = spectralIndicesOfKind(spectralMeta, 'track').length >= 2 ? 'track' : 'point';
+    const out: { value: string, label: string }[] = [];
+    for (const region of spectralRegionsOfKind(spectralMeta, kind)) {
+      if (spectralIndicesOfKind(spectralMeta, kind, region).length < 2) continue;
+      for (const m of spectralMomentsOfKind(spectralMeta, kind, region)) {
+        out.push({
+          value: formatSpectralMomentRef(m.key, region),
+          label: region ? `${m.short} · ${region}` : m.short,
+        });
+      }
+    }
+    return out;
+  }, [spectralMeta]);
 
   /**
    * The range the spectral plot actually drew. The range inputs show these numbers while
@@ -365,37 +382,48 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
    * a track sample against a %-timepoint by accident.
    */
   const spectralAxes = useMemo(() => {
-    const x = parseSpectralFeature(bgConfig.spectralXFeature);
-    const y = parseSpectralFeature(bgConfig.spectralYFeature);
+    // Resolved, not merely parsed: a ref that names no column in this dataset (a fresh
+    // config, or a switch to differently-regioned data) shows the fallback the plot draws.
+    const { x, y } = resolveSpectralAxes(bgConfig.spectralXFeature, bgConfig.spectralYFeature, spectralMeta);
     const kind: SpectralKind = x?.kind ?? 'point';
-    const kindsAvailable = (['point', 'track', 'coeff'] as SpectralKind[])
-      .filter(k => spectralMomentsOfKind(spectralMeta, k).length > 0);
+    // The X axis names the region the shared position grid belongs to.
+    const region = x?.region ?? '';
     return {
-      x, y, kind, kindsAvailable,
-      moments: spectralMomentsOfKind(spectralMeta, kind),
-      indices: spectralIndicesOfKind(spectralMeta, kind),
+      x, y, kind, region,
+      kindsAvailable: spectralKindsAvailable(spectralMeta, region),
+      regions: spectralRegionsOfKind(spectralMeta, kind),
+      showRegions: hasSpectralRegions(spectralMeta),
+      moments: spectralMomentsOfKind(spectralMeta, kind, region),
+      momentsFor: (r: string) => spectralMomentsOfKind(spectralMeta, kind, r),
+      indices: spectralIndicesOfKind(spectralMeta, kind, region),
     };
   }, [bgConfig.spectralXFeature, bgConfig.spectralYFeature, spectralMeta]);
 
-  /** Rewrite both axis refs, keeping them on one kind. */
+  /** Rewrite one axis ref, keeping it valid for its region (moment and position). */
   const setSpectralAxis = (which: 'x' | 'y', next: Partial<SpectralFeature>) => {
     const cur = which === 'x' ? spectralAxes.x : spectralAxes.y;
-    const base: SpectralFeature = cur ?? { moment: 'COG', kind: 'point', index: 50 };
+    const base: SpectralFeature = cur ?? { moment: 'COG', kind: 'point', index: 50, region: '' };
     const merged = { ...base, ...next };
+    // A region change can strand the moment or position; snap both back into the region.
+    const moments = spectralMomentsOfKind(spectralMeta, merged.kind, merged.region ?? '');
+    const indices = spectralIndicesOfKind(spectralMeta, merged.kind, merged.region ?? '');
+    if (moments.length && !moments.some(m => m.key === merged.moment)) merged.moment = moments[0].key;
+    if (indices.length && !indices.includes(merged.index)) merged.index = indices[0];
     updateLayerConfig(layers[0].id, which === 'x' ? 'spectralXFeature' : 'spectralYFeature',
       formatSpectralFeature(merged));
   };
 
   /** Switching family re-seeds both axes with the first valid feature of that kind. */
   const setSpectralKind = (kind: SpectralKind) => {
-    const moments = spectralMomentsOfKind(spectralMeta, kind);
-    const indices = spectralIndicesOfKind(spectralMeta, kind);
+    const region = spectralRegionsOfKind(spectralMeta, kind)[0] ?? '';
+    const moments = spectralMomentsOfKind(spectralMeta, kind, region);
+    const indices = spectralIndicesOfKind(spectralMeta, kind, region);
     if (!moments.length || !indices.length) return;
     // Coefficients default to k0 x k1 of one moment — the height/slope shape space.
-    const xf: SpectralFeature = { moment: moments[0].key, kind, index: indices[0] };
+    const xf: SpectralFeature = { moment: moments[0].key, kind, index: indices[0], region };
     const yf: SpectralFeature = kind === 'coeff'
-      ? { moment: moments[0].key, kind, index: indices[1] ?? indices[0] }
-      : { moment: (moments[1] ?? moments[0]).key, kind, index: indices[0] };
+      ? { moment: moments[0].key, kind, index: indices[1] ?? indices[0], region }
+      : { moment: (moments[1] ?? moments[0]).key, kind, index: indices[0], region };
     updateLayerConfig(layers[0].id, 'spectralXFeature', formatSpectralFeature(xf));
     updateLayerConfig(layers[0].id, 'spectralYFeature', formatSpectralFeature(yf));
   };
@@ -406,12 +434,22 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     setSpectralAxis('y', { index });
   };
 
-  /** Grid a trajectory sweeps: the track when the axes are on tracks, else %-timepoints. */
-  const spectralSweepGrid = useMemo(() => {
-    const k = spectralAxes.kind;
-    return k === 'track' ? spectralMeta.trackIndices
-      : k === 'point' ? spectralMeta.timePoints : [];
-  }, [spectralAxes.kind, spectralMeta]);
+  /** The measure the box/density plot will actually draw, as a ref the picker can show. */
+  const spectralFeatureValue = useMemo(() => {
+    const f = resolveSpectralFeature(currentConfig.spectralFeature, spectralMeta, 0);
+    return f ? formatSpectralFeature(f) : '';
+  }, [currentConfig.spectralFeature, spectralMeta]);
+
+  /** The contour family the timeline will actually draw. */
+  const spectralTimelineValue = useMemo(() =>
+    spectralContourOptions.find(o => o.value === currentConfig.spectralTimelineMoment)?.value
+      ?? spectralContourOptions[0]?.value ?? '',
+    [currentConfig.spectralTimelineMoment, spectralContourOptions]);
+
+  /** Grid a trajectory sweeps: the positions the X axis's family offers. */
+  const spectralSweepGrid = useMemo(() =>
+    spectralAxes.kind === 'coeff' ? [] : spectralAxes.indices,
+    [spectralAxes]);
 
   const handleConfig = (key: keyof PlotConfig, val: any) => {
       updateLayerConfig(activeLayerId, key, val);
@@ -1302,8 +1340,16 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                           <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
                             value={spectralAxes.x?.moment ?? ''}
                             onChange={e => setSpectralAxis('x', { moment: e.target.value as any })}>
-                            {spectralAxes.moments.map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
+                            {spectralAxes.momentsFor(spectralAxes.x?.region ?? '').map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
                           </select>
+                          {/* Region: which phase of the segment this axis measures (closure, release …) */}
+                          {spectralAxes.showRegions && (
+                            <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
+                              value={spectralAxes.x?.region ?? ''}
+                              onChange={e => setSpectralAxis('x', { region: e.target.value })}>
+                              {spectralAxes.regions.map(r => <option key={r} value={r}>{spectralRegionLabel(r)}</option>)}
+                            </select>
+                          )}
                           {/* Coefficients pick their order per axis — k0 × k1 of one moment is the point */}
                           {spectralAxes.kind === 'coeff' && (
                             <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
@@ -1316,8 +1362,16 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                           <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
                             value={spectralAxes.y?.moment ?? ''}
                             onChange={e => setSpectralAxis('y', { moment: e.target.value as any })}>
-                            {spectralAxes.moments.map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
+                            {spectralAxes.momentsFor(spectralAxes.y?.region ?? '').map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
                           </select>
+                          {/* Axes may sit in different regions — closure COG against release COG */}
+                          {spectralAxes.showRegions && (
+                            <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
+                              value={spectralAxes.y?.region ?? ''}
+                              onChange={e => setSpectralAxis('y', { region: e.target.value })}>
+                              {spectralAxes.regions.map(r => <option key={r} value={r}>{spectralRegionLabel(r)}</option>)}
+                            </select>
+                          )}
                           {spectralAxes.kind === 'coeff' && (
                             <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
                               value={spectralAxes.y?.index ?? 0}
@@ -1367,7 +1421,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       <HelpTooltip helpMode={helpMode} text="The value being summarised. Coefficients describe the shape of the measurement contour: k0 its overall height, k1 its slope, k2 its curvature. A box plot of k1 by group turns a visual impression of contour direction into a comparable number.">
                       <div className="flex items-center gap-2">
                         <label className="font-semibold text-slate-600">Measure:</label>
-                        <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={currentConfig.spectralFeature} onChange={e => handleConfig('spectralFeature', e.target.value)}>
+                        <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={spectralFeatureValue} onChange={e => handleConfig('spectralFeature', e.target.value)}>
                           {spectralFeatureOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
                       </div>
@@ -1379,8 +1433,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       <HelpTooltip helpMode={helpMode} text="Mean contour per group. Because every token shares the grid, pointwise averaging is valid. Caveat: pair this with a duration box plot in Data Summaries — normalised time hides duration differences.">
                       <div className="flex items-center gap-2">
                         <label className="font-semibold text-slate-600">Measure:</label>
-                        <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={currentConfig.spectralTimelineMoment} onChange={e => handleConfig('spectralTimelineMoment', e.target.value)}>
-                          {spectralContourMoments.map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
+                        <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={spectralTimelineValue} onChange={e => handleConfig('spectralTimelineMoment', e.target.value)}>
+                          {spectralContourOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
                       </div>
                       </HelpTooltip>
@@ -1450,7 +1504,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   {activeTab === 'spectral' && currentConfig.spectralMode === 'scatter' && (
                     <>
                       <div className="flex flex-col" title="X axis range — set both to 0 for auto-fit">
-                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">X · {spectralAxisChip(bgConfig.spectralXFeature)}</span>
+                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">X · {spectralAxes.x ? spectralFeatureLabel(spectralAxes.x) : ''}</span>
                         <div className="flex items-center gap-1">
                           <span className="text-[9px] font-bold text-slate-500">Min</span>
                           <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={spectralRangeValue(bgConfig.spectralXRange, 'x', 0)} onChange={e => updateLayerConfig(layers[0].id, 'spectralXRange', spectralRangeEdit(bgConfig.spectralXRange, 'x', 0, e.target.value))} />
@@ -1461,7 +1515,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         </div>
                       </div>
                       <div className="flex flex-col" title="Y axis range — set both to 0 for auto-fit">
-                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">Y · {spectralAxisChip(bgConfig.spectralYFeature)}</span>
+                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">Y · {spectralAxes.y ? spectralFeatureLabel(spectralAxes.y) : ''}</span>
                         <div className="flex items-center gap-1">
                           <span className="text-[9px] font-bold text-slate-500">Min</span>
                           <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={spectralRangeValue(bgConfig.spectralYRange, 'y', 0)} onChange={e => updateLayerConfig(layers[0].id, 'spectralYRange', spectralRangeEdit(bgConfig.spectralYRange, 'y', 0, e.target.value))} />
@@ -1484,8 +1538,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       <div className="flex flex-col" title="Value axis range — set both to 0 for auto-fit">
                         <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight">
                           {currentConfig.spectralMode === 'timeline'
-                            ? currentConfig.spectralTimelineMoment
-                            : spectralAxisChip(currentConfig.spectralFeature)}
+                            ? (spectralContourOptions.find(o => o.value === spectralTimelineValue)?.label ?? '')
+                            : spectralAxisChip(spectralFeatureValue)}
                         </span>
                         <div className="flex items-center gap-1">
                           <span className="text-[9px] font-bold text-slate-500">Min</span>
@@ -2096,14 +2150,14 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 {currentConfig.spectralMode !== 'scatter' && (
                   <>
                     {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
-                    {currentConfig.spectralMode === 'box' && spectralMeta.coeffIndices.length > 1 && (
+                    {currentConfig.spectralMode === 'box' && spectralIndicesOfKind(spectralMeta, 'coeff').length > 1 && (
                       <label className="flex items-center gap-1 cursor-pointer ml-1" title="Show one mini plot per coefficient, sharing the group axis. Each panel gets its own scale, so k0 doesn't dwarf the rest.">
                         <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.spectralCoeffFacets} onChange={e => handleConfig('spectralCoeffFacets', e.target.checked)} />
                         <span className="text-[10px] font-bold text-slate-600">All coefficients</span>
                       </label>
                     )}
                     {(currentConfig.spectralMode === 'box' || currentConfig.spectralMode === 'density')
-                      && parseSpectralFeature(currentConfig.spectralFeature)?.kind === 'coeff' && (
+                      && parseSpectralFeature(spectralFeatureValue)?.kind === 'coeff' && (
                       <label className="flex items-center gap-1 cursor-pointer ml-1" title="Negate the coefficient. A rising contour has a negative k1, so flipping the sign makes 'higher = rising' read naturally.">
                         <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.spectralFlipSign} onChange={e => handleConfig('spectralFlipSign', e.target.checked)} />
                         <span className="text-[10px] font-bold text-slate-600">Flip sign</span>
