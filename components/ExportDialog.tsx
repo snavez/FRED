@@ -275,6 +275,11 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
   const [config, setConfig] = useState<ExportConfig>(() => computeExportDefaults(layers, defaultTitle));
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [previewConfigKey, setPreviewConfigKey] = useState<string | null>(null);
+  const [previewSize, setPreviewSize] = useState<{ width: number; height: number } | null>(null);
+  const previewedConfigRef = useRef<ExportConfig | null>(null);
+  const currentConfigKey = JSON.stringify(config);
+  const previewIsCurrent = previewConfigKey === currentConfigKey;
   const [linkAxes, setLinkAxes] = useState(true);
   const [linkGraphScale, setLinkGraphScale] = useState(true);
   const [fontScale, setFontScale] = useState(() => parseFloat(localStorage.getItem('fred_export_fontScale') || '1.0'));
@@ -284,6 +289,10 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
     if (isOpen) {
       const defaults = computeExportDefaults(layers, defaultTitle);
       setConfig(defaults);
+      setPreviewUrl(null);
+      setPreviewConfigKey(null);
+      setPreviewSize(null);
+      previewedConfigRef.current = null;
       setFontScale(parseFloat(localStorage.getItem('fred_export_fontScale') || '1.0'));
     }
   }, [isOpen, layers, defaultTitle]);
@@ -330,17 +339,21 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
     localStorage.setItem('fred_export_fontScale', '1.0');
   }, [layers, defaultTitle]);
 
-  // Live preview — debounced to avoid flashing on rapid nudges
-  const hasPreview = previewUrl !== null;
+  // Live preview uses the exact logical configuration that will be downloaded. Resolution
+  // is reduced to 1x only for responsiveness; every exporter guarantees that scale changes
+  // pixel density, never composition.
   useEffect(() => {
     if (isOpen && plotRef.current) {
-      // Only show spinner on first render; incremental updates stay quiet
-      if (!hasPreview) setIsGenerating(true);
+      setIsGenerating(true);
+      const snapshot = { ...config };
+      const snapshotKey = JSON.stringify(snapshot);
       const timer = setTimeout(() => {
         if (plotRef.current) {
-          const previewConfig = { ...config, scale: 1 };
+          const previewConfig = { ...snapshot, scale: 1 };
           const url = plotRef.current.generateImage(previewConfig);
           setPreviewUrl(url);
+          previewedConfigRef.current = snapshot;
+          setPreviewConfigKey(snapshotKey);
           setIsGenerating(false);
         }
       }, 300);
@@ -351,9 +364,11 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
   if (!isOpen) return null;
 
   const handleDownload = () => {
-    if (!plotRef.current) return;
-    // Generate at full resolution for download
-    const fullUrl = plotRef.current.generateImage(config);
+    const snapshot = previewedConfigRef.current;
+    if (!plotRef.current || !snapshot || !previewIsCurrent || isGenerating) return;
+    // Re-render the exact previewed configuration at the chosen pixel density. The shared
+    // layout contract guarantees identical composition at every resolution.
+    const fullUrl = plotRef.current.generateImage(snapshot);
     if (fullUrl) {
       const link = document.createElement('a');
       link.download = `fred_export_${Date.now()}.png`;
@@ -819,17 +834,28 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
             <button onClick={onClose} className="w-full py-2 mb-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 rounded-lg border border-slate-200">
               Cancel
             </button>
-            <button onClick={handleDownload} className="w-full py-2.5 text-sm font-bold text-white bg-slate-600 hover:bg-slate-700 rounded-lg shadow-lg shadow-slate-200 flex items-center justify-center gap-2">
-              <Download size={16} /> Download Image
+            <button
+              onClick={handleDownload}
+              disabled={!previewUrl || !previewIsCurrent || isGenerating}
+              className={`w-full py-2.5 text-sm font-bold text-white rounded-lg shadow-lg flex items-center justify-center gap-2 transition-colors ${previewUrl && previewIsCurrent && !isGenerating ? 'bg-slate-600 hover:bg-slate-700 shadow-slate-200' : 'bg-slate-300 cursor-not-allowed shadow-none'}`}
+              title={previewIsCurrent && !isGenerating ? 'Download exactly the configuration shown in the preview' : 'Wait for the preview to finish updating'}
+            >
+              <Download size={16} /> {isGenerating || !previewIsCurrent ? 'Updating Preview…' : 'Download This Layout'}
             </button>
+            <p className="text-[10px] text-center text-slate-400 mt-1">The downloaded composition matches the current preview.</p>
           </div>
         </div>
 
         {/* Right: Live Preview */}
         <div className="flex-1 bg-slate-100 flex flex-col relative overflow-hidden">
           <div className="absolute top-4 right-4 z-10 flex gap-2">
+            {previewSize && (
+              <div className="bg-black/50 text-white px-3 py-1 rounded-full text-xs backdrop-blur font-mono">
+                ≈ {Math.round(previewSize.width * config.scale)} × {Math.round(previewSize.height * config.scale)} px
+              </div>
+            )}
             <div className="bg-black/50 text-white px-3 py-1 rounded-full text-xs backdrop-blur font-mono">
-              Preview ({config.scale}x)
+              Layout preview · {config.scale}x export
             </div>
             <button onClick={onClose} className="bg-white/80 hover:bg-white text-slate-600 p-1.5 rounded-full shadow-sm backdrop-blur">
               <X size={18} />
@@ -837,17 +863,23 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
           </div>
 
           <div className="flex-1 flex items-center justify-center p-8 overflow-auto">
-            {isGenerating ? (
+            {!previewUrl ? (
               <div className="flex flex-col items-center gap-3 text-slate-400 animate-pulse">
                 <RefreshCw size={48} className="animate-spin" />
                 <span className="font-semibold">Rendering Preview...</span>
               </div>
-            ) : previewUrl ? (
-              <div className="relative shadow-2xl border-4 border-white rounded-lg bg-white">
-                <img src={previewUrl} alt="Export Preview" className="max-w-full max-h-[80vh] object-contain" />
-              </div>
             ) : (
-              <span className="text-slate-400">Preview not available</span>
+              <div className="relative shadow-2xl border-4 border-white rounded-lg bg-white">
+                <img src={previewUrl} alt="Export Preview" className="max-w-full max-h-[80vh] object-contain"
+                  onLoad={e => setPreviewSize({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight })} />
+                {isGenerating && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-white/55 backdrop-blur-[1px]">
+                    <div className="flex items-center gap-2 rounded-full bg-slate-800/80 px-3 py-1.5 text-xs font-semibold text-white">
+                      <RefreshCw size={14} className="animate-spin" /> Updating preview…
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>

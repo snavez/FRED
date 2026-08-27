@@ -3,6 +3,7 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, Layer, DatasetMeta, NormalizationMethod } from '../types';
 import { normalizeFormant, getAxisLabel, getTickStep, formatTick, SpeakerStatsMap } from '../utils/normalization';
+import { computeExportPlotSize } from '../utils/exportLayout';
 import { interpolateTrajectoryAt, computeMeanTimeGrid } from '../utils/trajectory';
 
 interface CanvasPlotProps {
@@ -1030,12 +1031,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
   useImperativeHandle(ref, () => {
     const generateImage = (exportConfig: ExportConfig) => {
       const offscreen = document.createElement('canvas');
-      const drawScale = exportConfig.scale;
-
-      const graphScaleX = exportConfig.graphScaleX || exportConfig.graphScale || 1.0;
-      const graphScaleY = exportConfig.graphScaleY || exportConfig.graphScale || 1.0;
-      const basePlotWidth = 2400 * graphScaleX;
-      const basePlotHeight = 2000 * graphScaleY;
+      const { drawScale, width: plotWidth, height: plotHeight } = computeExportPlotSize(exportConfig, 2400, 2000);
 
       const graphX = (exportConfig.graphX || 0) * drawScale;
       const graphY = (exportConfig.graphY || 0) * drawScale;
@@ -1067,8 +1063,6 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
           }
       }
 
-      const plotWidth = basePlotWidth * drawScale;
-      const plotHeight = basePlotHeight * drawScale;
 
       // Always auto-size canvas to fit all elements
       offscreen.width = Math.max(100, plotWidth + legendSpaceRight + margin.left + margin.right);

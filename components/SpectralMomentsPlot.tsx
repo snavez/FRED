@@ -7,6 +7,7 @@ import {
   drawShape, ShapeIcon, hexToRgb, computeEncodingMaps, EncodingMaps,
 } from '../utils/plotEncoding';
 import { generateTexture } from '../utils/textureGenerator';
+import { computeExportPlotSize } from '../utils/exportLayout';
 import {
   discoverSpectralColumns, spectralAxisLabel, getSpectralMeasureDef,
   SpectralMeasureKey, SpectralMeta, SpectralFeature,
@@ -763,10 +764,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
   // ─── Export handle ────────────────────────────────────────────────
   useImperativeHandle(ref, () => {
     const generateImage = (exportConfig: ExportConfig) => {
-      const drawScale = exportConfig.scale;
-      const baseW = 2000, baseH = 1400;
-      const gsX = exportConfig.graphScaleX || exportConfig.graphScale || 1, gsY = exportConfig.graphScaleY || exportConfig.graphScale || 1;
-      const plotW = baseW * gsX * drawScale, plotH = baseH * gsY * drawScale;
+      const { drawScale, width: plotW, height: plotH } = computeExportPlotSize(exportConfig, 2000, 1400);
       const legendEntries: { color: string, label: string, dash?: number[], texture?: number }[] = [];
       legendLayers.forEach(({ layer, enc }) => {
         const suffix = showTitles ? ` · ${layer.name}` : '';
@@ -778,17 +776,41 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
           legendEntries.push({ color: '#475569', texture: enc.textureMap[k], label: `${enc.textureKey}: ${k}${suffix}` }));
       });
       const hasLegend = exportConfig.showLegend && legendEntries.length > 0;
-      const legendW = hasLegend ? 460 * drawScale : 0;
+      const itemS = (exportConfig.legendItemSize || 24) * drawScale;
+      const maxLegendChars = Math.max(0, ...legendEntries.map(it => it.label.length));
+      const legendW = hasLegend ? Math.max(460 * drawScale, itemS * (2 + maxLegendChars * 0.62)) : 0;
+      const legendH = hasLegend ? Math.max(160 * drawScale, legendEntries.length * itemS * 1.7 + 40 * drawScale) : 0;
       const titleH = exportConfig.showPlotTitle ? (exportConfig.plotTitleSize || 96) * drawScale + 40 * drawScale : 0;
+      const pad = 40 * drawScale;
+      let canvasW = plotW + pad * 2;
+      let canvasH = titleH + plotH + pad * 2;
+      let legendX = 0, legendY = 0;
+      if (hasLegend) {
+        if (exportConfig.legendPosition === 'bottom') {
+          legendX = pad; legendY = titleH + plotH + pad; canvasH += legendH;
+        } else if (exportConfig.legendPosition === 'inside-top-left') {
+          legendX = pad * 2; legendY = titleH + pad * 2;
+        } else if (exportConfig.legendPosition === 'inside-top-right') {
+          legendX = Math.max(pad, plotW - legendW); legendY = titleH + pad * 2;
+        } else if (exportConfig.legendPosition === 'custom') {
+          legendX = (Number(exportConfig.legendX) || 0) * drawScale;
+          legendY = (Number(exportConfig.legendY) || 0) * drawScale;
+        } else {
+          legendX = plotW + pad; legendY = titleH + pad; canvasW += legendW;
+          canvasH = Math.max(canvasH, legendY + legendH + pad);
+        }
+      }
       const offscreen = document.createElement('canvas');
-      offscreen.width = plotW + legendW + 40 * drawScale; offscreen.height = plotH + titleH + 40 * drawScale;
+      offscreen.width = Math.max(100, Math.ceil(canvasW)); offscreen.height = Math.max(100, Math.ceil(canvasH));
       const ctx = offscreen.getContext('2d'); if (!ctx) return '';
       ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, offscreen.width, offscreen.height);
-      if (exportConfig.showPlotTitle) { ctx.font = `bold ${(exportConfig.plotTitleSize || 96) * drawScale}px Inter, sans-serif`; ctx.fillStyle = '#0f172a'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(exportConfig.plotTitle || 'Spectral', plotW / 2, titleH / 2); }
-      ctx.save(); ctx.translate(0, titleH); renderPlot(ctx, plotW, plotH, 1, drawScale, exportConfig); ctx.restore();
+      if (exportConfig.showPlotTitle) {
+        ctx.font = `bold ${(exportConfig.plotTitleSize || 96) * drawScale}px Inter, sans-serif`; ctx.fillStyle = '#0f172a'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(exportConfig.plotTitle || 'Spectral', pad + plotW / 2 + (exportConfig.plotTitleX || 0) * drawScale, titleH / 2 + (exportConfig.plotTitleY || 0) * drawScale);
+      }
+      ctx.save(); ctx.translate(pad, titleH + pad); renderPlot(ctx, plotW, plotH, 1, drawScale, exportConfig); ctx.restore();
       if (hasLegend) {
-        ctx.save(); ctx.translate(plotW + 40 * drawScale, titleH + 40 * drawScale);
-        const itemS = (exportConfig.legendItemSize || 24) * drawScale; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.save(); ctx.translate(legendX, legendY); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
         legendEntries.forEach((it, i) => {
           const y = (i + 0.5) * itemS * 1.7;
           if (it.texture !== undefined) {

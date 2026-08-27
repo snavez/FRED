@@ -1,6 +1,7 @@
 
 import React, { useRef, useEffect, useMemo, useCallback, forwardRef, useImperativeHandle, useState } from 'react';
 import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, DatasetMeta } from '../types';
+import { computeExportPlotSize } from '../utils/exportLayout';
 import { generateTexture } from '../utils/textureGenerator';
 
 interface DistributionPlotProps {
@@ -1350,17 +1351,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
   useImperativeHandle(ref, () => {
     const generateImage = (exportConfig: ExportConfig) => {
        const offscreen = document.createElement('canvas');
-       const drawScale = exportConfig.scale;
-       
-       // Base dimensions
-       const baseWidth = 2400;
-       const baseHeight = 1600;
-
-       // Apply Graph Geometry
-       const graphScaleX = exportConfig.graphScaleX || exportConfig.graphScale || 1.0;
-       const graphScaleY = exportConfig.graphScaleY || exportConfig.graphScale || 1.0;
-       const plotW = baseWidth * graphScaleX;
-       const plotH = baseHeight * graphScaleY;
+       const { drawScale, width: plotW, height: plotH } = computeExportPlotSize(exportConfig, 2400, 1600);
        
        // Dynamic margins based on font sizes
        const bottomMarginBase = Math.max(180, exportConfig.xAxisLabelSize * 1.5 + 30);
@@ -1377,6 +1368,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
        
        // Legend Calculation
        let legendW = 0;
+       let legendH = 0;
        let lx = 0;
        let ly = 0;
 
@@ -1387,6 +1379,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                lx = margin.left + plotW + (80 * drawScale);
                ly = margin.top + (50 * drawScale);
            } else if (exportConfig.legendPosition === 'bottom') {
+               legendH = legendSpace * drawScale;
                lx = margin.left;
                ly = margin.top + plotH + (100 * drawScale);
            } else if (exportConfig.legendPosition === 'inside-top-right') {
@@ -1406,6 +1399,9 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
 
        if (!exportConfig.canvasWidth && exportConfig.showLegend && exportConfig.legendPosition === 'right') {
            canvasWidth += legendW;
+       }
+       if (!exportConfig.canvasHeight && exportConfig.showLegend && exportConfig.legendPosition === 'bottom') {
+           canvasHeight += legendH;
        }
        
        offscreen.width = canvasWidth;

@@ -611,11 +611,17 @@ maximum of 10 fields.
 
 1. Click **Export** at the top right. The export dialog opens and shows a preview.
 2. Set the controls.
-3. Click **Download image**. FRED saves a PNG file.
+3. Wait for **Updating preview…** to finish, then click **Download this layout**. FRED saves
+   a PNG file with the composition shown in the preview.
 
 ![The export dialog](images/export-dialog.png)
 
-- **Resolution** — 1× to 4×. Use a high value for printing.
+The preview is now the layout contract, not an approximation. While it is updating, the
+download button is disabled so it cannot save settings that you have not yet seen.
+
+- **Resolution** — 1× to 4×. This changes pixel density and sharpness only; it does not
+  change the relative font sizes, plot size, margins, or legend position. The final PNG
+  estimated dimensions are displayed above the preview. Use a high value for printing.
 - **Font scale**, **chart title**, **graph geometry**, and **axis label** controls.
 - **Axis labels → tick numbers** — one size for all tick text, then a size for each of
   **X axis ticks**, **Y axis ticks**, and **X group labels**. Use the last one when the x

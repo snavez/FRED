@@ -4,6 +4,7 @@ import { SpeechToken, PlotConfig, PlotHandle, ExportConfig, DatasetMeta, StyleOv
 import { generateTexture } from '../utils/textureGenerator';
 import { getLabel } from '../utils/getLabel';
 import { axisTicks, formatMeasureValue } from '../utils/axisTicks';
+import { computeExportPlotSize } from '../utils/exportLayout';
 
 interface DurationPlotProps {
   data: SpeechToken[];
@@ -793,15 +794,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
   useImperativeHandle(ref, () => {
     const generateImage = (exportConfig: ExportConfig) => {
       const offscreen = document.createElement('canvas');
-      const drawScale = exportConfig.scale;
-
-      const baseWidth = 2400;
-      const baseHeight = 1600;
-
-      const graphScaleX = exportConfig.graphScaleX || exportConfig.graphScale || 1.0;
-      const graphScaleY = exportConfig.graphScaleY || exportConfig.graphScale || 1.0;
-      const plotWidth = baseWidth * graphScaleX;
-      const plotHeight = baseHeight * graphScaleY;
+      const { drawScale, width: plotWidth, height: plotHeight } = computeExportPlotSize(exportConfig, 2400, 1600);
 
       // Dynamic margins matching renderPlot
       const bottomMarginBase = Math.max(isHierarchical ? 160 : 100, exportConfig.xAxisLabelSize * (isHierarchical ? 2.2 : 1.2) + 20);
@@ -817,6 +810,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
       // Legend positioning
       const hasLegendContent = (config.colorBy && config.colorBy !== 'none') || (config.textureBy && config.textureBy !== 'none');
       let legendW = 0;
+      let legendH = 0;
       let lx = 0;
       let ly = 0;
 
@@ -827,6 +821,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
           lx = margin.left + plotWidth + (80 * drawScale);
           ly = margin.top + (50 * drawScale);
         } else if (exportConfig.legendPosition === 'bottom') {
+          legendH = legendSpace * drawScale;
           lx = margin.left;
           ly = margin.top + plotHeight + (100 * drawScale);
         } else if (exportConfig.legendPosition === 'inside-top-right') {
@@ -849,6 +844,9 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         canvasWidth += legendW;
         // Adjust legend position to be relative to actual plot area
         lx = canvasWidth - legendW + (40 * drawScale);
+      }
+      if (!exportConfig.canvasHeight && exportConfig.showLegend && hasLegendContent && exportConfig.legendPosition === 'bottom') {
+        canvasHeight += legendH;
       }
 
       offscreen.width = canvasWidth;

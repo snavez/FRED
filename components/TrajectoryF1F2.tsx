@@ -3,6 +3,7 @@ import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, u
 import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, StyleOverrides, ExportConfig, NormalizationMethod, DatasetMeta } from '../types';
 import { normalizeFormant, getAxisLabel, getTickStep, formatTick, SpeakerStatsMap } from '../utils/normalization';
 import { interpolateTrajectoryAt, computeMeanTimeGrid } from '../utils/trajectory';
+import { computeExportPlotSize } from '../utils/exportLayout';
 
 interface TrajectoryF1F2Props {
   data: SpeechToken[];
@@ -419,8 +420,8 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
           // For now, let's assume generateImage handles the translation for 'custom' correctly.
       }
 
-      const fontSizeTitle = exportConfig ? exportConfig.legendTitleSize : (isExport ? 36 : 14) * drawScale;
-      const fontSizeItem = exportConfig ? exportConfig.legendItemSize : (isExport ? 24 : 12) * drawScale;
+      const fontSizeTitle = exportConfig ? exportConfig.legendTitleSize * drawScale : (isExport ? 36 : 14) * drawScale;
+      const fontSizeItem = exportConfig ? exportConfig.legendItemSize * drawScale : (isExport ? 24 : 12) * drawScale;
       const spacing = fontSizeItem * 1.6; 
       const circleSize = fontSizeItem * 0.5;
       const xOffset = fontSizeItem * 1.5;
@@ -495,17 +496,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
   useImperativeHandle(ref, () => {
     const generateImage = (exportConfig: ExportConfig) => {
         const offscreen = document.createElement('canvas');
-        const drawScale = exportConfig.scale;
-        
-        // Base dimensions
-        const baseWidth = 2400;
-        const baseHeight = 1800;
-
-        // Apply Graph Geometry
-        const graphScaleX = exportConfig.graphScaleX || exportConfig.graphScale || 1.0;
-        const graphScaleY = exportConfig.graphScaleY || exportConfig.graphScale || 1.0;
-        const plotWidth = baseWidth * graphScaleX;
-        const plotHeight = baseHeight * graphScaleY;
+        const { drawScale, width: plotWidth, height: plotHeight } = computeExportPlotSize(exportConfig, 2400, 1800);
 
         // Dynamic margins based on font sizes
         const bottomMarginBase = Math.max(160, exportConfig.xAxisLabelSize * 1.5 + 30);
@@ -522,6 +513,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
 
         // Legend Calculation
         let legendWidth = 0;
+        let legendHeight = 0;
         let lx = 0;
         let ly = 0;
 
@@ -532,9 +524,7 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
                 lx = margin.left + plotWidth + (40 * drawScale);
                 ly = margin.top;
             } else if (exportConfig.legendPosition === 'bottom') {
-                // For bottom, we might need to adjust canvas height, but for now let's keep it simple or just overlay
-                // The original code didn't really support bottom well for export, defaulting to right.
-                // Let's stick to the CanvasPlot logic if possible, or just place it below.
+                legendHeight = legendSpace * drawScale;
                 lx = margin.left;
                 ly = margin.top + plotHeight + (100 * drawScale);
             } else if (exportConfig.legendPosition === 'inside-top-right') {
@@ -558,6 +548,9 @@ const TrajectoryF1F2 = forwardRef<PlotHandle, TrajectoryF1F2Props>(({ data, conf
 
         if (!exportConfig.canvasWidth && exportConfig.showLegend && exportConfig.legendPosition === 'right') {
             canvasWidth += legendWidth;
+        }
+        if (!exportConfig.canvasHeight && exportConfig.showLegend && exportConfig.legendPosition === 'bottom') {
+            canvasHeight += legendHeight;
         }
         // If custom, we don't automatically expand canvas, user must manage placement or we ensure min size.
         // But let's stick to the base logic + extensions.

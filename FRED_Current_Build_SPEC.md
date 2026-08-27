@@ -682,10 +682,20 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 ## 10. Export System
 
 ### Export Dialog
-- Full-screen modal with live preview (scale-1 preview, full-resolution download)
+- Full-screen modal with a scale-1 **layout preview** and a full-resolution download.
+  `utils/exportLayout.ts` is the shared contract for all seven canvas exporters: graph
+  scale changes the logical composition, while resolution (`scale`) multiplies every
+  pixel dimension uniformly and cannot change the relative size or position of text, plot,
+  margins or legend.
+- The dialog snapshots the config rendered in the preview. Controls immediately mark the
+  preview stale, retain the previous image under an Updating overlay, and disable download
+  until the new preview finishes. Download re-renders that exact snapshot—not mutable UI
+  state—at the selected resolution. The preview also reports the final PNG dimensions.
 - **Smart defaults**: `computeExportDefaults()` derives config from current layers (legend titles, section visibility)
 - **Resolution**: configurable scale multiplier (1x–4x, default 3x)
-- **Canvas**: always auto-sized to fit plot + margins + legend; no manual canvas dimensions
+- **Canvas**: auto-sized to fit plot + margins + legend. Bottom legends allocate real
+  vertical canvas space; Spectral legends auto-size to their labels and support every
+  position offered by the dialog.
 - **Dynamic margins**: margins in `generateImage()` scale with font sizes so nothing overflows
 
 ### Quick Settings (always visible)
@@ -702,8 +712,8 @@ Each section is collapsible with a dot indicator when non-default values are set
   three per-axis overrides (`SizeSlider`): **X Axis Ticks** (`xTickLabelSize`), **X Group
   Labels** (`xGroupLabelSize` — the second x-axis row: the group name beneath a cluster of
   boxes or a group of bars) and **Y Axis Ticks** (`yTickLabelSize`). Each is optional and
-  falls back to the size that axis has always used, so an untouched export is byte-for-byte
-  what it was; the global Font Scale slider moves any that are set by the same ratio.
+  falls back to the size that axis already uses; the global Font Scale slider moves any
+  overrides by the same ratio.
 - **Legend**: show/hide toggle, position (Right/Bottom/Inside/Custom), per-layer controls with editable titles, heading/item font sizes
 
 ### NudgePad Component

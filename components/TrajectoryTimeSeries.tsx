@@ -3,6 +3,7 @@ import React, { useRef, useEffect, useMemo, useState, forwardRef, useImperativeH
 import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, NormalizationMethod, DatasetMeta } from '../types';
 import { normalizeFormant, SpeakerStatsMap } from '../utils/normalization';
 import { interpolateTrajectoryAt, computeMeanTimeGrid } from '../utils/trajectory';
+import { computeExportPlotSize } from '../utils/exportLayout';
 
 interface TrajectoryTimeSeriesProps {
   data: SpeechToken[];
@@ -602,8 +603,8 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
           // Handled by translation in generateImage
       }
 
-      const fontSizeTitle = exportConfig ? exportConfig.legendTitleSize : (isExport ? 36 : 14) * drawScale;
-      const fontSizeItem = exportConfig ? exportConfig.legendItemSize : (isExport ? 24 : 12) * drawScale;
+      const fontSizeTitle = exportConfig ? exportConfig.legendTitleSize * drawScale : (isExport ? 36 : 14) * drawScale;
+      const fontSizeItem = exportConfig ? exportConfig.legendItemSize * drawScale : (isExport ? 24 : 12) * drawScale;
       const spacing = fontSizeItem * 1.6;
       const circleSize = fontSizeItem * 0.5;
       const xOffset = fontSizeItem * 1.5;
@@ -704,17 +705,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
   useImperativeHandle(ref, () => {
     const generateImage = (exportConfig: ExportConfig) => {
         const offscreen = document.createElement('canvas');
-        const drawScale = exportConfig.scale;
-        
-        // Base dimensions
-        const baseWidth = 2400;
-        const baseHeight = 1500;
-
-        // Apply Graph Geometry
-        const graphScaleX = exportConfig.graphScaleX || exportConfig.graphScale || 1.0;
-        const graphScaleY = exportConfig.graphScaleY || exportConfig.graphScale || 1.0;
-        const plotWidth = baseWidth * graphScaleX;
-        const plotHeight = baseHeight * graphScaleY;
+        const { drawScale, width: plotWidth, height: plotHeight } = computeExportPlotSize(exportConfig, 2400, 1500);
 
         // Dynamic margins based on font sizes
         const bottomMarginBase = Math.max(150, exportConfig.xAxisLabelSize * 1.5 + 30);
@@ -731,6 +722,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
 
         // Legend Calculation
         let legendWidth = 0;
+        let legendHeight = 0;
         let lx = 0;
         let ly = 0;
 
@@ -741,6 +733,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
                 lx = margin.left + plotWidth + (40 * drawScale);
                 ly = margin.top;
             } else if (exportConfig.legendPosition === 'bottom') {
+                legendHeight = legendSpace * drawScale;
                 lx = margin.left;
                 ly = margin.top + plotHeight + (100 * drawScale);
             } else if (exportConfig.legendPosition === 'inside-top-right') {
@@ -760,6 +753,9 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
 
         if (!exportConfig.canvasWidth && exportConfig.showLegend && exportConfig.legendPosition === 'right') {
             canvasWidth += legendWidth;
+        }
+        if (!exportConfig.canvasHeight && exportConfig.showLegend && exportConfig.legendPosition === 'bottom') {
+            canvasHeight += legendHeight;
         }
         
         offscreen.width = canvasWidth;

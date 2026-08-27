@@ -3,6 +3,7 @@ import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, u
 import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, NormalizationMethod, DatasetMeta } from '../types';
 import { normalizeFormant, getAxisLabel, SpeakerStatsMap } from '../utils/normalization';
 import { interpolateTrajectoryAt, computeMeanTimeGrid } from '../utils/trajectory';
+import { computeExportPlotSize } from '../utils/exportLayout';
 import { Layers, Rotate3D, Box, LayoutTemplate, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, RotateCcw, RotateCw } from 'lucide-react';
 
 interface Scatter3DPlotProps {
@@ -952,17 +953,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
     },
     generateImage: (exportConfig: ExportConfig) => {
         const offscreen = document.createElement('canvas');
-        const drawScale = exportConfig.scale;
-        
-        // Base dimensions
-        const baseWidth = 2400;
-        const baseHeight = 1800;
-
-        // Apply Graph Geometry
-        const graphScaleX = exportConfig.graphScaleX || exportConfig.graphScale || 1.0;
-        const graphScaleY = exportConfig.graphScaleY || exportConfig.graphScale || 1.0;
-        const plotW = baseWidth * graphScaleX;
-        const plotH = baseHeight * graphScaleY;
+        const { drawScale, width: plotW, height: plotH } = computeExportPlotSize(exportConfig, 2400, 1800);
 
         // Dynamic margins based on font sizes
         const bottomMarginBase = Math.max(120, exportConfig.xAxisLabelSize * 1.2 + 20);
@@ -979,6 +970,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
 
         // Legend Calculation
         let legendW = 0;
+        let legendH = 0;
         let lx = 0;
         let ly = 0;
 
@@ -990,6 +982,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
                 lx = margin.left + plotW + (100 * drawScale);
                 ly = margin.top;
             } else if (exportConfig.legendPosition === 'bottom') {
+                legendH = legendSpace * drawScale;
                 lx = margin.left;
                 ly = margin.top + plotH + (100 * drawScale);
             } else if (exportConfig.legendPosition === 'inside-top-right') {
@@ -1009,6 +1002,9 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
 
         if (!exportConfig.canvasWidth && exportConfig.showLegend && exportConfig.legendPosition === 'right') {
             canvasWidth += legendW;
+        }
+        if (!exportConfig.canvasHeight && exportConfig.showLegend && exportConfig.legendPosition === 'bottom') {
+            canvasHeight += legendH;
         }
         
         offscreen.width = canvasWidth;
