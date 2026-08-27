@@ -346,6 +346,10 @@ each group. It also draws a band of ±1 standard deviation.
 All tokens use the same grid. FRED can thus calculate a mean at each point of the grid.
 Set **Colour** to the category that you want to compare, such as the subsequent vowel.
 Select **Individual lines** to also show the tokens behind each mean.
+Each measurement family chooses its own best grid. FRED uses dense `t` samples when that
+family has them; otherwise it connects its percentage columns directly. For example,
+Band Energy Ratio columns at 20%, 50%, and 80% appear together with segment percentage on
+the X-axis and ratio (dB) on the Y-axis, even when COG has a separate dense track.
 
 Normalised time hides the duration. Two groups fill the same axis, even if one group is
 30 ms long and the other group is 120 ms long. Set **Mode** to **Absolute (ms)** to use

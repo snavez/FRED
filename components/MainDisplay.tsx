@@ -7,6 +7,7 @@ import {
   spectralFeatureLabel, parseSpectralFeature, spectralMeasuresOfKind, spectralIndicesOfKind,
   spectralKindsAvailable, spectralRegionsOfKind, hasSpectralRegions, spectralRegionLabel,
   formatSpectralMeasureRef, resolveSpectralAxes, resolveSpectralMeasure, resolveSpectralContour,
+  listSpectralContours, spectralContourSteps, getSpectralMeasureDef,
   spectralFeatureOnKind,
   spectralKindLabel, spectralIndexLabel, SpectralKind, SpectralFeature, SpectralMeta,
 } from '../utils/spectralMoments';
@@ -270,20 +271,18 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
    * ≥2 positions in some region — the dense track when the dataset carries one, else the
    * %-timepoints. Each option is a `region:measure` ref so closure and release stay apart.
    */
-  const spectralContourOptions = useMemo(() => {
-    const kind = spectralIndicesOfKind(spectralMeta, 'track').length >= 2 ? 'track' : 'point';
-    const out: { value: string, label: string }[] = [];
-    for (const region of spectralRegionsOfKind(spectralMeta, kind)) {
-      if (spectralIndicesOfKind(spectralMeta, kind, region).length < 2) continue;
-      for (const m of spectralMeasuresOfKind(spectralMeta, kind, region)) {
-        out.push({
-          value: formatSpectralMeasureRef(m.key, region),
-          label: region ? `${m.short} · ${region}` : m.short,
-        });
-      }
-    }
-    return out;
-  }, [spectralMeta]);
+  const spectralContourOptions = useMemo(() =>
+    listSpectralContours(spectralMeta).map(c => {
+      const def = getSpectralMeasureDef(c.measure);
+      const steps = spectralContourSteps(spectralMeta, c);
+      const source = c.kind === 'track'
+        ? `track · ${steps.length} samples`
+        : steps.map(i => `${i}%`).join(' / ');
+      return {
+        value: formatSpectralMeasureRef(c.measure, c.region),
+        label: `${def.short}${c.region ? ` · ${c.region}` : ''} · ${source}`,
+      };
+    }), [spectralMeta]);
 
   /**
    * The range the spectral plot actually drew. The range inputs show these numbers while
@@ -1409,7 +1408,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
                     {/* Contours: which measure to average */}
                     {currentConfig.spectralMode === 'timeline' && (
-                      <HelpTooltip helpMode={helpMode} text="Mean contour per group. Because every token shares the grid, pointwise averaging is valid. Caveat: pair this with a duration box plot in Data Summaries — normalised time hides duration differences.">
+                      <HelpTooltip helpMode={helpMode} text="Plots every available value of one spectral measure against segment position: dense track samples when that family has them, otherwise percentage points such as 20/50/80%. Faded lines are individual tokens; coloured lines are group means. This does not change the separate scatter Trajectory mode.">
                       <div className="flex items-center gap-2">
                         <label className="font-semibold text-slate-600">Measure:</label>
                         <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={spectralTimelineValue} onChange={e => handleConfig('spectralTimelineMoment', e.target.value)}>

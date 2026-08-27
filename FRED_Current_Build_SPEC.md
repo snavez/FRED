@@ -296,8 +296,10 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
     k1 is a few hundred and a shared axis would flatten all but k0.
   - **Mean contours** — per-group mean of one measurement family (`spectralTimelineMoment`,
     a `region:moment` ref such as `release:COG`) across the track grid, with an optional **±1 SD band** (`spectralShowBand`) and faded per-token
-    lines (`spectralShowIndividual`). Falls back to %-timepoints when the dataset has no
-    track. Normalised (0→1) averages pointwise, which is valid because every token shares
+    lines (`spectralShowIndividual`). Grid selection is per measure and region: a dense
+    track is preferred for that family, otherwise its %-timepoints are used. Thus COG
+    track columns do not hide a Band Energy Ratio available only at 20/50/80%.
+    Normalised time averages pointwise, which is valid because every token shares
     the grid. **Absolute** (`spectralContourAbsolute`) instead places each token's samples
     at its real times from `token.duration`, resamples onto a common millisecond grid by
     linear interpolation, and averages only where ≥2 tokens still reach — so short tokens

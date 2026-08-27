@@ -561,6 +561,27 @@ export const spectralContourSteps = (meta: SpectralMeta, c: SpectralContour): nu
     .filter(i => hasSpectralFeature(meta, { measure: c.measure, kind: c.kind, index: i, region: c.region }));
 
 /**
+ * Every measurement family that can be drawn as a contour. Selection is deliberately
+ * per measure and region: COG having a dense track must not hide a Band Energy Ratio that
+ * is available only at 20/50/80%. A family's track wins when it has one; otherwise its
+ * percentage points are used.
+ */
+export const listSpectralContours = (meta: SpectralMeta): SpectralContour[] => {
+  const out: SpectralContour[] = [];
+  for (const region of meta.regions) {
+    for (const def of SPECTRAL_MEASURE_DEFS) {
+      for (const kind of ['track', 'point'] as const) {
+        const contour: SpectralContour = { measure: def.key, region, kind };
+        if (spectralContourSteps(meta, contour).length >= 2) {
+          out.push(contour);
+          break;
+        }
+      }
+    }
+  }
+  return out;
+};
+/**
  * The contour a timeline draws: the stored `region:measure` family while the dataset
  * holds a grid for it, else the scatter X axis's family, else the first family with a
  * grid at all. Returns null when nothing has ≥2 positions to sweep.

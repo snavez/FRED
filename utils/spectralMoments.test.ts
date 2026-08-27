@@ -19,6 +19,7 @@ import {
   parseSpectralTimePointSuffix,
   resolveSpectralAxes,
   resolveSpectralContour,
+  listSpectralContours,
   resolveSpectralFeature,
   resolveSpectralMeasure,
   spectralAxisLabel,
@@ -272,6 +273,19 @@ describe('regions', () => {
     expect(resolveSpectralContour('anything', '', discoverSpectralColumns([tok({ 'COG_50%': '1' })])))
       .toBeNull();
   });
+
+  it('lists each contour from its own best grid instead of choosing one kind globally', () => {
+    const mixed = discoverSpectralColumns([tok({
+      'COG_release_t0': '1000', 'COG_release_t1': '1200', 'COG_release_t2': '1400',
+      'bandratio_release_20%': '-8', 'bandratio_release_50%': '1', 'bandratio_release_80%': '9',
+    })]);
+    expect(listSpectralContours(mixed)).toEqual([
+      { measure: 'COG', region: 'release', kind: 'track' },
+      { measure: 'bandratio', region: 'release', kind: 'point' },
+    ]);
+    expect(spectralContourSteps(mixed, listSpectralContours(mixed)[1])).toEqual([20, 50, 80]);
+  });
+
 
   it('falls back to a real column when a stored ref names an absent region', () => {
     expect(formatSpectralFeature(resolveSpectralFeature('burst:COG@20', meta)!)).toBe('closure:COG@20');
