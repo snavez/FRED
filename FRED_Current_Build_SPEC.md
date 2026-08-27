@@ -394,6 +394,10 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 - **Zoom & Pan** (scroll to zoom, drag to pan, Reset view).
 - **Export** via the shared ExportDialog (`PlotHandle.generateImage`), with a multi-layer colour
   legend and optional title.
+  Spectral exports pass `ExportConfig` into the shared axis frame: X/Y title sizes,
+  shared or per-axis tick sizes, global font scaling and all axis/tick NudgePad offsets
+  affect scatter, distribution, Mean contours and density exports. Export-only margins
+  expand with those font sizes; the live canvas retains its compact typography.
 - Empty-state messaging when no spectral columns are present, or a mode has too few positions.
 
 ### Phoneme Distribution

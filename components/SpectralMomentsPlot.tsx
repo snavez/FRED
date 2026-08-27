@@ -136,12 +136,24 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
    * on is the reading, and the line has to be visible without being mistaken for a
    * gridline.
    */
-  const drawFrame = (ctx: CanvasRenderingContext2D, area: { x: number, y: number, w: number, h: number }, xTicks: { pos: number, label: string }[], yTicks: { pos: number, label: string }[], xLabel: string, yLabel: string, s: number, zero?: { x?: number, y?: number }) => {
-    ctx.lineWidth = 1 * s; ctx.fillStyle = '#64748b'; ctx.font = `${11 * s}px Inter, sans-serif`;
-    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    yTicks.forEach(t => { ctx.strokeStyle = '#eef2f7'; ctx.beginPath(); ctx.moveTo(area.x, t.pos); ctx.lineTo(area.x + area.w, t.pos); ctx.stroke(); ctx.fillText(t.label, area.x - 6 * s, t.pos); });
-    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    xTicks.forEach(t => { ctx.strokeStyle = '#f1f5f9'; ctx.beginPath(); ctx.moveTo(t.pos, area.y); ctx.lineTo(t.pos, area.y + area.h); ctx.stroke(); ctx.fillText(t.label, t.pos, area.y + area.h + 6 * s); });
+  const drawFrame = (ctx: CanvasRenderingContext2D, area: { x: number, y: number, w: number, h: number }, xTicks: { pos: number, label: string }[], yTicks: { pos: number, label: string }[], xLabel: string, yLabel: string, s: number, zero?: { x?: number, y?: number }, exportConfig?: ExportConfig) => {
+    const xTickSize = exportConfig ? (exportConfig.xTickLabelSize ?? exportConfig.tickLabelSize) : 11;
+    const yTickSize = exportConfig ? (exportConfig.yTickLabelSize ?? exportConfig.tickLabelSize) : 11;
+    const xLabelSize = exportConfig ? exportConfig.xAxisLabelSize : 13;
+    const yLabelSize = exportConfig ? exportConfig.yAxisLabelSize : 13;
+    const xTickX = (exportConfig?.xAxisTickX ?? 0) * s;
+    const xTickY = (exportConfig?.xAxisTickY ?? 0) * s;
+    const yTickX = (exportConfig?.yAxisTickX ?? 0) * s;
+    const yTickY = (exportConfig?.yAxisTickY ?? 0) * s;
+    const xLabelX = (exportConfig?.xAxisLabelX ?? 0) * s;
+    const xLabelY = (exportConfig?.xAxisLabelY ?? 0) * s;
+    const yLabelX = (exportConfig?.yAxisLabelX ?? 0) * s;
+    const yLabelY = (exportConfig?.yAxisLabelY ?? 0) * s;
+    ctx.lineWidth = 1 * s; ctx.fillStyle = '#64748b';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.font = `${yTickSize * s}px Inter, sans-serif`;
+    yTicks.forEach(t => { ctx.strokeStyle = '#eef2f7'; ctx.beginPath(); ctx.moveTo(area.x, t.pos); ctx.lineTo(area.x + area.w, t.pos); ctx.stroke(); ctx.fillText(t.label, area.x - 6 * s + yTickX, t.pos + yTickY); });
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.font = `${xTickSize * s}px Inter, sans-serif`;
+    xTicks.forEach(t => { ctx.strokeStyle = '#f1f5f9'; ctx.beginPath(); ctx.moveTo(t.pos, area.y); ctx.lineTo(t.pos, area.y + area.h); ctx.stroke(); ctx.fillText(t.label, t.pos + xTickX, area.y + area.h + 6 * s + xTickY); });
     if (zero?.y !== undefined) {
       ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1.5 * s; ctx.setLineDash([5 * s, 4 * s]);
       ctx.beginPath(); ctx.moveTo(area.x, zero.y); ctx.lineTo(area.x + area.w, zero.y); ctx.stroke(); ctx.setLineDash([]);
@@ -151,9 +163,10 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       ctx.beginPath(); ctx.moveTo(zero.x, area.y); ctx.lineTo(zero.x, area.y + area.h); ctx.stroke(); ctx.setLineDash([]);
     }
     ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1.5 * s; ctx.strokeRect(area.x, area.y, area.w, area.h);
-    ctx.fillStyle = '#334155'; ctx.font = `600 ${13 * s}px Inter, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-    ctx.fillText(xLabel, area.x + area.w / 2, area.y + area.h + 42 * s);
-    ctx.save(); ctx.translate(area.x - 52 * s, area.y + area.h / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(yLabel, 0, 0); ctx.restore();
+    ctx.fillStyle = '#334155'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    ctx.font = `600 ${xLabelSize * s}px Inter, sans-serif`;
+    ctx.fillText(xLabel, area.x + area.w / 2 + xLabelX, area.y + area.h + 42 * s + xLabelY);
+    ctx.save(); ctx.translate(area.x - 52 * s + yLabelX, area.y + area.h / 2 + yLabelY); ctx.rotate(-Math.PI / 2); ctx.font = `600 ${yLabelSize * s}px Inter, sans-serif`; ctx.fillText(yLabel, 0, 0); ctx.restore();
   };
   const drawEmpty = (ctx: CanvasRenderingContext2D, w: number, h: number, msg: string, s: number) => {
     ctx.fillStyle = '#94a3b8'; ctx.font = `${14 * s}px Inter, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(msg, w / 2, h / 2);
@@ -179,7 +192,13 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
     // the border never cuts through the key, and no data hides behind it. Export draws
     // its own legend beside the plot, so it keeps the plain margin.
     const legendGutter = (!exportConfig && legendLayers.length > 0) ? 288 : 24;
-    const margin = { top: 24 * s, right: legendGutter * s, bottom: 64 * s, left: 82 * s };
+    const exportXTickSize = exportConfig ? (exportConfig.xTickLabelSize ?? exportConfig.tickLabelSize) : 11;
+    const exportYTickSize = exportConfig ? (exportConfig.yTickLabelSize ?? exportConfig.tickLabelSize) : 11;
+    const margin = exportConfig
+      ? { top: 24 * s, right: legendGutter * s,
+          bottom: Math.max(64, exportXTickSize * 1.4 + exportConfig.xAxisLabelSize * 1.5 + 42) * s,
+          left: Math.max(82, exportYTickSize * 2.5 + exportConfig.yAxisLabelSize * 1.5 + 52) * s }
+      : { top: 24 * s, right: legendGutter * s, bottom: 64 * s, left: 82 * s };
     const area = { x: margin.left, y: margin.top, w: width - margin.left - margin.right, h: height - margin.top - margin.bottom };
     if (area.w <= 0 || area.h <= 0) return;
     const rangeOr = (cfg: [number, number], lo: number, hi: number): [number, number] => (cfg[0] === 0 && cfg[1] === 0) ? [lo, hi] : cfg;
@@ -241,7 +260,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       drawFrame(ctx, area,
         valueTicks(xLo, xHi, mapX), valueTicks(yLo, yHi, mapY),
         spectralFeatureAxisLabel(xF, sm.bandRatio), spectralFeatureAxisLabel(yF, sm.bandRatio), s,
-        { x: zeroPos(xF.measure, xLo, xHi, mapX), y: zeroPos(yF.measure, yLo, yHi, mapY) });
+        { x: zeroPos(xF.measure, xLo, xHi, mapX), y: zeroPos(yF.measure, yLo, yHi, mapY) }, exportConfig);
 
       ctx.save();
       ctx.beginPath(); ctx.rect(area.x, area.y, area.w, area.h); ctx.clip();
@@ -423,7 +442,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
           stats.map((g, i) => ({ pos: panel.x + (i + 0.5) * slotW, label: g.key === '__all__' ? 'All' : g.key })),
           valueTicks(yLo, yHi, mapY, compact ? 4 : 99),
           compact ? '' : (cfg.colorBy && cfg.colorBy !== 'none' ? cfg.colorBy : 'Group'), yLabel, s,
-          { y: zeroPos(panelMeasure, yLo, yHi, mapY) });
+          { y: zeroPos(panelMeasure, yLo, yHi, mapY) }, exportConfig);
         ctx.save();
         ctx.beginPath(); ctx.rect(panel.x, panel.y, panel.w, panel.h); ctx.clip();
         drawBoxes(stats, panel, mapY, slotW, boxW);
@@ -615,7 +634,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         : steps.map(i => ({ pos: mapX(i), label: tickLabel(i) }));
       drawFrame(ctx, area, xTicks, valueTicks(vLo, vHi, mapY),
         absolute ? 'Time (ms)' : axisLabel, spectralAxisLabel(measure, undefined, region, sm.bandRatio), s,
-        { y: zeroPos(measure, vLo, vHi, mapY) });
+        { y: zeroPos(measure, vLo, vHi, mapY) }, exportConfig);
 
       // Everything from here draws data: clip it to the frame so nothing spills outside
       // the axes when a range is trimmed or set by hand.
@@ -694,7 +713,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       const mapX = (v: number) => area.x + ((v - xLo) / (xHi - xLo)) * area.w;
       const mapY = (d: number) => area.y + area.h - (d / dMax) * area.h * 0.95;
       drawFrame(ctx, area, valueTicks(xLo, xHi, mapX), [], spectralFeatureAxisLabel(feature, sm.bandRatio, flip), 'Density', s,
-        { x: zeroPos(feature.measure, xLo, xHi, mapX) });
+        { x: zeroPos(feature.measure, xLo, xHi, mapX) }, exportConfig);
       ctx.save();
       ctx.beginPath(); ctx.rect(area.x, area.y, area.w, area.h); ctx.clip();
       curves.forEach(c => {
