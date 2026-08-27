@@ -2147,6 +2147,12 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 {currentConfig.spectralMode !== 'scatter' && (
                   <>
                     {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
+                    {currentConfig.spectralMode === 'timeline' &&
+                      renderVariableSelect('Line Type', currentConfig.lineTypeBy, v => handleConfig('lineTypeBy', v))}
+                    {currentConfig.spectralMode === 'box' &&
+                      renderVariableSelect('Fill Type', currentConfig.textureBy, v => handleConfig('textureBy', v))}
+                    {currentConfig.spectralMode === 'density' &&
+                      renderVariableSelect('Line Type', currentConfig.lineTypeBy, v => handleConfig('lineTypeBy', v))}
                     {currentConfig.spectralMode === 'box' && spectralIndicesOfKind(spectralMeta, 'coeff').length > 1 && (
                       <label className="flex items-center gap-1 cursor-pointer ml-1" title="Show one mini plot per coefficient, sharing the group axis. Each panel gets its own scale, so k0 doesn't dwarf the rest.">
                         <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.spectralCoeffFacets} onChange={e => handleConfig('spectralCoeffFacets', e.target.checked)} />
@@ -2318,24 +2324,29 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     {currentConfig.spectralMode === 'density' && (
                       <>
                         <div className="w-px h-6 bg-slate-200"></div>
-                        <HelpTooltip helpMode={helpMode} text="Weight of each group's density curve and how strongly the area beneath it is filled. Lower the fill when several groups overlap.">
-                        <div className="flex flex-col">
-                          <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Curves</span>
-                          <div className="flex items-center gap-2">
-                            <input type="number" min="0.5" max="12" step="0.5" title="Curve Width"
-                              className="w-10 p-0.5 border rounded text-[10px]"
+                        <HelpTooltip helpMode={helpMode} text="Line width and opacity affect only the density curves. Fill opacity independently controls the shaded area beneath them.">
+                        <div className="flex items-end gap-3">
+                          <label className="flex flex-col gap-1">
+                            <span className="text-[9px] font-bold text-slate-500 uppercase leading-none">Line Width</span>
+                            <input type="range" min="0.5" max="12" step="0.5" title="Line Width"
                               value={currentConfig.meanTrajectoryWidth || 2}
-                              onChange={e => handleConfig('meanTrajectoryWidth', parseFloat(e.target.value) || 1)} />
-                            <input type="range" min="0" max="1" step="0.02" title="Curve Opacity"
+                              onChange={e => handleConfig('meanTrajectoryWidth', parseFloat(e.target.value) || 1)}
+                              className="w-16 h-1 accent-slate-600" />
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className="text-[9px] font-bold text-slate-500 uppercase leading-none">Line Opacity</span>
+                            <input type="range" min="0" max="1" step="0.02" title="Line Opacity"
                               value={opacityToSlider(currentConfig.meanTrajectoryOpacity ?? 1)}
                               onChange={e => handleConfig('meanTrajectoryOpacity', sliderToOpacity(parseFloat(e.target.value)))}
-                              className="w-14 h-1 accent-slate-600" />
-                            <span className="text-[9px] text-slate-500">Fill</span>
+                              className="w-16 h-1 accent-slate-600" />
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className="text-[9px] font-bold text-slate-500 uppercase leading-none">Fill Opacity</span>
                             <input type="range" min="0" max="1" step="0.02" title="Fill Opacity"
                               value={opacityToSlider(currentConfig.spectralDensityFill ?? 0.18)}
                               onChange={e => handleConfig('spectralDensityFill', sliderToOpacity(parseFloat(e.target.value)))}
-                              className="w-14 h-1 accent-slate-600" />
-                          </div>
+                              className="w-16 h-1 accent-slate-600" />
+                          </label>
                         </div>
                         </HelpTooltip>
                       </>

@@ -345,6 +345,9 @@ each group. It also draws a band of ±1 standard deviation.
 
 All tokens use the same grid. FRED can thus calculate a mean at each point of the grid.
 Set **Colour** to the category that you want to compare, such as the subsequent vowel.
+Set **Line Type** to a second category when you need to group by two variables at once.
+For example, Colour can represent consonant place while Line Type represents vowel
+context; each observed combination gets its own mean contour.
 Select **Individual lines** to also show the tokens behind each mean.
 Each measurement family chooses its own best grid. FRED uses dense `t` samples when that
 family has them; otherwise it connects its percentage columns directly. For example,
@@ -370,6 +373,9 @@ tokens leave the mean at the end instead of a decrease of the mean.
 #### Distribution
 
 This plot shows a box plot or a violin plot of one measurement for each group.
+Set **Colour** for the first grouping variable and **Fill Type** for an optional second
+one. FRED draws the observed combinations as coloured boxes or violins with distinct
+solid or patterned fills.
 
 Select a coefficient to compare the shape of the contours. A box plot of **k1** compares
 the direction and the steepness of the contours as a number.
@@ -433,6 +439,11 @@ same axis.
 Read two things from this plot. First, find the position of the peak of each group. Second,
 examine how much the curves cover each other. Curves that cover each other show that this
 measurement does not separate your categories. Curves that stay separate show that it does.
+Use **Line Type** to add a second grouping variable to the curves. **Line Width** changes
+the stroke weight, **Line Opacity** changes only the curve, and **Fill Opacity** changes
+only the shaded area beneath it. The two opacity controls are independent, so fading a
+line does not make its fill disappear.
+
 
 **COG** and **k1** give the most information. Skewness and kurtosis are less reliable.
 Tracks are not available here, because a track is a full contour and not one value. The

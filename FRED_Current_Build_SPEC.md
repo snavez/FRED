@@ -280,8 +280,11 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
   - **Time / Sample** is one shared position dropdown moving both axes together, mirroring
     the formant tabs. **Range** (`spectralTrajRange`, `[0,0]` = full) trims the trajectory
     sweep, mirroring the Time Series range control.
-- **Colour** grouping (`config.colorBy`) drives grouping/colouring across all modes; the
-  on-screen legend + StyleEditor work via the shared colour channel.
+- **Colour** grouping (`config.colorBy`) drives grouping/colouring across all modes. Summary
+  modes also expose a geometry-appropriate second grouping channel: **Line Type**
+  (`lineTypeBy`) for Mean contours and Density, and **Fill Type** (`textureBy`) for
+  Distribution. The renderer groups by the actual colour × secondary combinations, and
+  the on-screen legend + StyleEditor work through the shared encoding maps.
 - Four modes (`config.spectralMode`):
   - **Feature scatter** — any feature on X vs any on Y (`spectralXFeature` /
     `spectralYFeature`, on the background layer). COG@50 × SD@50 separates sibilant from
@@ -289,12 +292,12 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
     categories that overlap on height alone often separate once direction is added. This
     mode is a **multi-layer canvas** (see below).
   - **Distribution** — box-and-whisker (1.5×IQR whiskers + outliers) or violin (Gaussian KDE)
-    of one feature (`spectralFeature`) per colour group. A box plot of **k1 by group** turns
+    of one feature (`spectralFeature`) per colour × fill-type group. A box plot of **k1 by group** turns
     a visual impression of contour direction into a comparable number. **All coefficients**
     (`spectralCoeffFacets`) draws small multiples — one panel per coefficient sharing the
     group axis, each on **its own scale**, because k0 runs into the tens of thousands while
     k1 is a few hundred and a shared axis would flatten all but k0.
-  - **Mean contours** — per-group mean of one measurement family (`spectralTimelineMoment`,
+  - **Mean contours** — per colour × line-type group mean of one measurement family (`spectralTimelineMoment`,
     a `region:moment` ref such as `release:COG`) across the track grid, with an optional **±1 SD band** (`spectralShowBand`) and faded per-token
     lines (`spectralShowIndividual`). Grid selection is per measure and region: a dense
     track is preferred for that family, otherwise its %-timepoints are used. Thus COG
@@ -305,22 +308,25 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
     linear interpolation, and averages only where ≥2 tokens still reach — so short tokens
     drop out of the tail instead of dragging the mean down, and the duration difference
     that normalised time hides becomes visible.
-  - **Density** — Gaussian-KDE density curves of one feature per group (active layer).
+  - **Density** — Gaussian-KDE density curves of one feature per colour × line-type group
+    (active layer).
     Groups with no values are skipped rather than drawn as a flat line on the axis.
 - **Visual controls per mode** (Row 2, beside Colour). Contours and density reuse the
   trajectory config the scatter already uses, so a setting means the same thing wherever
   it appears; the distribution reuses the shared box-plot config with the Data Summaries
   tab:
-  - **Mean contours** — *Lines*: individual contours on/off (`spectralShowIndividual`)
+  - **Mean contours** — **Line Type** supplies the second grouping variable. *Lines*: individual contours on/off (`spectralShowIndividual`)
     with opacity (`trajectoryLineOpacity`) and width (`trajectoryLineWidth`). *Means*:
     line width (`meanTrajectoryWidth`), opacity (`meanTrajectoryOpacity`), sample dots
     (`showMeanTrajectoryPoints` + `meanTrajectoryPointSize`), ±1 SD band
     (`spectralShowBand` + `spectralBandOpacity`). *Labels*: name each mean at the end of
     its contour (`showTrajectoryLabels` + `meanTrajectoryLabelSize`).
-  - **Distribution** — *Show*: Quartiles / Outliers / Mean marker / raw Points (with
+  - **Distribution** — **Fill Type** supplies the second grouping variable. *Show*: Quartiles / Outliers / Mean marker / raw Points (with
     opacity and size). *Box*: whisker extent (1.5×IQR or Min–Max), centre line
     (median or mean), box width in px.
-  - **Density** — curve width, curve opacity and fill opacity (`spectralDensityFill`).
+  - **Density** — **Line Type** supplies the second grouping variable. Explicit **Line
+    Width**, **Line Opacity** and **Fill Opacity** sliders control the curve and fill;
+    line opacity does not multiply or otherwise alter `spectralDensityFill`.
 - **Ranging fits what is drawn** (`utils/plotRange.ts`). Spectral measures are long-tailed,
   so ranging on the raw extent leaves the summary the plot exists to show as a sliver at
   one edge. `fitRange(must, tail)` always contains the `must` values and widens towards the

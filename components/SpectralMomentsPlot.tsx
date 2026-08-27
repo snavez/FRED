@@ -6,6 +6,7 @@ import { axisTicks, formatMeasureValue } from '../utils/axisTicks';
 import {
   drawShape, ShapeIcon, hexToRgb, computeEncodingMaps, EncodingMaps,
 } from '../utils/plotEncoding';
+import { generateTexture } from '../utils/textureGenerator';
 import {
   discoverSpectralColumns, spectralAxisLabel, getSpectralMeasureDef,
   SpectralMeasureKey, SpectralMeta, SpectralFeature,
@@ -64,11 +65,11 @@ const kde = (values: number[], grid: number[]): number[] => {
 };
 
 /** A coloured/shaped group of tokens sharing colour (and optionally shape or line-type). */
-interface EncGroup { key: string; tokens: SpeechToken[]; color: string; shape: string; dash: number[]; label: string; }
+interface EncGroup { key: string; tokens: SpeechToken[]; color: string; shape: string; dash: number[]; texture: number; label: string; }
 
 /** Group tokens by colour (and a secondary shape/line-type channel), mirroring F1/F2 grouping. */
-const buildGroups = (data: SpeechToken[], enc: EncodingMaps, secondary: 'shape' | 'lineType' | null, defaultColor: string, meanLabelType: string): EncGroup[] => {
-  const secKey = secondary === 'shape' ? enc.shapeKey : secondary === 'lineType' ? enc.lineTypeKey : null;
+const buildGroups = (data: SpeechToken[], enc: EncodingMaps, secondary: 'shape' | 'lineType' | 'texture' | null, defaultColor: string, meanLabelType: string): EncGroup[] => {
+  const secKey = secondary === 'shape' ? enc.shapeKey : secondary === 'lineType' ? enc.lineTypeKey : secondary === 'texture' ? enc.textureKey : null;
   const map: Record<string, { tokens: SpeechToken[], cVal: string, sVal: string }> = {};
   data.forEach(t => {
     const cVal = enc.colorKey ? getLabel(t, enc.colorKey) : '';
@@ -85,9 +86,11 @@ const buildGroups = (data: SpeechToken[], enc: EncodingMaps, secondary: 'shape' 
       : (enc.shapeKey && enc.shapeKey === enc.colorKey ? (enc.shapeMap[g.cVal] || 'circle') : 'circle');
     const dash = (secondary === 'lineType' && secKey) ? (enc.lineTypePatternMap[g.sVal] || [])
       : (enc.lineTypeKey && enc.lineTypeKey === enc.colorKey ? (enc.lineTypePatternMap[g.cVal] || []) : []);
+    const texture = (secondary === 'texture' && secKey) ? (enc.textureMap[g.sVal] ?? 0)
+      : (enc.textureKey && enc.textureKey === enc.colorKey ? (enc.textureMap[g.cVal] ?? 0) : 0);
     let label = key === '__all__' ? '' : key.replace('|', ' ');
     if (key.includes('|')) label = meanLabelType === 'color' ? g.cVal : meanLabelType === 'shape' ? g.sVal : `${g.cVal} ${g.sVal}`;
-    return { key, tokens: g.tokens, color, shape, dash, label };
+    return { key, tokens: g.tokens, color, shape, dash, texture, label };
   });
 };
 
@@ -177,8 +180,15 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
   const legendLayers = useMemo(() => {
     const view = activeConfig.spectralMode;
     const src = view === 'scatter' ? layers.filter(l => l.visible) : [activeLayer];
-    return src.map(layer => ({ layer, enc: computeEncodingMaps(layerData[layer.id] || [], layer.config, layer.styleOverrides), isTraj: view === 'scatter' && layer.config.plotType === 'trajectory' }))
-      .filter(x => x.enc.colorKey || x.enc.shapeKey || x.enc.lineTypeKey);
+    return src.map(layer => {
+      const raw = computeEncodingMaps(layerData[layer.id] || [], layer.config, layer.styleOverrides);
+      const enc: EncodingMaps = { ...raw,
+        shapeKey: view === 'scatter' ? raw.shapeKey : null,
+        lineTypeKey: view === 'box' ? null : raw.lineTypeKey,
+        textureKey: view === 'box' ? raw.textureKey : null,
+      };
+      return { layer, enc, isTraj: view === 'scatter' && layer.config.plotType === 'trajectory' };
+    }).filter(x => x.enc.colorKey || x.enc.shapeKey || x.enc.lineTypeKey || x.enc.textureKey);
   }, [layers, layerData, activeConfig.spectralMode, activeLayer]);
   const showTitles = legendLayers.length > 1;
 
@@ -403,10 +413,19 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
     };
     const enc = computeEncodingMaps(data, cfg, activeLayer.styleOverrides);
     const dc = defaultColor(cfg);
-    const keys = enc.colorKey ? Object.keys(enc.colorMap) : ['__all__'];
-    const colorForKey = (k: string) => enc.colorKey ? (enc.colorMap[k] || dc) : dc;
-    const groups: Record<string, SpeechToken[]> = {}; keys.forEach(k => { groups[k] = []; });
-    data.forEach(t => { const g = enc.colorKey ? getLabel(t, enc.colorKey) : '__all__'; (groups[g] ||= []).push(t); });
+    const secondary: 'lineType' | 'texture' | null = view === 'box' ? 'texture' : (view === 'timeline' || view === 'density') ? 'lineType' : null;
+    const grouped = buildGroups(data, enc, secondary, dc, view === 'box' ? 'both' : cfg.meanLabelType);
+    const keys = grouped.map(g => g.key);
+    const groupForKey: Record<string, EncGroup> = {};
+    grouped.forEach(g => { groupForKey[g.key] = g; });
+    const colorForKey = (k: string) => groupForKey[k]?.color || dc;
+    const dashForKey = (k: string) => groupForKey[k]?.dash || [];
+    const textureForKey = (k: string) => groupForKey[k]?.texture ?? 0;
+    const labelForKey = (k: string) => groupForKey[k]?.label || (k === '__all__' ? 'All' : k);
+    const groups: Record<string, SpeechToken[]> = {};
+    grouped.forEach(g => { groups[g.key] = g.tokens; });
+    const secondaryKey = secondary === 'texture' ? enc.textureKey : secondary === 'lineType' ? enc.lineTypeKey : null;
+    const groupAxisLabel = Array.from(new Set([enc.colorKey, secondaryKey].filter((k): k is string => !!k))).join(' × ') || 'Group';
 
     if (view === 'box') {
       if (!feature) { drawEmpty(ctx, width, height, 'No spectral measurements available.', s); return; }
@@ -439,9 +458,9 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         const slotW = panel.w / stats.length;
         const boxW = cfg.boxWidth > 0 ? Math.min(cfg.boxWidth * s, slotW * 0.9) : Math.min(60 * s, slotW * 0.6);
         drawFrame(ctx, panel,
-          stats.map((g, i) => ({ pos: panel.x + (i + 0.5) * slotW, label: g.key === '__all__' ? 'All' : g.key })),
+          stats.map((g, i) => ({ pos: panel.x + (i + 0.5) * slotW, label: labelForKey(g.key) })),
           valueTicks(yLo, yHi, mapY, compact ? 4 : 99),
-          compact ? '' : (cfg.colorBy && cfg.colorBy !== 'none' ? cfg.colorBy : 'Group'), yLabel, s,
+          compact ? '' : groupAxisLabel, yLabel, s,
           { y: zeroPos(panelMeasure, yLo, yHi, mapY) }, exportConfig);
         ctx.save();
         ctx.beginPath(); ctx.rect(panel.x, panel.y, panel.w, panel.h); ctx.clip();
@@ -505,20 +524,24 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
     ) {
       stats.forEach((g, i) => {
         const cx = panel.x + (i + 0.5) * slotW, color = colorForKey(g.key), st = g.stats;
+        const fillStyle: string | CanvasPattern = enc.textureKey
+          ? generateTexture(ctx, textureForKey(g.key), color, '#ffffff') : `rgba(${hexToRgb(color)},0.35)`;
         if (cfg.spectralViolin) {
           const grid: number[] = []; const gN = 48; for (let k = 0; k <= gN; k++) grid.push(st.min + (st.max - st.min) * (k / gN));
           const dens = kde(st.values, grid), dMax = Math.max(...dens) || 1;
           ctx.beginPath();
           grid.forEach((v, k) => { const w = (dens[k] / dMax) * boxW / 2, yy = mapY(v); if (k === 0) ctx.moveTo(cx - w, yy); else ctx.lineTo(cx - w, yy); });
           for (let k = grid.length - 1; k >= 0; k--) ctx.lineTo(cx + (dens[k] / dMax) * boxW / 2, mapY(grid[k]));
-          ctx.closePath(); ctx.fillStyle = `rgba(${hexToRgb(color)},0.35)`; ctx.strokeStyle = color; ctx.lineWidth = 1.5 * s; ctx.fill(); ctx.stroke();
+          ctx.closePath(); ctx.fillStyle = fillStyle; ctx.fill();
+          ctx.strokeStyle = color; ctx.lineWidth = 1.5 * s; ctx.stroke();
         } else {
           const { low: wLow, high: wHigh } = whiskers(st);
           ctx.strokeStyle = color; ctx.lineWidth = 1.5 * s;
           ctx.beginPath(); ctx.moveTo(cx, mapY(wHigh)); ctx.lineTo(cx, mapY(st.q3)); ctx.moveTo(cx, mapY(st.q1)); ctx.lineTo(cx, mapY(wLow));
           ctx.moveTo(cx - boxW / 4, mapY(wHigh)); ctx.lineTo(cx + boxW / 4, mapY(wHigh)); ctx.moveTo(cx - boxW / 4, mapY(wLow)); ctx.lineTo(cx + boxW / 4, mapY(wLow)); ctx.stroke();
           if (cfg.showQuartiles !== false) {
-            ctx.fillStyle = `rgba(${hexToRgb(color)},0.35)`; ctx.fillRect(cx - boxW / 2, mapY(st.q3), boxW, mapY(st.q1) - mapY(st.q3)); ctx.strokeRect(cx - boxW / 2, mapY(st.q3), boxW, mapY(st.q1) - mapY(st.q3));
+            ctx.fillStyle = fillStyle; ctx.fillRect(cx - boxW / 2, mapY(st.q3), boxW, mapY(st.q1) - mapY(st.q3));
+            ctx.strokeRect(cx - boxW / 2, mapY(st.q3), boxW, mapY(st.q1) - mapY(st.q3));
           }
           const centre = (cfg.boxCenterLine || 'median') === 'mean' ? st.mean : st.median;
           ctx.beginPath(); ctx.moveTo(cx - boxW / 2, mapY(centre)); ctx.lineTo(cx + boxW / 2, mapY(centre)); ctx.lineWidth = 2.5 * s; ctx.stroke();
@@ -650,7 +673,9 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
           if (path.length < 2) return;
           ctx.beginPath(); path.forEach((p, j) => { const x = mapX(p.x), y = mapY(p.v); if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
           ctx.strokeStyle = `rgba(${hexToRgb(enc.colorKey ? (enc.colorMap[getLabel(t, enc.colorKey)] || dc) : dc)},${lineOpacity})`;
-          ctx.lineWidth = (cfg.trajectoryLineWidth || 1) * s; ctx.stroke();
+          const dash = enc.lineTypeKey ? (enc.lineTypePatternMap[getLabel(t, enc.lineTypeKey)] || []) : [];
+          ctx.setLineDash(dash.map(v => v * s)); ctx.lineWidth = (cfg.trajectoryLineWidth || 1) * s; ctx.stroke();
+          ctx.setLineDash([]);
         });
       }
 
@@ -674,7 +699,8 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         ctx.globalAlpha = cfg.meanTrajectoryOpacity ?? 1;
         ctx.beginPath(); let started = false;
         g.cells.forEach((c, j) => { if (isNaN(c.mean)) { started = false; return; } const x = mapX(xValues[j]), y = mapY(c.mean); if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); });
-        ctx.strokeStyle = color; ctx.lineWidth = meanWidth; ctx.stroke();
+        ctx.setLineDash(dashForKey(g.key).map(v => v * s)); ctx.strokeStyle = color; ctx.lineWidth = meanWidth; ctx.stroke();
+        ctx.setLineDash([]);
         // Absolute mode resamples onto a fine grid, so per-sample dots would be noise.
         if (!absolute && pointSize > 0) g.cells.forEach((c, j) => { if (isNaN(c.mean)) return; ctx.beginPath(); ctx.arc(mapX(xValues[j]), mapY(c.mean), pointSize * s, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); });
         ctx.globalAlpha = 1;
@@ -686,7 +712,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
             ctx.font = `bold ${size * s}px Inter, sans-serif`; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
             const x = mapX(xValues[last.j]) - 4 * s, y = mapY(last.c.mean) - (pointSize + 3) * s;
             ctx.strokeStyle = 'white'; ctx.lineWidth = 3 * s; ctx.lineJoin = 'round';
-            ctx.strokeText(g.key, x, y); ctx.fillStyle = color; ctx.fillText(g.key, x, y);
+            const label = labelForKey(g.key); ctx.strokeText(label, x, y); ctx.fillStyle = color; ctx.fillText(label, x, y);
           }
         }
       });
@@ -719,12 +745,15 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       curves.forEach(c => {
         const color = colorForKey(c.key);
         const trace = () => c.dens.forEach((d, k) => { const x = mapX(grid[k]), y = mapY(d); if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
-        ctx.globalAlpha = cfg.meanTrajectoryOpacity ?? 1;
+        ctx.globalAlpha = 1;
         ctx.beginPath(); trace();
         ctx.lineTo(mapX(xHi), area.y + area.h); ctx.lineTo(mapX(xLo), area.y + area.h); ctx.closePath();
         ctx.fillStyle = `rgba(${hexToRgb(color)},${cfg.spectralDensityFill ?? 0.18})`; ctx.fill();
         ctx.beginPath(); trace();
+        ctx.globalAlpha = cfg.meanTrajectoryOpacity ?? 1;
+        ctx.setLineDash(dashForKey(c.key).map(v => v * s));
         ctx.strokeStyle = color; ctx.lineWidth = (cfg.meanTrajectoryWidth || 2) * s; ctx.stroke();
+        ctx.setLineDash([]);
         ctx.globalAlpha = 1;
       });
       ctx.restore();
@@ -738,8 +767,16 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       const baseW = 2000, baseH = 1400;
       const gsX = exportConfig.graphScaleX || exportConfig.graphScale || 1, gsY = exportConfig.graphScaleY || exportConfig.graphScale || 1;
       const plotW = baseW * gsX * drawScale, plotH = baseH * gsY * drawScale;
-      const legendEntries: { color: string, label: string }[] = [];
-      legendLayers.forEach(({ layer, enc }) => { if (enc.colorKey) Object.keys(enc.colorMap).sort().forEach(k => legendEntries.push({ color: enc.colorMap[k], label: showTitles ? `${k} · ${layer.name}` : k })); });
+      const legendEntries: { color: string, label: string, dash?: number[], texture?: number }[] = [];
+      legendLayers.forEach(({ layer, enc }) => {
+        const suffix = showTitles ? ` · ${layer.name}` : '';
+        if (enc.colorKey && exportConfig.showColorLegend !== false) Object.keys(enc.colorMap).sort().forEach(k =>
+          legendEntries.push({ color: enc.colorMap[k], label: `${enc.colorKey}: ${k}${suffix}` }));
+        if (enc.lineTypeKey && exportConfig.showLineTypeLegend !== false) Object.keys(enc.lineTypePatternMap).sort().forEach(k =>
+          legendEntries.push({ color: '#475569', dash: enc.lineTypePatternMap[k], label: `${enc.lineTypeKey}: ${k}${suffix}` }));
+        if (enc.textureKey && exportConfig.showTextureLegend !== false) Object.keys(enc.textureMap).sort().forEach(k =>
+          legendEntries.push({ color: '#475569', texture: enc.textureMap[k], label: `${enc.textureKey}: ${k}${suffix}` }));
+      });
       const hasLegend = exportConfig.showLegend && legendEntries.length > 0;
       const legendW = hasLegend ? 460 * drawScale : 0;
       const titleH = exportConfig.showPlotTitle ? (exportConfig.plotTitleSize || 96) * drawScale + 40 * drawScale : 0;
@@ -752,7 +789,16 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       if (hasLegend) {
         ctx.save(); ctx.translate(plotW + 40 * drawScale, titleH + 40 * drawScale);
         const itemS = (exportConfig.legendItemSize || 24) * drawScale; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-        legendEntries.forEach((it, i) => { const y = (i + 0.5) * itemS * 1.7; ctx.fillStyle = it.color; ctx.fillRect(0, y - itemS / 2, itemS, itemS); ctx.fillStyle = '#334155'; ctx.font = `${itemS}px Inter, sans-serif`; ctx.fillText(it.label, itemS * 1.4, y); });
+        legendEntries.forEach((it, i) => {
+          const y = (i + 0.5) * itemS * 1.7;
+          if (it.texture !== undefined) {
+            ctx.fillStyle = generateTexture(ctx, it.texture, it.color, '#ffffff'); ctx.fillRect(0, y - itemS / 2, itemS, itemS);
+          } else if (it.dash) {
+            ctx.strokeStyle = it.color; ctx.lineWidth = Math.max(2 * drawScale, itemS * 0.12); ctx.setLineDash(it.dash.map(v => v * drawScale));
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(itemS, y); ctx.stroke(); ctx.setLineDash([]);
+          } else { ctx.fillStyle = it.color; ctx.fillRect(0, y - itemS / 2, itemS, itemS); }
+          ctx.fillStyle = '#334155'; ctx.font = `${itemS}px Inter, sans-serif`; ctx.fillText(it.label, itemS * 1.4, y);
+        });
         ctx.restore();
       }
       return offscreen.toDataURL('image/png');
@@ -820,7 +866,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
                     </h4>
                     {Object.keys(enc.colorMap).sort().map(k => (
                       <div key={k} className="flex justify-between items-center text-[10px] cursor-pointer hover:bg-slate-100 p-1 rounded"
-                        onClick={(e) => onLegendClick?.(k, { color: enc.colorMap[k], shape: enc.shapeKey === enc.colorKey ? (enc.shapeMap[k] || 'circle') : 'circle', texture: 0, lineType: enc.lineTypeNameMap[k] || 'solid' }, e, layer.id)}>
+                        onClick={(e) => onLegendClick?.(k, { color: enc.colorMap[k], shape: enc.shapeKey === enc.colorKey ? (enc.shapeMap[k] || 'circle') : 'circle', texture: enc.textureKey === enc.colorKey ? (enc.textureMap[k] ?? 0) : 0, lineType: enc.lineTypeNameMap[k] || 'solid' }, e, layer.id)}>
                         <div className="flex items-center space-x-2">
                           {isTraj ? (
                             <svg width="24" height="4" className="shrink-0">
@@ -833,6 +879,8 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
                             <svg width="24" height="4" className="shrink-0">
                               <line x1="0" y1="2" x2="24" y2="2" stroke={enc.colorMap[k]} strokeWidth="2" strokeDasharray={dashArray(enc.lineTypePatternMap[k] || [])} />
                             </svg>
+                          ) : enc.textureKey === enc.colorKey ? (
+                            <PatternPreview index={enc.textureMap[k] ?? 0} color={enc.colorMap[k]} />
                           ) : (
                             <div className="w-3 h-3 rounded-full shadow-sm shrink-0" style={{ backgroundColor: enc.colorMap[k] }}></div>
                           )}
@@ -881,6 +929,24 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
                     ))}
                   </div>
                 )}
+
+                {enc.textureKey && enc.textureKey !== enc.colorKey && (
+                  <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                    <h4 className="text-[10px] font-black uppercase text-slate-400 flex justify-between items-center">
+                      <span>{enc.textureKey}</span>
+                    </h4>
+                    {Object.keys(enc.textureMap).sort().map(k => (
+                      <div key={k} className="flex justify-between items-center text-[10px] cursor-pointer hover:bg-slate-100 p-1 rounded"
+                        onClick={(e) => onLegendClick?.(k, { color: '#64748b', shape: 'circle', texture: enc.textureMap[k] ?? 0, lineType: 'solid' }, e, layer.id)}>
+                        <div className="flex items-center space-x-2">
+                          <PatternPreview index={enc.textureMap[k] ?? 0} color="#475569" />
+                          <span className="text-slate-700 font-medium truncate w-24">{k}</span>
+                        </div>
+                        <span className="text-slate-400 font-mono">({enc.textureCounts[k] || 0})</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -906,4 +972,19 @@ function prettyField(f: string): string {
 }
 
 SpectralMomentsPlot.displayName = 'SpectralMomentsPlot';
+// Tiny canvas swatch used by the interactive fill-pattern legend.
+const PatternPreview = ({ index, color }: { index: number; color: string }) => {
+  const previewRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const ctx = previewRef.current?.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = generateTexture(ctx, index, color, '#ffffff');
+      ctx.fillRect(0, 0, 12, 12);
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.strokeRect(0, 0, 12, 12);
+    }
+  }, [index, color]);
+  return <canvas ref={previewRef} width={12} height={12} className="rounded-sm shrink-0" />;
+};
+
 export default SpectralMomentsPlot;

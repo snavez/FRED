@@ -85,13 +85,16 @@ export interface EncodingMaps {
   colorKey: string | null;
   shapeKey: string | null;
   lineTypeKey: string | null;
+  textureKey: string | null;
   colorMap: Record<string, string>;
   shapeMap: Record<string, string>;
   lineTypeNameMap: Record<string, string>;
   lineTypePatternMap: Record<string, number[]>;
+  textureMap: Record<string, number>;
   colorCounts: Record<string, number>;
   shapeCounts: Record<string, number>;
   lineTypeCounts: Record<string, number>;
+  textureCounts: Record<string, number>;
 }
 
 /** Compute colour/shape/line-type maps for a layer's data (mirrors CanvasPlot.computeMappings). */
@@ -100,10 +103,12 @@ export const computeEncodingMaps = (data: SpeechToken[], config: PlotConfig, sty
   const shapeKey = config.shapeBy === 'none' ? null : config.shapeBy;
   const lineTypeKey = config.lineTypeBy === 'none' ? null : config.lineTypeBy;
 
+  const textureKey = config.textureBy === 'none' ? null : config.textureBy;
   const uniq = (key: string | null) => key ? Array.from(new Set(data.map(t => getLabel(t, key)))).filter(v => v !== '').sort() : [];
   const colorValues = uniq(colorKey);
   const shapeValues = uniq(shapeKey);
   const lineTypeValues = uniq(lineTypeKey);
+  const textureValues = uniq(textureKey);
 
   const palette = config.bwMode ? BW_COLORS : COLORS;
   const colorMap: Record<string, string> = {};
@@ -121,9 +126,12 @@ export const computeEncodingMaps = (data: SpeechToken[], config: PlotConfig, sty
     lineTypePatternMap[v] = LINE_TYPE_PATTERNS[name] || [];
   });
 
-  const count = (key: string | null, out: Record<string, number>) => { if (key) data.forEach(t => { const k = getLabel(t, key); out[k] = (out[k] || 0) + 1; }); };
-  const colorCounts: Record<string, number> = {}, shapeCounts: Record<string, number> = {}, lineTypeCounts: Record<string, number> = {};
-  count(colorKey, colorCounts); count(shapeKey, shapeCounts); count(lineTypeKey, lineTypeCounts);
+  const textureMap: Record<string, number> = {};
+  textureValues.forEach((v, i) => { textureMap[v] = styleOverrides?.textures?.[v] ?? i; });
 
-  return { colorKey, shapeKey, lineTypeKey, colorMap, shapeMap, lineTypeNameMap, lineTypePatternMap, colorCounts, shapeCounts, lineTypeCounts };
+  const count = (key: string | null, out: Record<string, number>) => { if (key) data.forEach(t => { const k = getLabel(t, key); out[k] = (out[k] || 0) + 1; }); };
+  const colorCounts: Record<string, number> = {}, shapeCounts: Record<string, number> = {}, lineTypeCounts: Record<string, number> = {}, textureCounts: Record<string, number> = {};
+  count(colorKey, colorCounts); count(shapeKey, shapeCounts); count(lineTypeKey, lineTypeCounts); count(textureKey, textureCounts);
+
+  return { colorKey, shapeKey, lineTypeKey, textureKey, colorMap, shapeMap, lineTypeNameMap, lineTypePatternMap, textureMap, colorCounts, shapeCounts, lineTypeCounts, textureCounts };
 };
