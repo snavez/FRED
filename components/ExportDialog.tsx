@@ -90,6 +90,29 @@ const computeExportDefaults = (layers: Layer[], defaultTitle?: string): ExportCo
   };
 };
 
+/** One labelled px-size control: a slider paired with the number it sets. */
+const SizeSlider: React.FC<{
+  label: string; value: number; onChange: (v: number) => void; title?: string;
+}> = ({ label, value, onChange, title }) => (
+  <div title={title}>
+    <label className="text-[11px] font-semibold text-slate-500 mb-0.5 flex justify-between">
+      {label} <span>{value}px</span>
+    </label>
+    <div className="flex gap-2 items-center">
+      <input
+        type="range" min="10" max="500" value={value}
+        onChange={e => onChange(parseInt(e.target.value))}
+        className="flex-1 accent-slate-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+      />
+      <input
+        type="number" min="1" max="999" value={value}
+        onChange={e => { const v = parseInt(e.target.value); onChange(isNaN(v) ? 10 : v); }}
+        className="w-16 text-xs p-1 border border-slate-300 rounded text-center"
+      />
+    </div>
+  </div>
+);
+
 // ---------------------------------------------------------------------------
 // Compute legend absolute canvas coordinates for a given position mode (at drawScale=1)
 // MUST mirror the exact margin + position logic from CanvasPlot.tsx generateImage()
@@ -276,6 +299,11 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
   }, [config.scale, config.legendPosition, isOpen]);
 
   const handleFontScaleChange = useCallback((newScale: number) => {
+    // Per-axis tick overrides have no base size of their own, so they move by the same
+    // ratio as everything else — the slider stays a proportional scale over whatever
+    // the user has already set, rather than quietly discarding it.
+    const ratio = fontScale > 0 ? newScale / fontScale : 1;
+    const scaled = (v?: number) => v === undefined ? undefined : Math.max(1, Math.round(v * ratio));
     setFontScale(newScale);
     localStorage.setItem('fred_export_fontScale', String(newScale));
     setConfig(prev => ({
@@ -287,8 +315,11 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
       legendTitleSize: Math.round(BASE_FONT_SIZES.legendTitleSize * newScale),
       legendItemSize: Math.round(BASE_FONT_SIZES.legendItemSize * newScale),
       plotTitleSize: Math.round(BASE_FONT_SIZES.plotTitleSize * newScale),
+      xTickLabelSize: scaled(prev.xTickLabelSize),
+      yTickLabelSize: scaled(prev.yTickLabelSize),
+      xGroupLabelSize: scaled(prev.xGroupLabelSize),
     }));
-  }, []);
+  }, [fontScale]);
 
   const handleResetAll = useCallback(() => {
     const defaults = computeExportDefaults(layers, defaultTitle);
@@ -374,7 +405,9 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
   const hasTitleChanges = !!config.showPlotTitle;
   const hasAxisChanges = config.xAxisLabelSize !== Math.round(BASE_FONT_SIZES.xAxisLabelSize * fontScale)
     || (config.xAxisLabelX || 0) !== 0 || (config.xAxisLabelY || 0) !== 0
-    || (config.yAxisLabelX || 0) !== 0 || (config.yAxisLabelY || 0) !== 0;
+    || (config.yAxisLabelX || 0) !== 0 || (config.yAxisLabelY || 0) !== 0
+    || config.xTickLabelSize !== undefined || config.yTickLabelSize !== undefined
+    || config.xGroupLabelSize !== undefined;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
@@ -577,6 +610,31 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                   <input type="range" min="10" max="500" value={config.tickLabelSize} onChange={e => updateConfig('tickLabelSize', parseInt(e.target.value))} className="flex-1 accent-slate-600 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer" />
                   <input type="number" min="1" max="999" value={config.tickLabelSize} onChange={e => { const v = parseInt(e.target.value); updateConfig('tickLabelSize', isNaN(v) ? 10 : v); }} className="w-16 text-xs p-1 border border-slate-300 rounded text-center" />
                 </div>
+
+                {/* Per-axis tick sizing. Box and bar plots label the x axis in two rows —
+                    the category under each box or bar, and the group it belongs to —
+                    and each row needs its own size to stay readable in print. */}
+                <div className="mt-2 space-y-2">
+                  <SizeSlider
+                    label="X Axis Ticks"
+                    value={config.xTickLabelSize ?? config.tickLabelSize}
+                    onChange={v => updateConfig('xTickLabelSize', v)}
+                    title="Size of the category labels along the x axis"
+                  />
+                  <SizeSlider
+                    label="X Group Labels"
+                    value={config.xGroupLabelSize ?? config.xTickLabelSize ?? config.tickLabelSize}
+                    onChange={v => updateConfig('xGroupLabelSize', v)}
+                    title="Size of the second x-axis row: the group name beneath each cluster of boxes or bars"
+                  />
+                  <SizeSlider
+                    label="Y Axis Ticks"
+                    value={config.yTickLabelSize ?? config.tickLabelSize}
+                    onChange={v => updateConfig('yTickLabelSize', v)}
+                    title="Size of the numbers along the y axis"
+                  />
+                </div>
+
                 <div className="grid grid-cols-2 gap-2 mt-1">
                   <NudgePad
                     x={config.xAxisTickX || 0}

@@ -104,8 +104,9 @@ you. You can correct any column in the dialog.
 | Token ID (long layout) | `token_id`, `segment_id`, `item_id` |
 | Timepoint (long layout) | `timepoint`, `times_norm`, `time_rel` |
 | Spectral moments | `COG_50%`, `SD_20`, `skewness_80%`, `kurtosis_50%`, `centroid`, `spread`, `SpecDiff` |
-| Spectral tracks | `COG_t0` … `COG_t10` |
-| Spectral coefficients | `COG_k0` … `COG_k3` |
+| Band energy ratio | `bandratio_50%`, `band_ratio_release_20%`, `BER_k1` |
+| Spectral tracks | `COG_t0` … `COG_t10`, `bandratio_t0` … `bandratio_t10` |
+| Spectral coefficients | `COG_k0` … `COG_k3`, `bandratio_k0` … `bandratio_k3` |
 
 Formant columns F1 to F5 are permitted. F1, F2, and F3 go into the vowel plots. F4 and F5
 become data fields that you can plot in **Data summaries**.
@@ -136,7 +137,7 @@ Use the **Map to** menu to set the type of a column.
 | **Formant value** | A formant measurement. Select F1 to F5 and the timepoint. |
 | **Duration value** | The length of the segment. |
 | **Pitch value** | An F0 measurement. |
-| **Spectral COG / Diffusion (SD) / Skew / Kurtosis** | A consonant spectral measurement. Refer to [Spectral](#spectral-consonants). |
+| **Spectral COG / Diffusion (SD) / Skew / Kurtosis / Band Energy Ratio** | A consonant spectral measurement. Refer to [Spectral](#spectral-consonants). |
 | **Token ID / Timepoint** | Groups the rows of a long-layout file. |
 | **Custom field** | Any other column. |
 | **Ignore** | FRED does not read the column. |
@@ -289,23 +290,39 @@ a mean line for each group.
 
 ### Spectral (consonants)
 
-This plot shows consonant data. It uses four spectral moments:
+This plot shows consonant data. It uses the four spectral moments, and the band energy
+ratio:
 
-| Moment | What it shows |
+| Measure | What it shows |
 |---|---|
 | **COG** (centre of gravity, Hz) | Where the energy of the spectrum is. Sibilants have a high COG, near 6–8 kHz. Other fricatives have a lower COG. |
 | **SD** (diffusion or spread, Hz) | How wide the spectrum is. [s] is compact. [f] and [h] are wide. |
 | **Skewness** | The tilt of the spectrum. A positive value shows more energy below the mean. |
 | **Kurtosis** | How sharp the spectral peaks are. A high value shows clear peaks. |
+| **Band energy ratio** (dB) | How much more energy is in a high frequency band than in a low one. 0 dB is equal energy in both. FRED draws 0 dB as a line across the plot. |
 
-Your file can give each moment in three forms. FRED uses the forms that your file has:
+Your file can give each measure in three forms. FRED uses the forms that your file has:
 
 - **Moments** — one value at each position, such as `COG_20%`, `COG_50%`, and `COG_80%`.
 - **Track** — many values across the segment, such as `COG_t0` to `COG_t10`. This is the
-  contour of the measurement. A track can have any number of samples.
+  contour of the measurement. A track can have any number of samples. The track of the
+  band energy ratio is often the most useful view of it: an aspirated release and a
+  fricated one differ in how the ratio moves across the release, not only in its mean.
 - **Coefficients** — values that give the shape of that contour, such as `COG_k0` to
   `COG_k3`. **k0** is the height of the contour. **k1** is its slope. **k2** is its
   curvature. A file can have any number of coefficients.
+
+#### Which bands the ratio compares
+
+Two files can both have a column named `bandratio_50%` and mean different things, because
+the bands were set differently when they were exported. The numbers are then not
+comparable, and nothing in the column name says so.
+
+FormantStudio writes the band edges into a JSON file beside the CSV, named
+`<your-file>.provenance.json`. Select **both** files together in the **Load CSV / TSV**
+picker. FRED then names the bands on every axis that shows the ratio — for example
+`Band ratio 5.5–7.5k / 0.4–0.9k (dB)` — and lists them under **Dataset info**. Without
+that file the axis reads simply `Band Energy Ratio (dB)`; FRED never guesses the edges.
 
 Read the config bar from left to right:
 
@@ -426,7 +443,9 @@ to make the groups.
 ![The Data summaries plot](images/data-summaries.png)
 
 You can set the whiskers (1.5 × IQR or the full range), the centre line (the median or the
-mean), and the order of the boxes.
+mean), and the order of the boxes. Tick **Values** to print the centre number beside each
+box; it always shows whichever statistic the centre line is set to. The same tick box is
+on the **Spectral → Distribution** plot.
 
 Use this plot together with **Mean contours**. Normalised contours do not show the
 duration, but this plot does.
@@ -583,6 +602,11 @@ maximum of 10 fields.
 
 - **Resolution** — 1× to 4×. Use a high value for printing.
 - **Font scale**, **chart title**, **graph geometry**, and **axis label** controls.
+- **Axis labels → tick numbers** — one size for all tick text, then a size for each of
+  **X axis ticks**, **Y axis ticks**, and **X group labels**. Use the last one when the x
+  axis is labelled in two rows: the category under each box or bar, and the group name
+  beneath it. Each starts at the size the plot already used, so you only change what you
+  need to.
 - **Legend** — the position, the layers to include, and the text sizes.
 
 For a black-and-white publication, click **B&W** before you export. FRED then uses grey

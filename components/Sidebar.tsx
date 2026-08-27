@@ -2,6 +2,9 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { Filter, Database, Upload, Search, Settings2 } from 'lucide-react';
 import { PlotConfig, FilterState, SpeechToken, DatasetMeta, UNDEFINED_LABEL } from '../types';
+import { listFilterFields } from '../utils/filterFields';
+import { bandRatioBandsLabel } from '../utils/spectralMoments';
+import { getLabel } from '../utils/getLabel';
 
 interface SidebarProps {
   config: PlotConfig;
@@ -17,31 +20,6 @@ interface SidebarProps {
   onToggleFieldVisibility?: (key: string, visible: boolean) => void;
   onReopenMappingDialog?: () => void;
 }
-
-/** Get the filter key for a column mapping */
-const getFilterKey = (m: { role: string; fieldName?: string }): string | null => {
-  if (m.role === 'speaker') return 'speaker';
-  if (m.role === 'file_id') return 'file_id';
-  if (m.role === 'duration') return 'duration';
-  if (m.role === 'ignore' || m.role === 'formant') return null;
-  if (m.fieldName) return m.fieldName; // handles 'field' and 'pitch'
-  return null;
-};
-
-/** Get value from a token for a given filter key */
-const getTokenValue = (t: SpeechToken, key: string): string => {
-  if (key === 'speaker') return t.speaker;
-  if (key === 'file_id') return t.file_id;
-  if (key === 'duration') return t.duration.toString();
-  return t.fields[key] ?? '';
-};
-
-/** Pretty label for a field key */
-const prettyLabel = (key: string): string => {
-  if (key === 'speaker') return 'Speaker';
-  if (key === 'file_id') return 'File ID';
-  return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-};
 
 const Sidebar: React.FC<SidebarProps> = ({
   filters, setFilters, data, tokenCount, totalCount, handleFileUpload, activeLayerName, datasetMeta, onToggleFieldVisibility, onReopenMappingDialog
@@ -62,22 +40,8 @@ const Sidebar: React.FC<SidebarProps> = ({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showFieldSettings]);
 
-  // --- Build visible filter fields dynamically from datasetMeta ---
-  const visibleFilterFields = useMemo(() => {
-    if (!datasetMeta) return [];
-    const fields: { key: string; label: string }[] = [];
-    const seen = new Set<string>();
-
-    for (const m of datasetMeta.columnMappings) {
-      if (m.showInSidebar === false) continue;
-      const key = getFilterKey(m);
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      fields.push({ key, label: prettyLabel(key) });
-    }
-
-    return fields;
-  }, [datasetMeta]);
+  // --- Label fields listed in the sidebar (shared rule with the encoding menus) ---
+  const visibleFilterFields = useMemo(() => listFilterFields(datasetMeta), [datasetMeta]);
 
   // --- Cross-filtered options: for each field, apply all OTHER active filters ---
   const fieldOptions = useMemo(() => {
@@ -107,7 +71,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       for (const entry of allFilterEntries) {
         if (entry.key === key) continue;
         subset = subset.filter(t => {
-          const val = getTokenValue(t, entry.key);
+          const val = getLabel(t, entry.key);
           // Map empty values to UNDEFINED_LABEL for checking
           const effectiveVal = val === '' ? UNDEFINED_LABEL : val;
           return entry.set.has(effectiveVal);
@@ -115,7 +79,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       }
 
       const values = subset.map(t => {
-        const val = getTokenValue(t, key);
+        const val = getLabel(t, key);
         return val === '' ? UNDEFINED_LABEL : val;
       });
       result[key] = Array.from(new Set<string>(values)).sort((a, b) => {
@@ -129,26 +93,8 @@ const Sidebar: React.FC<SidebarProps> = ({
     return result;
   }, [data, visibleFilterFields, filters]);
 
-  // --- Popover entries: all filterable fields in the dataset (exclude data fields) ---
-  const popoverEntries = useMemo(() => {
-    if (!datasetMeta) return [];
-    const entries: { key: string; label: string; visible: boolean }[] = [];
-    const seen = new Set<string>();
-
-    for (const m of datasetMeta.columnMappings) {
-      if (m.isDataField) continue; // Data fields don't appear as sidebar filter options
-      const key = getFilterKey(m);
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      entries.push({
-        key,
-        label: prettyLabel(key),
-        visible: m.showInSidebar !== false,
-      });
-    }
-
-    return entries;
-  }, [datasetMeta]);
+  // --- Popover entries: every label field, listed or not ---
+  const popoverEntries = useMemo(() => listFilterFields(datasetMeta, 'all'), [datasetMeta]);
 
   const toggleFieldInPopover = (entry: { key: string; visible: boolean }) => {
     onToggleFieldVisibility?.(entry.key, !entry.visible);
@@ -168,7 +114,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     const result: Record<string, string[]> = {};
     for (const { key } of visibleFilterFields) {
       const values = data.map(t => {
-        const val = getTokenValue(t, key);
+        const val = getLabel(t, key);
         return val === '' ? UNDEFINED_LABEL : val;
       });
       result[key] = Array.from(new Set<string>(values)).sort((a, b) => {
@@ -278,7 +224,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               <Upload size={14} className="text-slate-400" />
               <p className="text-[11px] text-slate-500 font-medium">Load CSV / TSV</p>
             </div>
-            <input type="file" className="hidden" accept=".csv,.tsv,.txt" onChange={handleFileUpload} />
+            <input type="file" className="hidden" multiple accept=".csv,.tsv,.txt,.json" onChange={handleFileUpload} />
           </label>
           {hasData && (
             <>
@@ -286,6 +232,15 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <span>Tokens: {tokenCount.toLocaleString()} / {totalCount.toLocaleString()}</span>
                 <span className="text-sky-700">{Math.round((tokenCount / totalCount) * 100 || 0)}%</span>
               </div>
+              {datasetMeta?.provenance?.bandRatio && (
+                <div
+                  className="mt-2 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] text-slate-600 leading-snug cursor-help"
+                  title={`Band energy ratio = 10·log10(P_high / P_low), high band ${datasetMeta.provenance.bandRatio.high[0]}–${datasetMeta.provenance.bandRatio.high[1]} Hz over low band ${datasetMeta.provenance.bandRatio.low[0]}–${datasetMeta.provenance.bandRatio.low[1]} Hz. Read from ${datasetMeta.provenance.sourceFile}. Ratios measured over different bands are not comparable.`}
+                >
+                  <span className="font-bold uppercase text-slate-400">Band ratio</span>{' '}
+                  {bandRatioBandsLabel(datasetMeta.provenance.bandRatio)} Hz ({datasetMeta.provenance.bandRatio.units})
+                </div>
+              )}
               {onReopenMappingDialog && (
                 <button
                   onClick={onReopenMappingDialog}

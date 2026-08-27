@@ -78,6 +78,7 @@ const COLORS = [
 ];
 
 import { getLabel } from '../utils/getLabel';
+import { niceStep, formatTickValue } from '../utils/axisTicks';
 
 // Helper: compute counts plot data for a token subset (reused for faceting)
 function computeCountsPlotData(tokens: SpeechToken[], config: PlotConfig, styleOverrides?: StyleOverrides) {
@@ -313,33 +314,22 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
     if (chartW <= 0 || chartH <= 0) return;
 
     // Nice tick computation for y-axis
-    const niceStep = (range: number, targetTicks: number): number => {
-      const rough = range / targetTicks;
-      const mag = Math.pow(10, Math.floor(Math.log10(rough)));
-      const norm = rough / mag;
-      let step: number;
-      if (norm < 1.5) step = 1;
-      else if (norm < 3) step = 2;
-      else if (norm < 7) step = 5;
-      else step = 10;
-      return step * mag;
-    };
-
     // Y-axis setup
     const yMax = maxY > 0 ? maxY * 1.05 : 1; // 5% headroom
-    const yStep = niceStep(yMax, 5);
+    const yStep = niceStep(yMax / 5);
     const mapY = (val: number) => margin.top + chartH - (val / yMax) * chartH;
     const mapX = (val: number) => margin.left + ((val - min) / (max - min)) * chartW;
 
     // Font sizes
-    const tickFont = isExport ? (exportConfig?.tickLabelSize || 32) : 11;
+    const xTickFont = isExport ? (exportConfig?.xTickLabelSize ?? exportConfig?.tickLabelSize ?? 32) : 11;
+    const yTickFont = isExport ? (exportConfig?.yTickLabelSize ?? exportConfig?.tickLabelSize ?? 32) : 11;
     const labelFont = isExport ? (exportConfig?.xAxisLabelSize || 36) : 13;
 
     // Grid lines + Y-axis ticks
     ctx.strokeStyle = '#e2e8f0';
     ctx.lineWidth = (1 * drawScale) / scale;
     ctx.fillStyle = '#64748b';
-    ctx.font = `${(tickFont * drawScale) / scale}px Inter`;
+    ctx.font = `${(yTickFont * drawScale) / scale}px Inter`;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
 
@@ -352,15 +342,12 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
       ctx.stroke();
       const yTickX = margin.left - (8 * drawScale) + ((exportConfig?.yAxisTickX || 0) * drawScale);
       const yTickY = y + ((exportConfig?.yAxisTickY || 0) * drawScale);
-      if (isDensity) {
-        ctx.fillText(yVal.toFixed(yVal < 0.01 ? 4 : 2), yTickX, yTickY);
-      } else {
-        ctx.fillText(Math.round(yVal).toString(), yTickX, yTickY);
-      }
+      ctx.fillText(isDensity ? formatTickValue(yVal, yStep) : Math.round(yVal).toString(), yTickX, yTickY);
     }
 
     // X-axis ticks
-    const xStep = niceStep(max - min, Math.min(10, bins.length));
+    const xStep = niceStep((max - min) / Math.min(10, bins.length));
+    ctx.font = `${(xTickFont * drawScale) / scale}px Inter`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     const xTickY = margin.top + chartH + (8 * drawScale) + ((exportConfig?.xAxisTickY || 0) * drawScale);
@@ -371,11 +358,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
       ctx.lineTo(x, margin.top + chartH + (5 * drawScale));
       ctx.stroke();
       ctx.fillStyle = '#64748b';
-      // Smart formatting
-      const formatted = Math.abs(xVal) >= 100 ? Math.round(xVal).toString()
-        : Math.abs(xVal) >= 1 ? xVal.toFixed(1)
-        : xVal.toFixed(3);
-      ctx.fillText(formatted, x + ((exportConfig?.xAxisTickX || 0) * drawScale), xTickY);
+      ctx.fillText(formatTickValue(xVal, xStep), x + ((exportConfig?.xAxisTickX || 0) * drawScale), xTickY);
     }
 
     // Axis border lines
@@ -803,11 +786,13 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
 
     const mapY = (val: number, localH: number) => localH - (val / maxY) * localH;
 
-    // Font Sizing Logic
-    const axisFont = exportConfig ? exportConfig.tickLabelSize : (isExport ? 32 : 12);
-    const subLabelFont = exportConfig ? exportConfig.xAxisLabelSize : (isExport ? 26 : 9);
+    // Font sizing. The x axis is labelled in two layers here — the bar labels and the
+    // group name beneath them — so each has its own export size, falling back to the
+    // size it has always used when the export dialog has not been asked to change it.
+    const axisFont = exportConfig ? (exportConfig.yTickLabelSize ?? exportConfig.tickLabelSize) : (isExport ? 32 : 12);
+    const subLabelFont = exportConfig ? (exportConfig.xTickLabelSize ?? exportConfig.xAxisLabelSize) : (isExport ? 26 : 9);
     const barLabelFont = exportConfig ? exportConfig.dataLabelSize : (isExport ? 24 : 9);
-    const groupLabelFont = isExport ? 0 : 10; 
+    const groupLabelFont = exportConfig ? (exportConfig.xGroupLabelSize ?? 0) : (isExport ? 0 : 10);
 
     // Axis Offsets
     const xTickOffsetX = (exportConfig?.xAxisTickX || 0) * drawScale;
@@ -872,7 +857,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
             const showCellLabel = groups.length > 1 || !isInteraction || !showPrimaryLabel;
             if (showCellLabel) {
                 ctx.fillStyle = '#0f172a';
-                ctx.font = `bold ${(exportConfig ? exportConfig.xAxisLabelSize : 12 * drawScale) / scale}px Inter`;
+                ctx.font = `bold ${(exportConfig ? (exportConfig.xGroupLabelSize ?? exportConfig.xAxisLabelSize) : 12 * drawScale) / scale}px Inter`;
                 ctx.textAlign = 'center';
                 ctx.fillText(`/${g}/`, cx + cw/2, cy + ch + (subLabelFont * 1.5 * drawScale));
             }
@@ -1237,7 +1222,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
 
              // Group Label — suppress when only one group named 'All' (groupBy=none)
              const showGroupLabel = g !== 'All' && (groups.length > 1 || !isInteraction || !showPrimaryLabel);
-             if (showGroupLabel && (!isExport || isStacked)) {
+             if (showGroupLabel && groupLabelFont > 0 && (!isExport || isStacked || (exportConfig?.xGroupLabelSize ?? 0) > 0)) {
                 ctx.fillStyle = '#0f172a';
                 ctx.font = `bold ${(groupLabelFont * drawScale) / scale}px Inter`;
                 ctx.textAlign = 'center';

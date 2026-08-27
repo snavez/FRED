@@ -5,7 +5,9 @@ import MainDisplay from './components/MainDisplay';
 import Header from './components/Header';
 import { detectDelimiter, splitRow, autoDetectMappings, parseWithMappings, detectHeaderRow, HeaderDetectionResult, TrajectoryFormatOverride } from './services/csvParser';
 import { getLabel } from './utils/getLabel';
-import { SpeechToken, PlotConfig, FilterState, ReferenceCentroid, Layer, LayerCounters, StyleOverrides, ColumnMapping, DatasetMeta, NormalizationMethod, UNDEFINED_LABEL } from './types';
+import { filterFieldKey, listFilterFields } from './utils/filterFields';
+import { SpeechToken, PlotConfig, FilterState, ReferenceCentroid, Layer, LayerCounters, StyleOverrides, ColumnMapping, DatasetMeta, DatasetProvenance, NormalizationMethod, UNDEFINED_LABEL } from './types';
+import { isSidecarFor, parseProvenanceSidecar } from './services/provenance';
 import { computeSpeakerStats, computeNormalizedRange, SpeakerStatsMap } from './utils/normalization';
 import DataMappingDialog from './components/DataMappingDialog';
 
@@ -59,17 +61,18 @@ const INITIAL_CONFIG: PlotConfig = {
   showQuartiles: true,
   showMeanMarker: true,
   showOutliers: true,
-  showDurationPoints: false,
+  boxShowPoints: false,
   durationYField: 'duration',
   durationFormantTimePoint: 50,
   durationPlotBy: 'none',
   durationClusterBy: 'none',
-  durationWhiskerMode: 'iqr',
-  durationCenterLine: 'median',
+  boxWhiskerMode: 'iqr',
+  boxCenterLine: 'median',
+  showCenterValueLabels: false,
   durationBoxOrder: 'alpha',
   durationBoxDir: 'asc',
   durationTooltipFields: ['file_id', 'duration'],
-  durationBoxWidth: 0,
+  boxWidth: 0,
   durationGroupGap: 1.5,
   durationBoxGap: 0.4,
 
@@ -106,6 +109,8 @@ const INITIAL_CONFIG: PlotConfig = {
   spectralViolin: false,
   spectralShowIndividual: true,
   spectralShowBand: true,
+  spectralBandOpacity: 0.18,
+  spectralDensityFill: 0.18,
   spectralContourAbsolute: false,
   spectralCoeffFacets: false,
   spectralFlipSign: false,
@@ -164,37 +169,18 @@ const INITIAL_FILTERS: FilterState = {
   filters: {},
 };
 
-/** Compute a FilterState with all values selected from the data */
+/**
+ * A FilterState with every value selected, for each label field the dataset carries.
+ * Hidden fields are included too — a field hidden from the sidebar must not silently
+ * filter every token out.
+ */
 const computeSelectAllFilters = (tokens: SpeechToken[], meta: DatasetMeta | null): FilterState => {
   const filters: Record<string, string[]> = {};
-  if (!meta) return { filters };
-
-  for (const m of meta.columnMappings) {
-    if (m.role === 'speaker') {
-      const vals = Array.from(new Set(tokens.map(t => t.speaker)));
-      const hasEmpty = vals.some(v => !v);
-      filters['speaker'] = [...vals.filter(Boolean), ...(hasEmpty ? [UNDEFINED_LABEL] : [])];
-    } else if (m.role === 'file_id') {
-      const vals = Array.from(new Set(tokens.map(t => t.file_id)));
-      const hasEmpty = vals.some(v => !v);
-      filters['file_id'] = [...vals.filter(Boolean), ...(hasEmpty ? [UNDEFINED_LABEL] : [])];
-    } else if (m.role === 'duration' && m.isDataField !== true) {
-      filters['duration'] = Array.from(new Set(tokens.map(t => t.duration.toString()).filter(v => v !== 'NaN')));
-    } else if (m.role === 'pitch' && m.fieldName && m.isDataField !== true) {
-      const key = m.fieldName;
-      if (!filters[key]) {
-        const vals = Array.from(new Set(tokens.map(t => t.fields[key] ?? '')));
-        const hasEmpty = vals.some(v => v === '');
-        filters[key] = [...vals.filter(v => v !== ''), ...(hasEmpty ? [UNDEFINED_LABEL] : [])];
-      }
-    } else if (m.role === 'field' && m.fieldName) {
-      const key = m.fieldName;
-      const vals = Array.from(new Set(tokens.map(t => t.fields[key] ?? '')));
-      const hasEmpty = vals.some(v => v === '');
-      filters[key] = [...vals.filter(v => v !== ''), ...(hasEmpty ? [UNDEFINED_LABEL] : [])];
-    }
+  for (const { key } of listFilterFields(meta, 'all')) {
+    const values = new Set(tokens.map(t => getLabel(t, key)));
+    const hasEmpty = values.delete('');
+    filters[key] = [...values, ...(hasEmpty ? [UNDEFINED_LABEL] : [])];
   }
-
   return { filters };
 };
 
@@ -230,6 +216,9 @@ const App: React.FC = () => {
     rawText: string; headers: string[]; sampleData: string[][]; fileName: string;
   } | null>(null);
   const uploadIdRef = useRef(0); // guards against FileReader race conditions
+  // Provenance from the JSON sidecar picked alongside the CSV, attached to the dataset
+  // when the mapping is confirmed. Null whenever no readable sidecar came with the file.
+  const [sidecarProvenance, setSidecarProvenance] = useState<DatasetProvenance | null>(null);
   const [mappingDialog, setMappingDialog] = useState<{
     isOpen: boolean;
     rawText: string;
@@ -244,10 +233,29 @@ const App: React.FC = () => {
     headerDetection: HeaderDetectionResult;
   } | null>(null);
 
+  /**
+   * Load a data file, and the JSON provenance sidecar beside it when the user selected
+   * one too. A browser cannot go looking for the sidecar itself — it only ever sees the
+   * files it is handed — so the picker takes several, and the sidecar is recognised by
+   * its name matching the data file's.
+   */
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const chosen: File[] = e.target.files ? Array.from(e.target.files) : [];
+    const file = chosen.find(f => !/\.json$/i.test(f.name)) ?? chosen[0];
     if (!file) return;
     const thisUpload = ++uploadIdRef.current;
+
+    setSidecarProvenance(null);
+    const sidecar = chosen.find(f => isSidecarFor(file.name, f.name));
+    if (sidecar) {
+      const sidecarReader = new FileReader();
+      sidecarReader.onload = (event) => {
+        if (uploadIdRef.current !== thisUpload) return;
+        setSidecarProvenance(parseProvenanceSidecar(String(event.target?.result ?? ''), sidecar.name));
+      };
+      sidecarReader.readAsText(sidecar);
+    }
+
     const reader = new FileReader();
     reader.onload = (event) => {
       // Discard stale reads if user uploaded another file before this one finished
@@ -334,7 +342,8 @@ const App: React.FC = () => {
   const handleMappingConfirm = useCallback((mappings: ColumnMapping[], trajectoryOverride?: TrajectoryFormatOverride) => {
     if (!mappingDialog) return;
     setIsLoading(true);
-    const { tokens, meta } = parseWithMappings(mappingDialog.rawText, mappings, mappingDialog.fileName, !mappingDialog.firstRowIsHeader, trajectoryOverride);
+    const { tokens, meta: parsedMeta } = parseWithMappings(mappingDialog.rawText, mappings, mappingDialog.fileName, !mappingDialog.firstRowIsHeader, trajectoryOverride);
+    const meta: DatasetMeta = sidecarProvenance ? { ...parsedMeta, provenance: sidecarProvenance } : parsedMeta;
     setData(tokens);
     setDatasetMeta(meta);
     const allFilters = computeSelectAllFilters(tokens, meta);
@@ -371,7 +380,7 @@ const App: React.FC = () => {
     setLayerCounters({ point: 1, trajectory: 1 });
     setMappingDialog(null);
     setIsLoading(false);
-  }, [mappingDialog]);
+  }, [mappingDialog, sidecarProvenance]);
 
   const filterData = useCallback((sourceData: SpeechToken[], currentFilters: FilterState) => {
     if (sourceData.length === 0) return [];
@@ -381,12 +390,7 @@ const App: React.FC = () => {
     for (const [key, values] of Object.entries(currentFilters.filters)) {
       if (values.length === 0) continue; // empty = nothing passes, handled below
       const set = new Set(values);
-      let accessor: (t: SpeechToken) => string;
-      if (key === 'speaker') accessor = t => t.speaker;
-      else if (key === 'file_id') accessor = t => t.file_id;
-      else if (key === 'duration') accessor = t => t.duration.toString();
-      else accessor = t => t.fields[key] ?? '';
-      filterEntries.push({ accessor, set });
+      filterEntries.push({ accessor: t => getLabel(t, key), set });
     }
 
     // Check if any filter key has an empty array (= nothing passes)
@@ -615,23 +619,11 @@ const App: React.FC = () => {
   }, [bgFilteredData, bgConfig.colorBy, bgConfig.useSmoothing]);
 
   const handleToggleFieldVisibility = useCallback((key: string, visible: boolean) => {
-    setDatasetMeta(prev => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        columnMappings: prev.columnMappings.map(m => {
-          // Match by role for speaker/file_id
-          if ((m.role === 'speaker' && key === 'speaker') || (m.role === 'file_id' && key === 'file_id')) {
-            return { ...m, showInSidebar: visible };
-          }
-          // Match field role by fieldName
-          if (m.role === 'field' && m.fieldName === key) {
-            return { ...m, showInSidebar: visible };
-          }
-          return m;
-        })
-      };
-    });
+    setDatasetMeta(prev => prev && ({
+      ...prev,
+      columnMappings: prev.columnMappings.map(m =>
+        filterFieldKey(m) === key ? { ...m, showInSidebar: visible } : m),
+    }));
   }, []);
 
   const activeLayerData = layerData[activeLayerId] || [];

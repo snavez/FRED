@@ -317,6 +317,15 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
   const namedTargetIndex: Record<string, number> = {};
   namedTargetOrder.forEach((t, i) => { namedTargetIndex[t] = namedTargetBase + i; });
 
+  /** A column of labels: filterable in the sidebar, never plotted as a measure. */
+  const categoricalField = (header: string): ColumnMapping => ({
+    csvHeader: header,
+    role: 'field' as ColumnRole,
+    fieldName: header,
+    showInSidebar: true,
+    isDataField: false,
+  });
+
   /** Whether a column's sampled values are numbers (empty samples count as numeric). */
   const isMostlyNumeric = (header: string): boolean => {
     const colIdx = headers.indexOf(header);
@@ -333,6 +342,9 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
     if (ALIAS_TABLE[lower]) {
       const role = ALIAS_TABLE[lower];
       const isData = role === 'duration' || role === 'pitch';
+      // A measure role only fits a column of numbers: `voice_pitch` holding high/low is a
+      // label, whatever its name suggests.
+      if (isData && !isMostlyNumeric(header)) return categoricalField(header);
       return {
         csvHeader: header,
         role,
@@ -344,6 +356,7 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
 
     // 1a. Fuzzy duration detection: columns containing "dur" as a component (e.g. dur_phonemic, vowel_dur)
     if (/^dur[_]|[_]dur$|[_]dur[_]|^duration[_]|[_]duration$/.test(lower)) {
+      if (!isMostlyNumeric(header)) return categoricalField(header);
       return {
         csvHeader: header,
         role: 'duration' as ColumnRole,
@@ -397,7 +410,7 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
       };
     }
 
-    // 2c-bis. Spectral-moment columns (COG/SD/skew/kurt and synonyms) → dedicated
+    // 2c-bis. Spectral-measure columns (COG/SD/skew/kurt/bandratio and synonyms) → dedicated
     // spectral role feeding the Spectral Moments tab. The name may carry a region
     // label and a position: COG_20%, COG_closure_20%, SD_release_t3, kurt_k1.
     // A region-labelled name is only accepted when the column really holds numbers,
@@ -808,6 +821,7 @@ export const parseWithMappings = (
       case 'spectral_sd':
       case 'spectral_skew':
       case 'spectral_kurt':
+      case 'spectral_bandratio':
         if (m.fieldName || m.csvHeader) {
           fieldMappings.push({ colIdx, fieldName: m.fieldName || m.csvHeader });
         }

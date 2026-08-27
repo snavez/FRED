@@ -89,21 +89,25 @@ export interface PlotConfig {
   refVowelEllipseLineOpacity: number;
   refVowelEllipseFillOpacity: number;
 
-  // Duration Plot Config
+  // Box-plot Config — shared by the Data Summaries boxes and the Spectral distribution,
+  // so a box reads the same wherever it is drawn
   showQuartiles: boolean;
   showMeanMarker: boolean;
   showOutliers: boolean;
-  showDurationPoints: boolean;
+  boxShowPoints: boolean;
+  boxWhiskerMode: 'iqr' | 'minmax';        // 1.5×IQR vs min/max whiskers
+  boxCenterLine: 'median' | 'mean';        // what the thick center line represents
+  showCenterValueLabels: boolean;          // print the centre statistic's value beside each box
+  boxWidth: number;                        // box width in px (0 = auto)
+
+  // Duration Plot Config
   durationYField: string;                  // 'duration' (default) or any field key
   durationFormantTimePoint: number;         // timepoint for formant Y-axis extraction (default: 50)
   durationPlotBy: string;                  // 'none' or field key — faceting variable
   durationClusterBy: string;               // 'none' or field key — hierarchical x-axis grouping
-  durationWhiskerMode: 'iqr' | 'minmax';  // 1.5×IQR vs min/max whiskers
-  durationCenterLine: 'median' | 'mean';   // what the thick center line represents
   durationBoxOrder: 'alpha' | 'central';   // box ordering within clusters
   durationBoxDir: 'asc' | 'desc';          // ordering direction
   durationTooltipFields: string[];          // configurable tooltip fields
-  durationBoxWidth: number;                 // box width in px (0 = auto)
   durationGroupGap: number;                 // gap between clusters in slot units (default 1.5)
   durationBoxGap: number;                   // additional slot units between boxes (0 = no gap, default 0.4)
 
@@ -130,7 +134,7 @@ export interface PlotConfig {
   distHistOverlap: 'stacked' | 'overlaid';   // multi-color bar mode (default: 'stacked')
   distHistOpacity: number;                   // bar opacity for overlaid mode (default: 0.6)
 
-  // Spectral Moments Config (consonant analysis: COG/SD/skew/kurt)
+  // Spectral Config (consonant analysis: COG/SD/skew/kurt and the band energy ratio)
   spectralMode: 'scatter' | 'box' | 'timeline' | 'density';
   // Scatter point layers plot any two scalar features. A feature ref is either a
   // moment at a timepoint ('COG@50') or a shape coefficient ('COG~k1').
@@ -145,6 +149,8 @@ export interface PlotConfig {
   spectralTrajRange: [number, number];
   spectralViolin: boolean;                   // box mode: false = box, true = violin
   spectralShowIndividual: boolean;           // contours: faded per-token lines
+  spectralBandOpacity: number;               // contours: ±1 SD band fill opacity
+  spectralDensityFill: number;               // density: area fill opacity
   spectralShowBand: boolean;                 // contours: ±1 SD band around each mean
   spectralContourAbsolute: boolean;          // contours: absolute (ms) instead of normalised
   spectralCoeffFacets: boolean;              // box: one mini plot per coefficient
@@ -263,6 +269,13 @@ export interface ExportConfig {
   yAxisLabelY?: number; // Offset
 
   tickLabelSize: number;
+  // Per-axis tick sizes. Unset = follow the size that axis has always used, so an
+  // untouched export renders exactly as before. A plot whose x axis is labelled in two
+  // layers (boxes within clusters, bars within groups) sizes the outer layer with
+  // xGroupLabelSize and the inner one with xTickLabelSize.
+  xTickLabelSize?: number;
+  yTickLabelSize?: number;
+  xGroupLabelSize?: number;
   xAxisTickX?: number; // Offset
   xAxisTickY?: number; // Offset
   yAxisTickX?: number; // Offset
@@ -326,7 +339,7 @@ export type ColumnRole =
   | 'speaker' | 'file_id'
   | 'duration' | 'formant' | 'pitch'
   | 'token_id' | 'timepoint'
-  | 'spectral_cog' | 'spectral_sd' | 'spectral_skew' | 'spectral_kurt'
+  | 'spectral_cog' | 'spectral_sd' | 'spectral_skew' | 'spectral_kurt' | 'spectral_bandratio'
   | 'field' | 'ignore';
 
 export interface ColumnMapping {
@@ -363,4 +376,26 @@ export interface DatasetMeta {
   trajectoryFormat?: TrajectoryFormat;       // Confirmed (or auto-detected) format of trajectory data
   trajectoryUnit?: TrajectoryUnit;           // For 'time-slice' format only
   trajectorySpacing?: TrajectorySpacing;     // Description for the confirmation panel
+  provenance?: DatasetProvenance;            // From the exporter's JSON sidecar, when one was loaded
+}
+
+/**
+ * What the exporter recorded about how the numbers in the CSV were measured, read from
+ * the JSON sidecar written beside it. Two CSVs can carry identically-named columns
+ * measured under different settings, so anything here that changes what a column *means*
+ * belongs in the axis label, not just in a settings panel.
+ */
+export interface DatasetProvenance {
+  /** Name of the sidecar the values came from, for the dataset info panel. */
+  sourceFile: string;
+  /** Bands of the band-energy ratio, [low, high] in Hz. Absent when not exported. */
+  bandRatio?: BandRatioBands;
+}
+
+/** The two frequency bands a band-energy ratio compares, each [low, high] in Hz. */
+export interface BandRatioBands {
+  low: [number, number];
+  high: [number, number];
+  /** Unit the exporter reports the ratio in, e.g. 'dB'. */
+  units: string;
 }

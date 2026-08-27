@@ -3,13 +3,15 @@ import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, VariableType, StyleOverrides, Layer, DatasetMeta, NormalizationMethod } from '../types';
 import { SpeakerStatsMap, getRangeStep, getAxisLabel, computeNormalizedRange } from '../utils/normalization';
 import {
-  discoverSpectralMoments, isSpectralRole, listSpectralFeatures, formatSpectralFeature,
-  spectralFeatureLabel, parseSpectralFeature, spectralMomentsOfKind, spectralIndicesOfKind,
+  discoverSpectralColumns, isSpectralRole, listSpectralFeatures, formatSpectralFeature,
+  spectralFeatureLabel, parseSpectralFeature, spectralMeasuresOfKind, spectralIndicesOfKind,
   spectralKindsAvailable, spectralRegionsOfKind, hasSpectralRegions, spectralRegionLabel,
-  formatSpectralMomentRef, resolveSpectralFeature, resolveSpectralAxes,
-  spectralKindLabel, spectralIndexLabel, SpectralKind, SpectralFeature, SpectralMomentMeta,
+  formatSpectralMeasureRef, resolveSpectralAxes, resolveSpectralMeasure, resolveSpectralContour,
+  spectralFeatureOnKind,
+  spectralKindLabel, spectralIndexLabel, SpectralKind, SpectralFeature, SpectralMeta,
 } from '../utils/spectralMoments';
 import { getLabel } from '../utils/getLabel';
+import { listFilterFields, filterFieldLabel } from '../utils/filterFields';
 import CanvasPlot from './CanvasPlot';
 import TrajectoryTimeSeries from './TrajectoryTimeSeries';
 import TrajectoryF1F2 from './TrajectoryF1F2';
@@ -68,20 +70,7 @@ const TAB_GROUPS: { label: string; tabs: { id: string; label: string; icon: Reac
 ];
 
 /** Pretty label for a field key */
-const prettyLabel = (key: string, meta?: DatasetMeta | null): string => {
-  // Special roles always get their standard display name — avoids confusion
-  // when both speaker and file_id are mapped to the same CSV column
-  if (key === 'speaker') return 'Speaker';
-  if (key === 'file_id') return 'File ID';
-  if (key === 'duration') return 'Duration';
-  // Check datasetMeta for user-assigned display names (covers xmin, custom fields, etc.)
-  if (meta) {
-    for (const m of meta.columnMappings) {
-      if ((m.role === 'field' || m.role === 'pitch') && (m.fieldName === key || m.csvHeader === key)) return m.fieldName || m.csvHeader;
-    }
-  }
-  return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-};
+const prettyLabel = filterFieldLabel;
 
 /** Help tooltip wrapper — shows amber dot + hover popover when helpMode is active.
  *  Uses fixed positioning so the popover escapes overflow:hidden containers. */
@@ -146,30 +135,20 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   const [helpMode, setHelpMode] = useState(false);
 
   // Dynamic variable options: built from datasetMeta column mappings
-  const variableOptions = useMemo(() => {
-    const options: { label: string; value: VariableType }[] = [{ label: 'None', value: 'none' }];
-    if (!datasetMeta) return options;
-    const seen = new Set<string>();
-
-    for (const m of datasetMeta.columnMappings) {
-      if (m.showInSidebar === false) continue;
-      let key: string | null = null;
-      if (m.role === 'speaker') key = 'speaker';
-      else if (m.role === 'file_id') key = 'file_id';
-      else if (m.role === 'field' && m.fieldName) key = m.fieldName;
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      options.push({ label: prettyLabel(key, datasetMeta), value: key });
-    }
-
-    return options;
-  }, [datasetMeta]);
+  // Exactly the fields the sidebar lists as filters, so anything you can filter by you
+  // can also colour, shape or group by.
+  const variableOptions = useMemo(() => [
+    { label: 'None', value: 'none' as VariableType },
+    ...listFilterFields(datasetMeta).map(f => ({ label: f.label, value: f.key as VariableType })),
+  ], [datasetMeta]);
 
   // Numeric variable options (for Duration Y-axis selector)
   const numericVariableOptions = useMemo(() => {
-    const options: { label: string; value: string }[] = [];
-    if (!datasetMeta) return [{ label: 'Duration', value: 'duration' }];
-    const seen = new Set<string>();
+    // Token duration is always plottable and is the default Y, so it leads the list —
+    // without it the menu would show one measure while the plot drew another.
+    const options: { label: string; value: string }[] = [{ label: 'Duration', value: 'duration' }];
+    if (!datasetMeta) return options;
+    const seen = new Set<string>(['duration']);
     for (const m of datasetMeta.columnMappings) {
       const key = m.fieldName || m.csvHeader;
       if (!key || seen.has(key)) continue;
@@ -183,7 +162,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
         seen.add(key);
         options.push({ label: prettyLabel(key, datasetMeta), value: key });
       }
-      // Include data fields (isDataField: true) and spectral-moment columns —
+      // Include data fields (isDataField: true) and spectral-measure columns —
       // these are numeric plot values
       if ((m.role === 'field' && m.isDataField) || isSpectralRole(m.role)) {
         seen.add(key);
@@ -277,8 +256,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   // Active layer data — used by non-F1/F2 plots so sidebar filters affect all views
   const activeData = layerData[activeLayerId] || [];
 
-  // Spectral moments present in the active dataset (COG/SD/skew/kurt + timepoints).
-  const spectralMeta = useMemo(() => discoverSpectralMoments(activeData, datasetMeta), [activeData, datasetMeta]);
+  // Spectral measures present in the active dataset (COG/SD/skew/kurt/band ratio + timepoints).
+  const spectralMeta = useMemo(() => discoverSpectralColumns(activeData, datasetMeta), [activeData, datasetMeta]);
 
   /** Every scalar the spectral measure picker can offer (box / density). */
   const spectralFeatureOptions = useMemo(() =>
@@ -287,18 +266,18 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     })), [spectralMeta]);
 
   /**
-   * Families whose contour can be averaged over time: every moment that has a grid of
+   * Families whose contour can be averaged over time: every measure that has a grid of
    * ≥2 positions in some region — the dense track when the dataset carries one, else the
-   * %-timepoints. Each option is a `region:moment` ref so closure and release stay apart.
+   * %-timepoints. Each option is a `region:measure` ref so closure and release stay apart.
    */
   const spectralContourOptions = useMemo(() => {
     const kind = spectralIndicesOfKind(spectralMeta, 'track').length >= 2 ? 'track' : 'point';
     const out: { value: string, label: string }[] = [];
     for (const region of spectralRegionsOfKind(spectralMeta, kind)) {
       if (spectralIndicesOfKind(spectralMeta, kind, region).length < 2) continue;
-      for (const m of spectralMomentsOfKind(spectralMeta, kind, region)) {
+      for (const m of spectralMeasuresOfKind(spectralMeta, kind, region)) {
         out.push({
-          value: formatSpectralMomentRef(m.key, region),
+          value: formatSpectralMeasureRef(m.key, region),
           label: region ? `${m.short} · ${region}` : m.short,
         });
       }
@@ -393,37 +372,37 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
       kindsAvailable: spectralKindsAvailable(spectralMeta, region),
       regions: spectralRegionsOfKind(spectralMeta, kind),
       showRegions: hasSpectralRegions(spectralMeta),
-      moments: spectralMomentsOfKind(spectralMeta, kind, region),
-      momentsFor: (r: string) => spectralMomentsOfKind(spectralMeta, kind, r),
+      measures: spectralMeasuresOfKind(spectralMeta, kind, region),
+      measuresFor: (r: string) => spectralMeasuresOfKind(spectralMeta, kind, r),
       indices: spectralIndicesOfKind(spectralMeta, kind, region),
     };
   }, [bgConfig.spectralXFeature, bgConfig.spectralYFeature, spectralMeta]);
 
-  /** Rewrite one axis ref, keeping it valid for its region (moment and position). */
+  /** Rewrite one axis ref, keeping it valid for its region (measure and position). */
   const setSpectralAxis = (which: 'x' | 'y', next: Partial<SpectralFeature>) => {
     const cur = which === 'x' ? spectralAxes.x : spectralAxes.y;
-    const base: SpectralFeature = cur ?? { moment: 'COG', kind: 'point', index: 50, region: '' };
+    const base: SpectralFeature = cur ?? { measure: 'COG', kind: 'point', index: 50, region: '' };
     const merged = { ...base, ...next };
-    // A region change can strand the moment or position; snap both back into the region.
-    const moments = spectralMomentsOfKind(spectralMeta, merged.kind, merged.region ?? '');
+    // A region change can strand the measure or position; snap both back into the region.
+    const measures = spectralMeasuresOfKind(spectralMeta, merged.kind, merged.region ?? '');
     const indices = spectralIndicesOfKind(spectralMeta, merged.kind, merged.region ?? '');
-    if (moments.length && !moments.some(m => m.key === merged.moment)) merged.moment = moments[0].key;
+    if (measures.length && !measures.some(m => m.key === merged.measure)) merged.measure = measures[0].key;
     if (indices.length && !indices.includes(merged.index)) merged.index = indices[0];
     updateLayerConfig(layers[0].id, which === 'x' ? 'spectralXFeature' : 'spectralYFeature',
       formatSpectralFeature(merged));
   };
 
-  /** Switching family re-seeds both axes with the first valid feature of that kind. */
+  /** Move both axes onto another column kind, keeping each axis's measure and region. */
   const setSpectralKind = (kind: SpectralKind) => {
-    const region = spectralRegionsOfKind(spectralMeta, kind)[0] ?? '';
-    const moments = spectralMomentsOfKind(spectralMeta, kind, region);
-    const indices = spectralIndicesOfKind(spectralMeta, kind, region);
-    if (!moments.length || !indices.length) return;
-    // Coefficients default to k0 x k1 of one moment — the height/slope shape space.
-    const xf: SpectralFeature = { moment: moments[0].key, kind, index: indices[0], region };
-    const yf: SpectralFeature = kind === 'coeff'
-      ? { moment: moments[0].key, kind, index: indices[1] ?? indices[0], region }
-      : { moment: (moments[1] ?? moments[0]).key, kind, index: indices[0], region };
+    const xf = spectralFeatureOnKind(spectralAxes.x, kind, spectralMeta, 0);
+    let yf = spectralFeatureOnKind(spectralAxes.y, kind, spectralMeta, 1);
+    // Both axes on one column is no plot: step the second along the grid instead. This is
+    // what gives a single-measure dataset its k0 × k1 shape space.
+    if (xf && yf && formatSpectralFeature(xf) === formatSpectralFeature(yf)) {
+      const alt = spectralIndicesOfKind(spectralMeta, kind, yf.region ?? '').find(i => i !== yf!.index);
+      if (alt !== undefined) yf = { ...yf, index: alt };
+    }
+    if (!xf || !yf) return;
     updateLayerConfig(layers[0].id, 'spectralXFeature', formatSpectralFeature(xf));
     updateLayerConfig(layers[0].id, 'spectralYFeature', formatSpectralFeature(yf));
   };
@@ -436,15 +415,15 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
   /** The measure the box/density plot will actually draw, as a ref the picker can show. */
   const spectralFeatureValue = useMemo(() => {
-    const f = resolveSpectralFeature(currentConfig.spectralFeature, spectralMeta, 0);
+    const f = resolveSpectralMeasure(currentConfig.spectralFeature, bgConfig.spectralXFeature, spectralMeta);
     return f ? formatSpectralFeature(f) : '';
-  }, [currentConfig.spectralFeature, spectralMeta]);
+  }, [currentConfig.spectralFeature, bgConfig.spectralXFeature, spectralMeta]);
 
   /** The contour family the timeline will actually draw. */
-  const spectralTimelineValue = useMemo(() =>
-    spectralContourOptions.find(o => o.value === currentConfig.spectralTimelineMoment)?.value
-      ?? spectralContourOptions[0]?.value ?? '',
-    [currentConfig.spectralTimelineMoment, spectralContourOptions]);
+  const spectralTimelineValue = useMemo(() => {
+    const c = resolveSpectralContour(currentConfig.spectralTimelineMoment, bgConfig.spectralXFeature, spectralMeta);
+    return c ? formatSpectralMeasureRef(c.measure, c.region) : '';
+  }, [currentConfig.spectralTimelineMoment, bgConfig.spectralXFeature, spectralMeta]);
 
   /** Grid a trajectory sweeps: the positions the X axis's family offers. */
   const spectralSweepGrid = useMemo(() =>
@@ -1254,7 +1233,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 {/* ── Spectral Moments Row 1: Mode / Axes / Type / Moment / Time ── */}
                 {activeTab === 'spectral' && !spectralMeta.available && (
                   <span className="text-xs text-slate-400 italic">
-                    No spectral columns (COG / SD / skew / kurt, tracks or coefficients) detected in this dataset.
+                    No spectral columns (COG / SD / skew / kurt / band ratio, tracks or coefficients) detected in this dataset.
                   </span>
                 )}
                 {activeTab === 'spectral' && spectralMeta.available && (
@@ -1338,9 +1317,9 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         <div className="flex items-center gap-2">
                           <label className="font-semibold text-slate-600">Axes X:</label>
                           <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
-                            value={spectralAxes.x?.moment ?? ''}
-                            onChange={e => setSpectralAxis('x', { moment: e.target.value as any })}>
-                            {spectralAxes.momentsFor(spectralAxes.x?.region ?? '').map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
+                            value={spectralAxes.x?.measure ?? ''}
+                            onChange={e => setSpectralAxis('x', { measure: e.target.value as any })}>
+                            {spectralAxes.measuresFor(spectralAxes.x?.region ?? '').map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
                           </select>
                           {/* Region: which phase of the segment this axis measures (closure, release …) */}
                           {spectralAxes.showRegions && (
@@ -1350,7 +1329,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                               {spectralAxes.regions.map(r => <option key={r} value={r}>{spectralRegionLabel(r)}</option>)}
                             </select>
                           )}
-                          {/* Coefficients pick their order per axis — k0 × k1 of one moment is the point */}
+                          {/* Coefficients pick their order per axis — k0 × k1 of one measure is the point */}
                           {spectralAxes.kind === 'coeff' && (
                             <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
                               value={spectralAxes.x?.index ?? 0}
@@ -1360,9 +1339,9 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                           )}
                           <label className="font-semibold text-slate-600">Y:</label>
                           <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
-                            value={spectralAxes.y?.moment ?? ''}
-                            onChange={e => setSpectralAxis('y', { moment: e.target.value as any })}>
-                            {spectralAxes.momentsFor(spectralAxes.y?.region ?? '').map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
+                            value={spectralAxes.y?.measure ?? ''}
+                            onChange={e => setSpectralAxis('y', { measure: e.target.value as any })}>
+                            {spectralAxes.measuresFor(spectralAxes.y?.region ?? '').map(m => <option key={m.key} value={m.key}>{m.short}</option>)}
                           </select>
                           {/* Axes may sit in different regions — closure COG against release COG */}
                           {spectralAxes.showRegions && (
@@ -1428,7 +1407,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       </HelpTooltip>
                     )}
 
-                    {/* Contours: which moment to average */}
+                    {/* Contours: which measure to average */}
                     {currentConfig.spectralMode === 'timeline' && (
                       <HelpTooltip helpMode={helpMode} text="Mean contour per group. Because every token shares the grid, pointwise averaging is valid. Caveat: pair this with a duration box plot in Data Summaries — normalised time hides duration differences.">
                       <div className="flex items-center gap-2">
@@ -1500,7 +1479,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 {(activeTab !== 'spectral' || spectralMeta.available) && (
                 <div className="flex items-center gap-2 border-r border-slate-300 pr-4 mr-2">
                   {/* Spectral scatter: manual axis ranges on the shared (background) coordinate
-                      space, labelled by the current axis moments. 0 / 0 = auto-fit. */}
+                      space, labelled by the current axis measures. 0 / 0 = auto-fit. */}
                   {activeTab === 'spectral' && currentConfig.spectralMode === 'scatter' && (
                     <>
                       <div className="flex flex-col" title="X axis range — set both to 0 for auto-fit">
@@ -1528,7 +1507,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     </>
                   )}
                   {/* Spectral summary modes: value-axis range for the active layer.
-                      Density plots the moment on X; box/timeline plot it on Y. */}
+                      Density plots the measure on X; box/timeline plot it on Y. */}
                   {activeTab === 'spectral' && currentConfig.spectralMode !== 'scatter' && (() => {
                     const isDensity = currentConfig.spectralMode === 'density';
                     const rangeKey = isDensity ? 'spectralXRange' : 'spectralYRange';
@@ -1654,9 +1633,21 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                           </select>
                         </div>
                       )}
+                      {/* Min is only honoured below zero: a duration axis starts at 0,
+                          a signed measure (skew, a coefficient, the band ratio) does not. */}
                       <div className="flex flex-col justify-center">
-                        <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Max Value</span>
-                        <input type="number" step="0.1" className="w-14 p-0.5 border rounded text-[10px]" value={bgConfig.durationRange[1]} onChange={e => updateLayerConfig(layers[0].id, 'durationRange', [0, parseFloat(e.target.value)])} />
+                        <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Value Range</span>
+                        <div className="flex items-center gap-1">
+                          <input type="number" step="0.1" className="w-14 p-0.5 border rounded text-[10px]"
+                            title="Axis minimum. 0 = auto; only a negative value moves the floor below zero."
+                            value={bgConfig.durationRange[0]}
+                            onChange={e => updateLayerConfig(layers[0].id, 'durationRange', [parseFloat(e.target.value) || 0, bgConfig.durationRange[1]])} />
+                          <span className="text-[9px] text-slate-400">–</span>
+                          <input type="number" step="0.1" className="w-14 p-0.5 border rounded text-[10px]"
+                            title="Axis maximum. 0 = auto."
+                            value={bgConfig.durationRange[1]}
+                            onChange={e => updateLayerConfig(layers[0].id, 'durationRange', [bgConfig.durationRange[0], parseFloat(e.target.value) || 0])} />
+                        </div>
                       </div>
                     </>
                   )}
@@ -1677,29 +1668,36 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Whiskers</span>
                       <div className="flex rounded border border-slate-300 overflow-hidden">
                         <button
-                          className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationWhiskerMode || 'iqr') === 'iqr' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
-                          onClick={() => handleConfig('durationWhiskerMode', 'iqr')}
+                          className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.boxWhiskerMode || 'iqr') === 'iqr' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                          onClick={() => handleConfig('boxWhiskerMode', 'iqr')}
                         >1.5×IQR</button>
                         <button
-                          className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationWhiskerMode || 'iqr') === 'minmax' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
-                          onClick={() => handleConfig('durationWhiskerMode', 'minmax')}
+                          className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.boxWhiskerMode || 'iqr') === 'minmax' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                          onClick={() => handleConfig('boxWhiskerMode', 'minmax')}
                         >Range</button>
                       </div>
                     </div>
                     </HelpTooltip>
 
-                    <HelpTooltip helpMode={helpMode} text="The thick line inside the box. Median = middle value (robust to outliers). Mean = arithmetic average.">
+                    <HelpTooltip helpMode={helpMode} text="The thick line inside the box. Median = middle value (robust to outliers). Mean = arithmetic average. Values prints that number beside each box.">
                     <div className="flex flex-col justify-center">
                       <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Centre</span>
-                      <div className="flex rounded border border-slate-300 overflow-hidden">
-                        <button
-                          className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationCenterLine || 'median') === 'median' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
-                          onClick={() => handleConfig('durationCenterLine', 'median')}
-                        >Median</button>
-                        <button
-                          className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.durationCenterLine || 'median') === 'mean' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
-                          onClick={() => handleConfig('durationCenterLine', 'mean')}
-                        >Mean</button>
+                      <div className="flex items-center gap-2">
+                        <div className="flex rounded border border-slate-300 overflow-hidden">
+                          <button
+                            className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.boxCenterLine || 'median') === 'median' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                            onClick={() => handleConfig('boxCenterLine', 'median')}
+                          >Median</button>
+                          <button
+                            className={`px-2 py-0.5 text-[10px] font-bold transition-colors ${(currentConfig.boxCenterLine || 'median') === 'mean' ? 'bg-slate-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                            onClick={() => handleConfig('boxCenterLine', 'mean')}
+                          >Mean</button>
+                        </div>
+                        <label className="flex items-center gap-1 text-[10px] text-slate-600 cursor-pointer">
+                          <input type="checkbox" className="rounded text-sky-700 scale-90" checked={!!currentConfig.showCenterValueLabels}
+                            onChange={e => handleConfig('showCenterValueLabels', e.target.checked)} />
+                          Values
+                        </label>
                       </div>
                     </div>
                     </HelpTooltip>
@@ -2094,13 +2092,13 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     </label>
                     <label className="flex items-center gap-1 cursor-pointer" title="Outlier points (IQR mode only)">
                       <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showOutliers} onChange={e => handleConfig('showOutliers', e.target.checked)} />
-                      <span className={`text-[10px] font-bold ${(currentConfig.durationWhiskerMode || 'iqr') === 'iqr' ? 'text-slate-600' : 'text-slate-300'}`}>Outliers</span>
+                      <span className={`text-[10px] font-bold ${(currentConfig.boxWhiskerMode || 'iqr') === 'iqr' ? 'text-slate-600' : 'text-slate-300'}`}>Outliers</span>
                     </label>
                     <label className="flex items-center gap-1 cursor-pointer" title="Show individual data points">
-                      <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showDurationPoints} onChange={e => handleConfig('showDurationPoints', e.target.checked)} />
+                      <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.boxShowPoints} onChange={e => handleConfig('boxShowPoints', e.target.checked)} />
                       <span className="text-[10px] font-bold text-slate-600">Points</span>
                     </label>
-                    {currentConfig.showDurationPoints && (
+                    {currentConfig.boxShowPoints && (
                       <input
                         type="range"
                         min="0" max="1" step="0.02"
@@ -2123,7 +2121,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1" title="Box Width (0 = auto)">
                       <span className="text-[9px] text-slate-500">W</span>
-                      <input type="number" min="0" max="100" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.durationBoxWidth || 0} onChange={e => handleConfig('durationBoxWidth', parseFloat(e.target.value) || 0)} />
+                      <input type="number" min="0" max="100" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.boxWidth || 0} onChange={e => handleConfig('boxWidth', parseFloat(e.target.value) || 0)} />
                     </div>
                     <div className="flex items-center gap-1" title="Group Gap (cluster spacing)">
                       <span className="text-[9px] text-slate-500">GG</span>
@@ -2146,7 +2144,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     Lines/Means/Labels/Points/Ellipses) — identical layout to the F1/F2 tab. */}
                 {currentConfig.spectralMode === 'scatter' && renderEncodingControls()}
 
-                {/* Summary modes: colour + a mode-specific toggle */}
+                {/* Summary modes: colour, then the visual controls for that mode */}
                 {currentConfig.spectralMode !== 'scatter' && (
                   <>
                     {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
@@ -2163,16 +2161,184 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         <span className="text-[10px] font-bold text-slate-600">Flip sign</span>
                       </label>
                     )}
+
+                    {/* Mean contours: individual lines, mean lines, points, labels, band */}
                     {currentConfig.spectralMode === 'timeline' && (
                       <>
-                        <label className="flex items-center gap-1 cursor-pointer ml-1" title="Shade ±1 standard deviation around each group mean">
-                          <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.spectralShowBand} onChange={e => handleConfig('spectralShowBand', e.target.checked)} />
-                          <span className="text-[10px] font-bold text-slate-600">±1 SD band</span>
-                        </label>
-                        <label className="flex items-center gap-1 cursor-pointer ml-1" title="Show faded individual-token lines behind the means">
-                          <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.spectralShowIndividual} onChange={e => handleConfig('spectralShowIndividual', e.target.checked)} />
-                          <span className="text-[10px] font-bold text-slate-600">Individual lines</span>
-                        </label>
+                        <div className="w-px h-6 bg-slate-200"></div>
+                        <HelpTooltip helpMode={helpMode} text="The faded per-token contours behind the means. With hundreds of tokens, a low opacity reads as a cloud; a higher one shows individual shapes.">
+                        <div className="flex flex-col">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Lines</span>
+                          <div className="flex items-center gap-2">
+                            <label className="flex items-center gap-1 cursor-pointer" title="Show individual token contours">
+                              <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.spectralShowIndividual} onChange={e => handleConfig('spectralShowIndividual', e.target.checked)} />
+                              <span className="text-[10px] font-bold text-slate-600">Individual</span>
+                            </label>
+                            {currentConfig.spectralShowIndividual && (
+                              <>
+                                <input type="range" min="0" max="1" step="0.02" title="Line Opacity"
+                                  value={opacityToSlider(currentConfig.trajectoryLineOpacity ?? 0.15)}
+                                  onChange={e => handleConfig('trajectoryLineOpacity', sliderToOpacity(parseFloat(e.target.value)))}
+                                  className="w-14 h-1 accent-slate-600" />
+                                <input type="number" min="0.5" max="6" step="0.5" title="Line Width"
+                                  className="w-10 p-0.5 border rounded text-[10px]"
+                                  value={currentConfig.trajectoryLineWidth || 1}
+                                  onChange={e => handleConfig('trajectoryLineWidth', parseFloat(e.target.value) || 1)} />
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        </HelpTooltip>
+
+                        <HelpTooltip helpMode={helpMode} text="The group mean contours: line width and opacity, the sample dots along them, and the ±1 SD band showing spread at each position.">
+                        <div className="flex flex-col">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Means</span>
+                          <div className="flex items-center gap-2">
+                            <input type="number" min="0.5" max="12" step="0.5" title="Mean Line Width"
+                              className="w-10 p-0.5 border rounded text-[10px]"
+                              value={currentConfig.meanTrajectoryWidth || 3}
+                              onChange={e => handleConfig('meanTrajectoryWidth', parseFloat(e.target.value) || 1)} />
+                            <input type="range" min="0" max="1" step="0.02" title="Mean Line Opacity"
+                              value={opacityToSlider(currentConfig.meanTrajectoryOpacity ?? 1)}
+                              onChange={e => handleConfig('meanTrajectoryOpacity', sliderToOpacity(parseFloat(e.target.value)))}
+                              className="w-14 h-1 accent-slate-600" />
+                            <label className="flex items-center gap-1 cursor-pointer" title="Dots at each sampled position">
+                              <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showMeanTrajectoryPoints !== false} onChange={e => handleConfig('showMeanTrajectoryPoints', e.target.checked)} />
+                              <span className="text-[10px] font-bold text-slate-600">Pts</span>
+                            </label>
+                            {currentConfig.showMeanTrajectoryPoints !== false && (
+                              <input type="range" min="1" max="10" step="0.5" title="Point Size"
+                                value={currentConfig.meanTrajectoryPointSize ?? 4}
+                                onChange={e => handleConfig('meanTrajectoryPointSize', parseFloat(e.target.value))}
+                                className="w-14 h-1 accent-slate-600" />
+                            )}
+                            <label className="flex items-center gap-1 cursor-pointer" title="Shade ±1 standard deviation around each group mean">
+                              <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.spectralShowBand} onChange={e => handleConfig('spectralShowBand', e.target.checked)} />
+                              <span className="text-[10px] font-bold text-slate-600">±1 SD</span>
+                            </label>
+                            {currentConfig.spectralShowBand && (
+                              <input type="range" min="0" max="1" step="0.02" title="Band Opacity"
+                                value={opacityToSlider(currentConfig.spectralBandOpacity ?? 0.18)}
+                                onChange={e => handleConfig('spectralBandOpacity', sliderToOpacity(parseFloat(e.target.value)))}
+                                className="w-14 h-1 accent-slate-600" />
+                            )}
+                          </div>
+                        </div>
+                        </HelpTooltip>
+
+                        <HelpTooltip helpMode={helpMode} text="Name each mean contour at its end, so the plot reads without the legend.">
+                        <div className="flex flex-col">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Labels</span>
+                          <div className="flex items-center gap-2">
+                            <label className="flex items-center gap-1 cursor-pointer" title="Label each group mean">
+                              <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showTrajectoryLabels} onChange={e => handleConfig('showTrajectoryLabels', e.target.checked)} />
+                              <span className="text-[10px] font-bold text-slate-600">Show</span>
+                            </label>
+                            {currentConfig.showTrajectoryLabels && (
+                              <input type="range" min="8" max="36" step="1" title="Label Size"
+                                value={currentConfig.meanTrajectoryLabelSize || 12}
+                                onChange={e => handleConfig('meanTrajectoryLabelSize', parseFloat(e.target.value))}
+                                className="w-16 h-1 accent-slate-600" />
+                            )}
+                          </div>
+                        </div>
+                        </HelpTooltip>
+                      </>
+                    )}
+
+                    {/* Distribution: the same box vocabulary as the Data Summaries tab */}
+                    {currentConfig.spectralMode === 'box' && (
+                      <>
+                        <div className="w-px h-6 bg-slate-200"></div>
+                        <HelpTooltip helpMode={helpMode} text="What the box shows. Quartiles = the Q1–Q3 body. Whiskers reach 1.5×IQR into the data (outliers drawn separately) or the full min/max. The thick line is the median or the mean. Mean adds a diamond marker; Points scatters the raw values.">
+                        <div className="flex flex-col">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Show</span>
+                          <div className="flex items-center gap-2">
+                            <label className="flex items-center gap-1 cursor-pointer" title="Quartile box (Q1–Q3)">
+                              <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showQuartiles !== false} onChange={e => handleConfig('showQuartiles', e.target.checked)} />
+                              <span className="text-[10px] font-bold text-slate-600">Quartiles</span>
+                            </label>
+                            <label className="flex items-center gap-1 cursor-pointer" title="Points beyond the whiskers (IQR mode only)">
+                              <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showOutliers !== false} onChange={e => handleConfig('showOutliers', e.target.checked)} />
+                              <span className={`text-[10px] font-bold ${(currentConfig.boxWhiskerMode || 'iqr') === 'iqr' ? 'text-slate-600' : 'text-slate-300'}`}>Outliers</span>
+                            </label>
+                            <label className="flex items-center gap-1 cursor-pointer" title="Mean marker (diamond)">
+                              <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.showMeanMarker} onChange={e => handleConfig('showMeanMarker', e.target.checked)} />
+                              <span className="text-[10px] font-bold text-slate-600">Mean</span>
+                            </label>
+                            <label className="flex items-center gap-1 cursor-pointer" title="Raw values, jittered across the slot">
+                              <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.boxShowPoints} onChange={e => handleConfig('boxShowPoints', e.target.checked)} />
+                              <span className="text-[10px] font-bold text-slate-600">Points</span>
+                            </label>
+                            {currentConfig.boxShowPoints && (
+                              <>
+                                <input type="range" min="0" max="1" step="0.02" title="Point Opacity"
+                                  value={opacityToSlider(currentConfig.pointOpacity)}
+                                  onChange={e => handleConfig('pointOpacity', sliderToOpacity(parseFloat(e.target.value)))}
+                                  className="w-14 h-1 accent-slate-600" />
+                                <input type="range" min="1" max="16" step="1" title="Point Size"
+                                  value={currentConfig.pointSize}
+                                  onChange={e => handleConfig('pointSize', parseFloat(e.target.value))}
+                                  className="w-14 h-1 accent-slate-600" />
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        </HelpTooltip>
+
+                        <div className="flex flex-col">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Box</span>
+                          <div className="flex items-center gap-2">
+                            <select className="p-0.5 border rounded text-[10px]" title="Whisker extent"
+                              value={currentConfig.boxWhiskerMode || 'iqr'} onChange={e => handleConfig('boxWhiskerMode', e.target.value)}>
+                              <option value="iqr">1.5×IQR</option>
+                              <option value="minmax">Min–Max</option>
+                            </select>
+                            <select className="p-0.5 border rounded text-[10px]" title="Centre line"
+                              value={currentConfig.boxCenterLine || 'median'} onChange={e => handleConfig('boxCenterLine', e.target.value)}>
+                              <option value="median">Median</option>
+                              <option value="mean">Mean</option>
+                            </select>
+                            <label className="flex items-center gap-1 text-[10px] text-slate-600 cursor-pointer" title="Print the centre value beside each box">
+                              <input type="checkbox" className="rounded text-sky-700 scale-90" checked={!!currentConfig.showCenterValueLabels}
+                                onChange={e => handleConfig('showCenterValueLabels', e.target.checked)} />
+                              Values
+                            </label>
+                            <div className="flex items-center gap-1" title="Box width in px (0 = auto)">
+                              <span className="text-[9px] text-slate-500">W</span>
+                              <input type="number" min="0" max="200" step="1" className="w-10 p-0.5 border rounded text-[10px]"
+                                value={currentConfig.boxWidth || 0}
+                                onChange={e => handleConfig('boxWidth', parseFloat(e.target.value) || 0)} />
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Density: curve weight and fill */}
+                    {currentConfig.spectralMode === 'density' && (
+                      <>
+                        <div className="w-px h-6 bg-slate-200"></div>
+                        <HelpTooltip helpMode={helpMode} text="Weight of each group's density curve and how strongly the area beneath it is filled. Lower the fill when several groups overlap.">
+                        <div className="flex flex-col">
+                          <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Curves</span>
+                          <div className="flex items-center gap-2">
+                            <input type="number" min="0.5" max="12" step="0.5" title="Curve Width"
+                              className="w-10 p-0.5 border rounded text-[10px]"
+                              value={currentConfig.meanTrajectoryWidth || 2}
+                              onChange={e => handleConfig('meanTrajectoryWidth', parseFloat(e.target.value) || 1)} />
+                            <input type="range" min="0" max="1" step="0.02" title="Curve Opacity"
+                              value={opacityToSlider(currentConfig.meanTrajectoryOpacity ?? 1)}
+                              onChange={e => handleConfig('meanTrajectoryOpacity', sliderToOpacity(parseFloat(e.target.value)))}
+                              className="w-14 h-1 accent-slate-600" />
+                            <span className="text-[9px] text-slate-500">Fill</span>
+                            <input type="range" min="0" max="1" step="0.02" title="Fill Opacity"
+                              value={opacityToSlider(currentConfig.spectralDensityFill ?? 0.18)}
+                              onChange={e => handleConfig('spectralDensityFill', sliderToOpacity(parseFloat(e.target.value)))}
+                              className="w-14 h-1 accent-slate-600" />
+                          </div>
+                        </div>
+                        </HelpTooltip>
                       </>
                     )}
                   </>

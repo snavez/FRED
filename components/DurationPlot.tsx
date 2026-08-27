@@ -3,6 +3,7 @@ import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, u
 import { SpeechToken, PlotConfig, PlotHandle, ExportConfig, DatasetMeta, StyleOverrides } from '../types';
 import { generateTexture } from '../utils/textureGenerator';
 import { getLabel } from '../utils/getLabel';
+import { axisTicks, formatMeasureValue } from '../utils/axisTicks';
 
 interface DurationPlotProps {
   data: SpeechToken[];
@@ -177,7 +178,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
   const isHierarchical = !!(clusterBy && clusterBy !== 'none');
 
   // Data pipeline: faceting → color/texture splitting → stats
-  const { facetData, colorMap, textureMap, globalYMax } = useMemo(() => {
+  const { facetData, colorMap, textureMap, globalYMax, globalYMin } = useMemo(() => {
     const palette = config.bwMode ? ['#525252'] : COLORS;
 
     // 1. Facet by durationPlotBy
@@ -250,21 +251,26 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
       return { facetKey: fKey, groups };
     });
 
-    // 4. Global Y max for shared axis
+    // 4. Global Y range for the shared axis. Durations start at zero and the axis says
+    // so, but this plot draws any numeric field — skewness, a DCT coefficient, the band
+    // energy ratio — and those go negative. The floor drops below zero only when the
+    // data actually goes there, so a duration plot looks exactly as it always has.
     const allStats = facets.flatMap(f => f.groups.map(g => g.stats).filter(Boolean) as Stats[]);
     const yMax = config.durationRange[1] > 0
       ? config.durationRange[1]
       : allStats.length > 0
         ? Math.max(...allStats.map(s => s.max)) * 1.1
         : 1;
+    const dataMin = allStats.length > 0 ? Math.min(...allStats.map(s => s.min)) : 0;
+    const yMin = config.durationRange[0] < 0 ? config.durationRange[0] : Math.min(0, dataMin * 1.1);
 
-    return { facetData: facets, colorMap: cMap, textureMap: tMap, globalYMax: yMax };
+    return { facetData: facets, colorMap: cMap, textureMap: tMap, globalYMax: yMax, globalYMin: yMin };
   }, [data, config.durationPlotBy, config.colorBy, config.textureBy, config.bwMode, config.durationRange, getValue, styleOverrides]);
 
   // Helper: draw a single box (whiskers, quartile box, center diamond, outliers, jitter points)
   const drawBox = useCallback((
     ctx: CanvasRenderingContext2D, g: GroupData, xCenter: number, barWidth: number,
-    mapY: (v: number) => number, scale: number, drawScale: number
+    mapY: (v: number) => number, scale: number, drawScale: number, centreLabelFont: number
   ) => {
     const s = g.stats!;
     const defaultColor = config.bwMode ? '#525252' : '#64748b';
@@ -282,7 +288,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     // Whisker calculation
     const iqr = s.q3 - s.q1;
     let whiskerLow: number, whiskerHigh: number;
-    if (config.durationWhiskerMode === 'minmax') {
+    if (config.boxWhiskerMode === 'minmax') {
       whiskerLow = s.min;
       whiskerHigh = s.max;
     } else {
@@ -309,7 +315,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
       ctx.strokeRect(xCenter - barWidth / 2, yQ3, barWidth, yQ1 - yQ3);
 
       // Center line (median or mean)
-      const centerVal = config.durationCenterLine === 'mean' ? s.mean : s.median;
+      const centerVal = config.boxCenterLine === 'mean' ? s.mean : s.median;
       const yCenter = mapY(centerVal);
       ctx.beginPath();
       ctx.moveTo(xCenter - barWidth / 2, yCenter);
@@ -332,7 +338,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     }
 
     // Center diamond — always shown, tracks whichever center line is selected
-    const centerDiamondVal = config.durationCenterLine === 'mean' ? s.mean : s.median;
+    const centerDiamondVal = config.boxCenterLine === 'mean' ? s.mean : s.median;
     const yDiamond = mapY(centerDiamondVal);
     ctx.fillStyle = 'white';
     ctx.strokeStyle = '#000';
@@ -346,8 +352,21 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     ctx.fill();
     ctx.stroke();
 
+    // Numeric centre label — the value of whichever centre statistic the box draws
+    if (config.showCenterValueLabels) {
+      ctx.font = `bold ${(centreLabelFont * drawScale) / scale}px Inter`;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#0f172a';
+      ctx.fillText(
+        formatMeasureValue(centerDiamondVal),
+        xCenter + (barWidth / 2) + (5 * drawScale),
+        yDiamond - (5 * drawScale),
+      );
+      ctx.textAlign = 'center';
+    }
+
     // Outliers (only in IQR mode when showOutliers is on)
-    if (config.showOutliers && config.durationWhiskerMode !== 'minmax') {
+    if (config.showOutliers && config.boxWhiskerMode !== 'minmax') {
       s.values.forEach(v => {
         if (v < whiskerLow || v > whiskerHigh) {
           ctx.beginPath();
@@ -360,7 +379,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     }
 
     // Jitter points — coloured to match box
-    if (config.showDurationPoints) {
+    if (config.boxShowPoints) {
       const ptColor = color;
       const opacity = config.pointOpacity ?? 0.5;
       s.tokens.forEach(t => {
@@ -400,11 +419,13 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     const chartW = width - margin.left - margin.right;
     const chartH = height - margin.top - margin.bottom;
 
-    const yMin = 0;
+    const yMin = globalYMin;
     const yMax = globalYMax;
 
-    // Tick / label fonts
-    const tickBaseSize = exportConfig ? exportConfig.tickLabelSize : (isExport ? 32 : 11);
+    // Tick / label fonts. The x axis has two layers when boxes are clustered — the box
+    // labels and the cluster brackets above them — and each is sized independently in
+    // the export dialog. An unset override keeps the size the plot has always used.
+    const yTickFont = exportConfig ? (exportConfig.yTickLabelSize ?? exportConfig.tickLabelSize) : (isExport ? 32 : 11);
     const labelFont = exportConfig ? exportConfig.xAxisLabelSize : (isExport ? 36 : 11);
     const metaFont = exportConfig ? (exportConfig.dataLabelSize * 0.8) : (isExport ? 28 : 9);
     const xTickOffsetX = (exportConfig?.xAxisTickX || 0) * drawScale;
@@ -430,7 +451,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     // Configurable box widths and gaps
     const clusterGap = config.durationGroupGap ?? DEFAULT_CLUSTER_GAP;
     const boxGapRatio = config.durationBoxGap ?? 0.4; // additional slot units between boxes (0 = no gap, higher = wider gap)
-    const configBoxWidth = (config.durationBoxWidth ?? 0) * drawScale; // 0 = auto
+    const configBoxWidth = (config.boxWidth ?? 0) * drawScale; // 0 = auto
 
     // Determine if we should rotate labels (check longest label length)
     const allValidGroups = facetData.flatMap(f => f.groups.filter(g => g.stats !== null));
@@ -450,38 +471,44 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
       ctx.lineWidth = (1 * drawScale) / scale;
       ctx.fillStyle = '#64748b';
 
-      const ySteps = 5;
+      const ticks = axisTicks(yMin, yMax, 5);
+      // A signed measure reads by which side of zero a box sits on, so mark the line.
+      const zeroLine = yMin < 0 && yMax > 0 ? mapY(0) : null;
       if (showYAxis) {
-        ctx.font = `bold ${(tickBaseSize * drawScale) / scale}px Inter`;
+        ctx.font = `bold ${(yTickFont * drawScale) / scale}px Inter`;
         ctx.textAlign = 'right';
-        for (let i = 0; i <= ySteps; i++) {
-          const val = yMin + (yMax - yMin) * (i / ySteps);
-          const y = mapY(val);
-          ctx.beginPath();
-          ctx.moveTo(fx, y);
-          ctx.lineTo(fx + fw, y);
-          ctx.stroke();
-          const suffix = (!config.durationYField || config.durationYField === 'duration') ? 's' : '';
-          ctx.fillText(val.toFixed(2) + suffix, fx - (8 * drawScale) + yTickOffsetX, y + (4 * drawScale) + yTickOffsetY);
+      }
+      const suffix = (!config.durationYField || config.durationYField === 'duration') ? 's' : '';
+      ticks.values.forEach((val, i) => {
+        const y = mapY(val);
+        ctx.beginPath();
+        ctx.moveTo(fx, y);
+        ctx.lineTo(fx + fw, y);
+        ctx.stroke();
+        if (showYAxis) {
+          ctx.fillText(ticks.labels[i] + suffix, fx - (8 * drawScale) + yTickOffsetX, y + (4 * drawScale) + yTickOffsetY);
         }
-      } else {
-        for (let i = 0; i <= ySteps; i++) {
-          const val = yMin + (yMax - yMin) * (i / ySteps);
-          const y = mapY(val);
-          ctx.beginPath();
-          ctx.moveTo(fx, y);
-          ctx.lineTo(fx + fw, y);
-          ctx.stroke();
-        }
+      });
+      if (zeroLine !== null) {
+        ctx.save();
+        ctx.strokeStyle = '#94a3b8';
+        ctx.lineWidth = (1.5 * drawScale) / scale;
+        ctx.setLineDash([5 * drawScale, 4 * drawScale]);
+        ctx.beginPath();
+        ctx.moveTo(fx, zeroLine);
+        ctx.lineTo(fx + fw, zeroLine);
+        ctx.stroke();
+        ctx.restore();
       }
 
       // Filter groups with stats
       const validGroups = facet.groups.filter(g => g.stats !== null);
       if (validGroups.length === 0) return;
 
-      // Font for box labels (data labels) and group labels (x-axis labels)
-      const dataLabelFont = exportConfig ? exportConfig.dataLabelSize : labelFont;
-      const xAxisFont = exportConfig ? exportConfig.xAxisLabelSize : (labelFont * 1.15);
+      // Font for box labels (inner x-axis layer) and cluster labels (outer x-axis layer)
+      const dataLabelFont = exportConfig ? (exportConfig.xTickLabelSize ?? exportConfig.dataLabelSize) : labelFont;
+      const xAxisFont = exportConfig ? (exportConfig.xGroupLabelSize ?? exportConfig.xAxisLabelSize) : (labelFont * 1.15);
+      const centreLabelFont = exportConfig ? exportConfig.dataLabelSize : (isExport ? 24 : 10);
 
       if (isHierarchical) {
         // === Clustered layout ===
@@ -495,7 +522,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
 
         // Sort boxes WITHIN each cluster (not the clusters themselves)
         clusterKeys.forEach(ck => {
-          clusterMap[ck] = sortGroups(clusterMap[ck], config.durationBoxOrder, config.durationBoxDir, config.durationCenterLine);
+          clusterMap[ck] = sortGroups(clusterMap[ck], config.durationBoxOrder, config.durationBoxDir, config.boxCenterLine);
         });
 
         const totalBoxes = validGroups.length;
@@ -513,7 +540,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
 
           clusterGroups.forEach((g, gi) => {
             const xCenter = fx + (slotIndex + 0.5) * slotWidth;
-            drawBox(ctx, g, xCenter, barWidth, mapY, scale, drawScale);
+            drawBox(ctx, g, xCenter, barWidth, mapY, scale, drawScale, centreLabelFont);
 
             // Box label (data label) — inner label
             ctx.fillStyle = '#0f172a';
@@ -580,7 +607,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         });
       } else {
         // === Flat layout — sort boxes ===
-        const sorted = sortGroups(validGroups, config.durationBoxOrder, config.durationBoxDir, config.durationCenterLine);
+        const sorted = sortGroups(validGroups, config.durationBoxOrder, config.durationBoxDir, config.boxCenterLine);
         const totalFlatSlots = sorted.length + (sorted.length - 1) * boxGapRatio;
         const spacing = fw / totalFlatSlots;
         const barWidth = configBoxWidth > 0 ? Math.min(configBoxWidth, spacing * 0.95) : Math.min(50 * drawScale, spacing * 0.8);
@@ -588,7 +615,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         sorted.forEach((g, i) => {
           const slotPos = i * (1 + boxGapRatio);
           const xCenter = fx + (slotPos + 0.5) * spacing;
-          drawBox(ctx, g, xCenter, barWidth, mapY, scale, drawScale);
+          drawBox(ctx, g, xCenter, barWidth, mapY, scale, drawScale, centreLabelFont);
 
           // Box label (data label)
           ctx.fillStyle = '#0f172a';
@@ -678,7 +705,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         ctx.restore();
       }
     }
-  }, [facetData, config, colorMap, textureMap, globalYMax, getValue, yAxisLabel, isHierarchical, clusterBy, drawBox]);
+  }, [facetData, config, colorMap, textureMap, globalYMax, globalYMin, getValue, yAxisLabel, isHierarchical, clusterBy, drawBox]);
 
   // Canvas legend for export
   const drawLegend = useCallback((ctx: CanvasRenderingContext2D, x: number, y: number, drawScale: number, exportConfig?: ExportConfig) => {
@@ -967,8 +994,8 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     }
 
     // Hit-test for tooltips
-    const hasPoints = config.showDurationPoints;
-    const hasOutliers = config.showOutliers && config.durationWhiskerMode !== 'minmax';
+    const hasPoints = config.boxShowPoints;
+    const hasOutliers = config.showOutliers && config.boxWhiskerMode !== 'minmax';
     if (!hasPoints && !hasOutliers) return;
 
     const canvas = canvasRef.current;
@@ -992,7 +1019,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
     const chartW = width - margin.left - margin.right;
     const chartH = height - margin.top - margin.bottom;
 
-    const yMin = 0;
+    const yMin = globalYMin;
     const yMax = globalYMax;
 
     // Helper: check a single group's hittable points
@@ -1053,11 +1080,11 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         });
         const clusterKeysSorted = Object.keys(clusterMap).sort();
         clusterKeysSorted.forEach(ck => {
-          clusterMap[ck] = sortGroups(clusterMap[ck], config.durationBoxOrder, config.durationBoxDir, config.durationCenterLine);
+          clusterMap[ck] = sortGroups(clusterMap[ck], config.durationBoxOrder, config.durationBoxDir, config.boxCenterLine);
         });
         const hitClusterGap = config.durationGroupGap ?? DEFAULT_CLUSTER_GAP;
         const hitBoxGapRatio = config.durationBoxGap ?? 0.4;
-        const hitConfigBoxWidth = config.durationBoxWidth ?? 0;
+        const hitConfigBoxWidth = config.boxWidth ?? 0;
         const totalBoxes = validGroups.length;
         // Count inner gaps (between boxes within each cluster)
         let hitTotalInnerGaps = 0;
@@ -1078,9 +1105,9 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
           if (ci < clusterKeysSorted.length - 1) slotIndex += hitClusterGap;
         });
       } else {
-        const sorted = sortGroups(validGroups, config.durationBoxOrder, config.durationBoxDir, config.durationCenterLine);
+        const sorted = sortGroups(validGroups, config.durationBoxOrder, config.durationBoxDir, config.boxCenterLine);
         const hitBoxGapR = config.durationBoxGap ?? 0.4;
-        const hitCfgBoxW = config.durationBoxWidth ?? 0;
+        const hitCfgBoxW = config.boxWidth ?? 0;
         const totalFlatSlots = sorted.length + (sorted.length - 1) * hitBoxGapR;
         const spacing = fw / totalFlatSlots;
         const barWidth = hitCfgBoxW > 0 ? Math.min(hitCfgBoxW, spacing * 0.95) : Math.min(50, spacing * 0.8);

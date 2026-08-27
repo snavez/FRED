@@ -26,7 +26,7 @@ FRED is a browser-based vowel space visualization tool built with React, TypeScr
 | `pitch` | Pitch / F0 data | pattern `f0_<time>[_<variant>]`, `pitch`, `voice_pitch` |
 | `token_id` | Groups long-format rows into tokens | `segment_id`, `item_id`, `obs_id`, … |
 | `timepoint` | Time column for long format | `times_norm`, `time_rel`, `timepoint`, … |
-| `spectral_cog` / `spectral_sd` / `spectral_skew` / `spectral_kurt` | Consonant spectral measurements (see Spectral section) | moment synonyms with an optional region label and `_N%`, `_tN` or `_kN` suffix |
+| `spectral_cog` / `spectral_sd` / `spectral_skew` / `spectral_kurt` / `spectral_bandratio` | Consonant spectral measurements (see Spectral section) | measure synonyms with an optional region label and `_N%`, `_tN` or `_kN` suffix |
 | `field` | Generic field (categorical or data) | *(any unrecognized column)* |
 | `ignore` | Column is not imported | |
 
@@ -61,17 +61,34 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 - All field values are stored in `SpeechToken.fields: Record<string, string>` — a single generic dictionary
 - Fields can be used as visual encodings (Color By, Shape By, etc.) and as filter fields in the sidebar
 - The user can toggle any field between Filter and Data mode in the Data Mapping Dialog
+- **One rule decides what is a label** (`utils/filterFields.ts`): a column is a label —
+  filterable in the sidebar, offered as an encoding — when it has a filter key and is not
+  a data field, unless the user explicitly asks for it with `showInSidebar: true`. The
+  sidebar, the visibility popover and the Colour / Shape / Group menus all read
+  `listFilterFields`, so **anything you can filter by you can also group by**, and a
+  column confirmed as Data never appears among the filters.
+- Every token value is read through `getLabel(token, key)` — filters, sidebar options and
+  encodings share the one accessor
+- A measure role only sticks to a column of numbers: `voice_pitch` holding high/low is
+  auto-detected as a label, not a pitch measure, and the same guard applies to `*_dur`
+  columns and to region-labelled spectral names
 
 ### Data Mapping Dialog
 - Modal UI listing all detected columns with role dropdowns and sample data preview
 - User can reassign roles, set field names, or ignore columns
 - **Role options**: Formant Value, Duration Value, Pitch Value, Spectral COG / Diffusion
-  (SD) / Skew / Kurtosis, Token ID, Timepoint, Custom Field, Ignore (Speaker/File ID are
-  assigned via the quick-assign dropdowns at the top)
+  (SD) / Skew / Kurtosis / Band Energy Ratio, Token ID, Timepoint, Custom Field, Ignore
+  (Speaker/File ID are assigned via the quick-assign dropdowns at the top)
 - **Filter/Data toggle**: Every non-ignored column gets a Filter/Data toggle
   - **Filter**: categorical label for sidebar filtering (default for low-cardinality columns)
   - **Data**: numeric value for plotting, not shown in sidebar (default for high-cardinality columns)
 - **Sidebar checkbox**: shown when Filter is selected; controls sidebar visibility (defaults checked)
+- **CSV column order, always** (`utils/mappingRows.ts` → `buildMappingRows`): rows follow
+  the file's header order in every view. A column never moves when its role or its
+  Filter/Data toggle changes, and a collapsed family sits at the position of its earliest
+  column. Ordering by role instead moved a row out from under the cursor as it was
+  reclassified, and put the same column in different places depending on the view it was
+  reached from.
 - **Field Name column**: editable name for `field` and `pitch` roles (shown as "Field Name" header)
 - Formant columns show formant/time-point details and auto-detected variant tags (e.g., "smooth")
 - Help text sections with line breaks before "File ID" and "Data fields" explanations
@@ -109,6 +126,13 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 - Derives bin count from actual data time-points
 - **Mean trajectory labels** at line endpoints with anti-overlap displacement. Label source selectable (Color Key, Line Key, Both, Auto). Adjustable label size (8–72px)
 
+### Box-plot config (shared)
+- `showQuartiles`, `showOutliers`, `showMeanMarker`, `boxShowPoints`, `boxWhiskerMode`,
+  `boxCenterLine` and `boxWidth` are shared by the Data Summaries boxes and the Spectral
+  distribution, so a box reads the same wherever it is drawn. Layout fields that only make
+  sense for the clustered duration layout (`durationGroupGap`, `durationBoxGap`,
+  `durationBoxOrder`, `durationBoxDir`) stay duration-specific.
+
 ### Duration Plot
 - Box-and-whisker plots per phoneme/category group
 - **Flexible Y-axis**: select any numeric field (Duration, xmin, pitch columns, data fields) via dropdown
@@ -119,7 +143,18 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 - **Center line**: Median or Mean toggle; center diamond marker always shown, tracks the selected center line
 - **Show toggles**: Quartiles (box vs bar), Outliers, individual data Points
 - **Coloured jitter points**: when Points is enabled, dots are coloured to match their box's colour variable with configurable opacity (`pointOpacity`)
-- **Max Y override**: manual Y-axis maximum; 0 = auto-fit to 110% of data max
+- **Value range override** (`durationRange`): manual Y minimum and maximum; 0 = auto. The
+  maximum auto-fits to 110% of the data max. The minimum is 0 for durations and stays 0
+  unless the data actually goes negative (skewness, a DCT coefficient, the band energy
+  ratio), in which case the floor drops to 110% of the data min and a dashed zero
+  reference line is drawn across the plot. Only a negative override moves the floor.
+- **Y-axis ticks** (`utils/axisTicks.ts` → `axisTicks`): ticks sit on a nice 1/2/5×10^k
+  step inside the range and are formatted to exactly the decimals that step needs. The
+  previous `(max-min)/5` walk with `toFixed(2)` produced uneven, untrue labels on small
+  ranges (0, .02, .04, .05, .07, .09 for a duration axis).
+- **Centre value labels** (`showCenterValueLabels`): prints the centre statistic's value
+  beside each box, following whichever statistic `boxCenterLine` selects. Shared with the
+  Spectral distribution plot.
 - **Interactive legend**: HTML overlay with colour swatches + texture pattern previews. Click any item to open the StyleEditor for manual colour/texture customisation. Style overrides persist via `layer.styleOverrides`
 - **Configurable tooltip**: hover over outlier circles or jitter points to see token details. Field selector popover (max 10 fields) with `durationTooltipFields` stored in PlotConfig
 - **Zoom & Pan**: scroll wheel zooms towards cursor, click-drag to pan. +/−/RESET VIEW buttons at bottom-left. Canvas transform applied to rendering; hit-detection inverse-transforms mouse coordinates
@@ -129,12 +164,20 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 
 ### Spectral (Consonant analysis)
 - Tab between **Time Series** and **Data Summaries** (labelled **Spectral**; `activeTab` id
-  stays `'spectral'`), for consonant spectral data: centre of gravity (COG), standard
-  deviation / spread (SD), skewness, kurtosis.
-- Each moment can arrive in **three forms**, discovered and stored separately by
-  `utils/spectralMoments.ts` (`discoverSpectralMoments`). Synonyms (centroid→COG,
-  spread/stdev/SpecDiff→SD, kurtosis→kurt) and an optional `_smooth` suffix are tolerated:
-  - **Point** — a moment at a position: `COG_20%`, `SD_50%` (`getSpectralValue`).
+  stays `'spectral'`), for consonant spectral data.
+- **Measures, not just moments** (`SpectralMeasureKey`): the four spectral moments — centre
+  of gravity (COG), standard deviation / spread (SD), skewness, kurtosis — plus the
+  **band energy ratio** (`bandratio`, 10·log10(P_high / P_low) in dB), which FormantStudio
+  exports in the same loop under the same naming scheme. `SPECTRAL_MEASURE_DEFS` is the
+  full list, moments first in conventional moment order; each def carries `isMoment` and
+  `centredAtZero`. `SPECTRAL_MOMENT_DEFS` is derived from it by `isMoment` and still means
+  exactly the four moments; `SpectralMomentKey` is the narrow type for code that means
+  those four.
+- Each measure can arrive in **three forms**, discovered and stored separately by
+  `utils/spectralMoments.ts` (`discoverSpectralColumns`). Synonyms (centroid→COG,
+  spread/stdev/SpecDiff→SD, kurtosis→kurt, bandratio/bandenergyratio/ber→bandratio) and an
+  optional `_smooth` suffix are tolerated:
+  - **Point** — a measure at a position: `COG_20%`, `bandratio_50%` (`getSpectralValue`).
   - **Track** — a dense contour over normalised time: `COG_t0` … `COG_tN`
     (`getSpectralTrackValue`, `getSpectralTrack`).
   - **Coefficient** — DCT/polynomial coefficients describing a track's shape:
@@ -143,13 +186,13 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
   `parseSpectralColumn` classifies a column by suffix (`_tN` / `_kN` tested before `_N%`).
   **Grid lengths are always read from the data** — a dataset may carry any number of track
   samples or coefficients (`spectralIndicesOfKind`).
-- **Regions**: a column may name the phase of the segment it measures, between the moment
-  and the position — `COG_closure_20%`, `SD_release_t3`. Region labels are free text read
-  from the header (`splitMomentAndRegion`; the longest leading run of parts spelling a
-  moment wins, so `centre_of_gravity_burst_50%` is COG in the `burst` region). Every
-  measurement is addressed by **moment × region × kind × position**, so closure never
+- **Regions**: a column may name the phase of the segment it measures, between the measure
+  and the position — `COG_closure_20%`, `bandratio_release_t3`. Region labels are free text
+  read from the header (`splitMeasureAndRegion`; the longest leading run of parts spelling a
+  measure wins, so `centre_of_gravity_burst_50%` is COG in the `burst` region). Every
+  measurement is addressed by **measure × region × kind × position**, so closure never
   shares a slot with release. `meta.regions` lists them in the order the dataset presents
-  them, and `spectralMomentsOfKind` / `spectralIndicesOfKind` / `spectralKindsAvailable` /
+  them, and `spectralMeasuresOfKind` / `spectralIndicesOfKind` / `spectralKindsAvailable` /
   `spectralRegionsOfKind` answer what each region carries — regions need not be symmetric.
   A dataset with no region labels behaves exactly as before (region `''`).
 - **Features** (`SpectralFeature`) are the scalars an axis or measure picker can offer:
@@ -163,11 +206,12 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
   moment alone. `spectralFeatureAt` moves a feature along its grid, which is how a
   trajectory sweeps.
 - **Explicit mapping roles**: the Data Mapping dialog offers **Spectral COG / Spectral
-  Diffusion (SD) / Spectral Skew / Spectral Kurtosis** roles (`spectral_cog` / `spectral_sd`
-  / `spectral_skew` / `spectral_kurt` in `ColumnRole`), so columns with *any* name can feed
-  the Spectral tab. Role-mapped columns are authoritative in `discoverSpectralMoments`
+  Diffusion (SD) / Spectral Skew / Spectral Kurtosis / Spectral Band Energy Ratio** roles
+  (`spectral_cog` / `spectral_sd` / `spectral_skew` / `spectral_kurt` /
+  `spectral_bandratio` in `ColumnRole`), so columns with *any* name can feed
+  the Spectral tab. Role-mapped columns are authoritative in `discoverSpectralColumns`
   (claimed first; the header-pattern scan fills remaining slots). The role names the
-  *moment*; which of the three forms a column holds is read from its name suffix, and its
+  *measure*; which of the three forms a column holds is read from its name suffix, and its
   region from `ColumnMapping.spectralRegion` (auto-filled from the header, editable in the
   dialog — so a hand-named column can be labelled `release` by hand).
 - The CSV parser auto-assigns these roles by header via the shared `detectSpectralRole`
@@ -177,7 +221,7 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
   "ignore" heuristic. Values are stored in `token.fields` under the column name, and
   spectral columns appear in the Data Summaries numeric Y-axis options. Analysis metadata
   that shares the suffix (`winms_closure_20%`, `nsamples_20%`, `winsource_20%`) is left
-  alone — the *head* of the name must spell a moment — and a region-labelled name is only
+  alone — the *head* of the name must spell a measure — and a region-labelled name is only
   accepted when the column's sampled values are actually numeric, so a categorical
   `skew_notes` is not swept up. Per-region durations (`closure_dur`, `release_dur`) stay
   duration fields, usable on the Data Summaries Y axis.
@@ -192,6 +236,25 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
   (`50%`, `t3`, `k1` — `spectralColumnChip`) and its own region box. Remapping a member
   removes it from the group live. (Formant groups need `TRAJECTORY_MIN_POINTS` (4) columns; spectral families group
   from 2.)
+- **Signed measures**: a def with `centredAtZero` (today only the band ratio: 0 dB = equal
+  energy in both bands) is drawn with a dashed zero reference line across every axis that
+  carries it — scatter X and Y, distribution, mean contours, density — whenever the range
+  spans zero (`isCentredAtZero`, `drawFrame`'s `zero` argument). The range is **not** forced
+  symmetric. The same flag is what a diverging colour scale would key off; FRED currently
+  colour-maps only categorical variables, so there is no continuous-colour site yet.
+- **Band edges and the provenance sidecar** (`services/provenance.ts`): two CSVs exported
+  with different band edges carry identically-named `bandratio_*` columns that are not
+  comparable, and nothing in the header says so. FormantStudio writes
+  `<file>.provenance.json` beside the CSV with `spectral.band_ratio_low_hz`,
+  `spectral.band_ratio_high_hz` and `spectral.band_ratio_units`. The file picker takes
+  multiple files (a browser cannot go looking for the sidecar itself); a sidecar whose name
+  matches the data file is parsed into `DatasetMeta.provenance`, carried onto
+  `SpectralMeta.bandRatio` by `discoverSpectralColumns`, and stated in every axis label —
+  `Band ratio 5.5–7.5k / 0.4–0.9k (dB)` — plus a **Dataset info** line in the sidebar with
+  the exact edges in its tooltip. With no sidecar the label reads `Band Energy Ratio (dB)`;
+  edges are never invented. A malformed or partial sidecar is treated as no sidecar.
+- **Axis ticks**: all four views tick through `utils/axisTicks.ts` (`axisTicks`), so labels
+  sit on a nice step and are formatted to that step's decimals.
 - **Control row** reads Plot → Mode → Data → Axes → position → ranges:
   - **Plot** (`spectralMode`) — Scatter / Distribution / Mean contours / Density.
   - **Mode** — the variant of that plot: `plotType` (Points/Trajectory) for scatter,
@@ -207,6 +270,13 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
     closure COG × release COG plots the two phases of each token against each other.
     Changing an axis's region snaps its moment and position back into what that region
     actually carries.
+  - Switching Data **keeps each axis's moment and region** (`spectralFeatureOnKind`), so
+    COG × SD of the release stays COG × SD of the release, just sampled along the new
+    grid; positions move proportionally between the two time-like kinds (50% ↔ t5, and
+    back), while coefficient orders start at k0 since they are not positions in time.
+    Switching plot type carries the same measurement across: the box/density measure
+    (`resolveSpectralMeasure`) and the contour family (`resolveSpectralContour`) fall back
+    to the scatter X axis when the stored one does not fit the dataset.
   - **Time / Sample** is one shared position dropdown moving both axes together, mirroring
     the formant tabs. **Range** (`spectralTrajRange`, `[0,0]` = full) trims the trajectory
     sweep, mirroring the Time Series range control.
@@ -234,6 +304,34 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
     drop out of the tail instead of dragging the mean down, and the duration difference
     that normalised time hides becomes visible.
   - **Density** — Gaussian-KDE density curves of one feature per group (active layer).
+    Groups with no values are skipped rather than drawn as a flat line on the axis.
+- **Visual controls per mode** (Row 2, beside Colour). Contours and density reuse the
+  trajectory config the scatter already uses, so a setting means the same thing wherever
+  it appears; the distribution reuses the shared box-plot config with the Data Summaries
+  tab:
+  - **Mean contours** — *Lines*: individual contours on/off (`spectralShowIndividual`)
+    with opacity (`trajectoryLineOpacity`) and width (`trajectoryLineWidth`). *Means*:
+    line width (`meanTrajectoryWidth`), opacity (`meanTrajectoryOpacity`), sample dots
+    (`showMeanTrajectoryPoints` + `meanTrajectoryPointSize`), ±1 SD band
+    (`spectralShowBand` + `spectralBandOpacity`). *Labels*: name each mean at the end of
+    its contour (`showTrajectoryLabels` + `meanTrajectoryLabelSize`).
+  - **Distribution** — *Show*: Quartiles / Outliers / Mean marker / raw Points (with
+    opacity and size). *Box*: whisker extent (1.5×IQR or Min–Max), centre line
+    (median or mean), box width in px.
+  - **Density** — curve width, curve opacity and fill opacity (`spectralDensityFill`).
+- **Ranging fits what is drawn** (`utils/plotRange.ts`). Spectral measures are long-tailed,
+  so ranging on the raw extent leaves the summary the plot exists to show as a sliver at
+  one edge. `fitRange(must, tail)` always contains the `must` values and widens towards the
+  `tail` cloud only as far as its trimmed quantiles:
+  - Contours: means (and the band when shown) always fit; the individual lines widen the
+    range only when they are drawn, and only to their 2nd–98th percentile.
+  - Distribution: boxes, whiskers and mean markers always fit; outliers and raw points
+    widen it to the 2nd–98th percentile of the values. Points past the axis are **clipped
+    and counted** — a small `▲ n` / `▼ n` marker at the edge of each slot says how many,
+    so nothing disappears silently.
+  - Density: the 1st–99th percentile of the pooled values.
+  - Every mode clips its drawing to the frame, so data never spills outside the axes (in
+    the coefficient small-multiples, never into a neighbouring panel).
 - **Coefficient sign** (`spectralFlipSign`, box/density only, shown only for coefficient
   features): a rising contour has a *negative* k1, which reads backwards on a chart, so the
   toggle negates the value and the axis label notes it.
@@ -399,8 +497,11 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 | **Group By** | Duration | Same as Color By (hierarchical clustering) |
 
 ### Encoding Dropdown Filtering
-- Visual encoding dropdowns (Color By, Shape By, Line Type By, Texture By) list all fields from `datasetMeta.columnMappings` that are sidebar-active
-- Built-in fields (`speaker`, `file_id`) plus all `field` and `pitch` role columns with a `fieldName` are eligible
+- Visual encoding dropdowns (Color By, Shape By, Line Type By, Texture By) offer exactly
+  the fields the sidebar lists as filters — both call `listFilterFields(datasetMeta)`, so
+  the two menus can never disagree
+- Any role can supply a label (`speaker`, `file_id`, `field`, `pitch`, `duration`, a
+  spectral column); what decides is the Filter/Data classification, not the role
 - `None` is always available regardless of sidebar state
 - `VariableType` is `string` (not a fixed union) to support dynamic field names as encoding variables
 
@@ -461,7 +562,7 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 ### Sidebar Controls
 - Each filter section has **All** / **Clear** buttons
 - Search box appears when a field has >50 unique values
-- **Gear icon** (Settings2) opens a popover listing ALL non-data fields with checkboxes to toggle sidebar visibility
+- **Gear icon** (Settings2) opens a popover listing every label field with checkboxes to toggle sidebar visibility
 - `ColumnMapping.showInSidebar` controls field visibility; set during import via the Data Mapping Dialog
 - Pretty labels: underscores replaced with spaces, title-cased (e.g., `syllable_mark` → "Syllable Mark")
 
@@ -584,7 +685,13 @@ Each section is collapsible with a dot indicator when non-default values are set
 
 - **Chart Title**: toggle on/off, text, size, NudgePad for position offset
 - **Graph Geometry**: graph scale (linked/unlinked X/Y), NudgePad for graph offset
-- **Axis Labels**: X/Y axis label sizes (linked/unlinked), tick number size, data label size; NudgePads for axis label offsets and tick offsets
+- **Axis Labels**: X/Y axis label sizes (linked/unlinked), tick number size, data label
+  size; NudgePads for axis label offsets and tick offsets. Below the shared tick size,
+  three per-axis overrides (`SizeSlider`): **X Axis Ticks** (`xTickLabelSize`), **X Group
+  Labels** (`xGroupLabelSize` — the second x-axis row: the group name beneath a cluster of
+  boxes or a group of bars) and **Y Axis Ticks** (`yTickLabelSize`). Each is optional and
+  falls back to the size that axis has always used, so an untouched export is byte-for-byte
+  what it was; the global Font Scale slider moves any that are set by the same ratio.
 - **Legend**: show/hide toggle, position (Right/Bottom/Inside/Custom), per-layer controls with editable titles, heading/item font sizes
 
 ### NudgePad Component
@@ -691,9 +798,13 @@ FRED/
   utils/
     getLabel.ts                        # Shared label extraction utility (checks fields dict)
     getLabel.test.ts                   # Label utility tests
+    filterFields.ts                    # What counts as a label: sidebar filters = encodings
+    filterFields.test.ts               # Label-field rule tests
     normalization.ts                   # Speaker stats, normalization (Lobanov, Nearey, etc.)
     plotEncoding.tsx                   # Shared encoding primitives (palette, shapes, dashes)
-    spectralMoments.ts                 # Spectral discovery/features (moments, tracks, coeffs)
+    plotRange.ts                       # Axis ranges that fit what is drawn (fitRange, quantile)
+    plotRange.test.ts                  # Range-fitting tests
+    spectralMoments.ts                 # Spectral discovery/features (moments, regions, tracks, coeffs)
     spectralMoments.test.ts            # Spectral tests
     trajectory.ts                      # Trajectory interpolation helpers
     textureGenerator.ts                # Texture pattern generation
@@ -720,10 +831,12 @@ All visualization settings: axis inversion, visual encoding channels, plot type,
 Combines id, name, visibility, isBackground flag, PlotConfig, FilterState, and StyleOverrides.
 
 ### ColumnMapping
-`{ csvHeader, role: ColumnRole, fieldName?, timePoint?, formant?, isSmooth?, formantLabel?, showInSidebar?, isDataField? }` — maps a CSV column to a role with optional metadata. `isDataField` distinguishes Filter vs Data fields; `showInSidebar` controls sidebar visibility.
+`{ csvHeader, role: ColumnRole, fieldName?, timePoint?, formant?, isSmooth?, formantLabel?, formantTarget?, spectralRegion?, showInSidebar?, isDataField? }` — maps a CSV column to a role with optional metadata. `isDataField` distinguishes Filter vs Data fields; `showInSidebar` controls sidebar visibility; `spectralRegion` labels the segment phase a spectral column measures.
 
 ### DatasetMeta
-`{ fileName, columnMappings: ColumnMapping[], timePoints: number[], rowCount, formantVariants: string[] }` — file-level metadata derived at import time.
+`{ fileName, columnMappings: ColumnMapping[], timePoints: number[], rowCount, formantVariants: string[], provenance?: DatasetProvenance }` — file-level metadata derived at import time. `provenance` is read from the exporter's JSON sidecar when one was selected alongside the CSV and carries `bandRatio: { low, high, units }` — the frequency bands behind the band-ratio columns.
 
 ### ExportConfig
 All export settings: scale, geometry, typography, title, legend position/visibility/titles, canvas dimensions.
+`tickLabelSize` sizes tick text everywhere; the optional `xTickLabelSize`,
+`yTickLabelSize` and `xGroupLabelSize` override it per axis and per x-axis layer.

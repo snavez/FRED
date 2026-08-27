@@ -143,8 +143,8 @@ screenshots throughout.
 - **Auto-detect** column types — no need to rename your columns
 - **Filter** by phoneme, speaker, stress, alignment, and any categorical field
 - **Vowel plots**: F1/F2 scatter and trajectories, 3D F1/F2/F3, time-series trajectories
-- **Consonant plots**: spectral moments (COG/SD/skew/kurtosis), measurement tracks and
-  DCT coefficients — scatter, distributions, mean contours, density
+- **Consonant plots**: spectral moments (COG/SD/skew/kurtosis) and band energy ratio,
+  measurement tracks and DCT coefficients — scatter, distributions, mean contours, density
 - **General plots**: box-plot summaries of any numeric field, category distributions, table
 - **Multi-layer overlays**: Compare different filtered subsets on the same plot
 - **Customise** colours, shapes, line styles per category per layer

@@ -140,6 +140,35 @@ describe('autoDetectMappings', () => {
     }
   });
 
+  it('treats a categorical column as a label even when its name says pitch or duration', () => {
+    const headers = ['voice_pitch', 'segment_dur', 'f0_50'];
+    const sampleRows = Array.from({ length: 20 }, (_, i) => [
+      i % 2 ? 'high' : 'low', i % 3 ? 'long' : 'short', `${180 + i}`,
+    ]);
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    const byHeader = (h: string) => mappings.find(m => m.csvHeader === h)!;
+    // high/low is a label to filter and colour by, not a measure to plot
+    expect(byHeader('voice_pitch').role).toBe('field');
+    expect(byHeader('voice_pitch').isDataField).toBe(false);
+    expect(byHeader('voice_pitch').showInSidebar).toBe(true);
+    expect(byHeader('segment_dur').role).toBe('field');
+    expect(byHeader('segment_dur').isDataField).toBe(false);
+    // A genuinely numeric pitch column keeps its measure role
+    expect(byHeader('f0_50').role).toBe('pitch');
+    expect(byHeader('f0_50').isDataField).toBe(true);
+  });
+
+  it('keeps numeric pitch and duration columns as measures', () => {
+    const headers = ['voice_pitch', 'closure_dur'];
+    const sampleRows = Array.from({ length: 20 }, (_, i) => [`${180 + i}`, `${0.05 + i / 1000}`]);
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    expect(mappings.find(m => m.csvHeader === 'voice_pitch')?.role).toBe('pitch');
+    expect(mappings.find(m => m.csvHeader === 'closure_dur')?.role).toBe('duration');
+    expect(mappings.find(m => m.csvHeader === 'closure_dur')?.isDataField).toBe(true);
+  });
+
   it('detects region-labelled spectral columns and records the region', () => {
     const headers = ['COG_closure_20%', 'COG_release_20%', 'SD_release_t3', 'kurt_closure_k1'];
     const sampleRows = Array.from({ length: 25 }, (_, i) => [
@@ -779,5 +808,62 @@ describe('parseWithMappings – long format', () => {
     expect(tokens[0].trajectory).toHaveLength(2);
     expect(tokens[0].trajectory[0]).toMatchObject({ time: 0, f1: 400, f2: 1800 });
     expect(tokens[0].trajectory[1]).toMatchObject({ time: 50, f1: 450, f2: 1700 });
+  });
+});
+
+// ─── Band energy ratio, end to end ─────────────────────────────────
+// A miniature of what FormantStudio now exports: the four moments and the band ratio
+// side by side, in all three column forms, plus the metadata columns that must stay out
+// of the spectral roles.
+
+const BAND_RATIO_CSV = [
+  'speaker,file_id,allophone,release_dur,' +
+    'COG_release_50%,SD_release_50%,skew_release_50%,kurt_release_50%,bandratio_release_50%,' +
+    'winms_release_50%,nsamples_release_50%,' +
+    'bandratio_release_k0,bandratio_release_k1,' +
+    'bandratio_release_t0,bandratio_release_t1,bandratio_release_t2',
+  'spk1,f001,t,0.021,5104,2210,0.41,2.9,-12.4,23,370,9.1,-4.2,-18.6,-2.0,11.3',
+  'spk1,f002,k,0.033,3980,2610,0.88,3.4,6.8,23,370,4.4,1.7,-3.1,5.2,18.9',
+  'spk2,f003,p,0.014,2100,1980,1.31,4.7,-31.5,23,370,-22.0,3.9,-38.4,-30.1,-24.7',
+].join('\n');
+
+describe('band-ratio columns from FormantStudio', () => {
+  const headers = BAND_RATIO_CSV.split('\n')[0].split(',');
+  const rows = BAND_RATIO_CSV.split('\n').slice(1).map(l => l.split(','));
+
+  it('gives the ratio its own spectral role, beside the moments', () => {
+    const mappings = autoDetectMappings(headers, rows);
+    const byHeader = (h: string) => mappings.find(m => m.csvHeader === h)!;
+
+    expect(byHeader('COG_release_50%').role).toBe('spectral_cog');
+    for (const h of ['bandratio_release_50%', 'bandratio_release_k1', 'bandratio_release_t2']) {
+      expect(byHeader(h).role).toBe('spectral_bandratio');
+      expect(byHeader(h).spectralRegion).toBe('release');
+      expect(byHeader(h).isDataField).toBe(true);
+      expect(byHeader(h).showInSidebar).toBe(false);
+    }
+    // The window metadata beside it is not a measurement
+    for (const h of ['winms_release_50%', 'nsamples_release_50%']) {
+      expect(byHeader(h).role).not.toMatch(/^spectral_/);
+    }
+    expect(byHeader('release_dur').role).toBe('duration');
+    expect(byHeader('allophone').role).toBe('field');
+  });
+
+  it('stores every band-ratio column on the token, signs intact', () => {
+    const mappings = autoDetectMappings(headers, rows);
+    const { tokens } = parseWithMappings(BAND_RATIO_CSV, mappings, 'bandratio.csv');
+
+    expect(tokens).toHaveLength(3);
+    expect(tokens[0].fields['bandratio_release_50%']).toBe('-12.4');
+    expect(tokens[1].fields['bandratio_release_50%']).toBe('6.8');
+    expect(tokens[2].fields['bandratio_release_t0']).toBe('-38.4');
+    expect(tokens[0].fields['bandratio_release_k0']).toBe('9.1');
+  });
+
+  it('leaves a CSV with no band-ratio columns exactly as it was', () => {
+    const csv = 'speaker,COG_release_50%,SD_release_50%\nspk1,5104,2210\n';
+    const mappings = autoDetectMappings(csv.split('\n')[0].split(','), [csv.split('\n')[1].split(',')]);
+    expect(mappings.map(m => m.role)).toEqual(['speaker', 'spectral_cog', 'spectral_sd']);
   });
 });

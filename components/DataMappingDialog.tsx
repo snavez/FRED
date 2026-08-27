@@ -13,11 +13,10 @@ import { X, Upload, FileText, RefreshCw, ChevronDown, ChevronRight, AlertTriangl
 import {
   isSpectralRole,
   parseSpectralColumn,
-  parseSpectralTimePointSuffix,
   spectralColumnChip,
   spectralColumnRegion,
-  SpectralKind,
 } from '../utils/spectralMoments';
+import { buildMappingRows, DisplayRow, ROLE_OPTIONS } from '../utils/mappingRows';
 
 interface DataMappingDialogProps {
   isOpen: boolean;
@@ -48,36 +47,6 @@ const describeSpacing = (spacing: TrajectorySpacing, format: TrajectoryFormat, u
   }
   return 'Sampled at irregular intervals';
 };
-
-// Speaker ID & File ID are assigned via the quick-assign dropdowns at the top,
-// so they are NOT listed here — the per-row dropdown only shows these roles.
-const ROLE_OPTIONS: { value: ColumnRole, label: string }[] = [
-  { value: 'formant', label: 'Formant Value' },
-  { value: 'duration', label: 'Duration Value' },
-  { value: 'pitch', label: 'Pitch Value' },
-  { value: 'spectral_cog', label: 'Spectral COG' },
-  { value: 'spectral_sd', label: 'Spectral Diffusion (SD)' },
-  { value: 'spectral_skew', label: 'Spectral Skew' },
-  { value: 'spectral_kurt', label: 'Spectral Kurtosis' },
-  { value: 'token_id', label: 'Token ID (groups rows)' },
-  { value: 'timepoint', label: 'Timepoint' },
-  { value: 'field', label: 'Custom Field' },
-  { value: 'ignore', label: 'Ignore' },
-];
-
-/** Noun naming each spectral family in the mapping table's group header. */
-const SPECTRAL_GROUP_NOUN: Record<SpectralKind, string> = {
-  point: 'at timepoints',
-  track: 'track',
-  coeff: 'coefficients',
-};
-
-/**
- * Whether a spectral column carries a recognised suffix, and so belongs to a family.
- * A bare `COG` is a lone measurement and stays a standalone row.
- */
-const hasSpectralSuffix = (header: string): boolean =>
-  parseSpectralTimePointSuffix(header) !== null || /_[tk]\d+$/i.test(header);
 
 // These names have hardcoded property accessors in filtering (App.tsx) and
 // sidebar display (Sidebar.tsx). A custom field using one of these names will
@@ -292,99 +261,8 @@ const DataMappingDialog: React.FC<DataMappingDialogProps> = ({
     };
   }, [mappings, headers]);
 
-  /**
-   * Build display rows for the mapping table. Collapses numeric-trajectory formant
-   * columns (F1_0, F1_10, …, F1_100) into one summary row per formant. Named targets
-   * and other columns render as individual rows.
-   * Order: speaker/file_id/token_id/timepoint → filter fields → trajectory groups
-   *        → named-target formants → data fields → ignored.
-   */
-  type GroupRow = {
-    kind: 'group'; groupKey: string; label: string; badge: string;
-    isSpectral: boolean; members: { m: ColumnMapping; idx: number }[];
-  };
-  type SingleRow = { kind: 'single'; m: ColumnMapping; idx: number };
-  type DisplayRow = GroupRow | SingleRow;
-  const displayRows: DisplayRow[] = useMemo(() => {
-    const byFormant = new Map<string, { m: ColumnMapping; idx: number }[]>();
-    // Spectral trajectory families: same role + same base name, numeric timepoint
-    // suffixes (COG_20%, COG_50%, COG_80% → one "Spectral COG trajectory" group).
-    const bySpectral = new Map<string, { m: ColumnMapping; idx: number }[]>();
-    const singles: { m: ColumnMapping; idx: number }[] = [];
-    mappings.forEach((m, idx) => {
-      if (m.role === 'formant' && !m.formantTarget && m.formant && m.timePoint !== undefined) {
-        if (!byFormant.has(m.formant)) byFormant.set(m.formant, []);
-        byFormant.get(m.formant)!.push({ m, idx });
-      } else if (isSpectralRole(m.role) && hasSpectralSuffix(m.csvHeader)) {
-        // Point / track / coefficient families are grouped separately — they are
-        // different kinds of measurement, not interchangeable timepoints.
-        const ref = parseSpectralColumn(m.csvHeader);
-        const key = `${m.role}:${ref.kind}:${ref.base.toLowerCase()}`;
-        if (!bySpectral.has(key)) bySpectral.set(key, []);
-        bySpectral.get(key)!.push({ m, idx });
-      } else {
-        singles.push({ m, idx });
-      }
-    });
-    const roleLabel = (role: ColumnRole): string =>
-      ROLE_OPTIONS.find(o => o.value === role)?.label ?? role;
-    const groups: GroupRow[] = [];
-    for (const [formant, members] of byFormant) {
-      if (members.length >= TRAJECTORY_MIN_POINTS) {
-        groups.push({
-          kind: 'group', groupKey: formant, label: `${formant.toUpperCase()} trajectory`,
-          badge: 'Formant · Data', isSpectral: false, members,
-        });
-      } else {
-        members.forEach(mem => singles.push(mem));
-      }
-    }
-    // Spectral families are short (often just 20/50/80%), so any repeated base name
-    // with ≥2 members rolls up — unlike formant trajectories (TRAJECTORY_MIN_POINTS).
-    for (const [key, members] of bySpectral) {
-      if (members.length >= 2) {
-        const first = members[0].m;
-        const kind = parseSpectralColumn(first.csvHeader).kind;
-        const region = first.spectralRegion ?? spectralColumnRegion(first.csvHeader);
-        groups.push({
-          kind: 'group', groupKey: key,
-          label: `${roleLabel(first.role)} ${SPECTRAL_GROUP_NOUN[kind]}${region ? ` · ${region}` : ''}`,
-          badge: 'Spectral · Data', isSpectral: true, members,
-        });
-      } else {
-        members.forEach(mem => singles.push(mem));
-      }
-    }
-    groups.sort((a, b) => a.label.localeCompare(b.label));
-
-    const priority = (m: ColumnMapping): number => {
-      if (m.role === 'speaker') return 0;
-      if (m.role === 'file_id') return 1;
-      if (m.role === 'token_id') return 2;
-      if (m.role === 'timepoint') return 3;
-      if (m.role === 'field' && m.isDataField === false) return 4;
-      if (m.role === 'formant' && m.formantTarget) return 6;
-      if (m.role === 'duration') return 7;
-      if (m.role === 'pitch') return 8;
-      if (isSpectralRole(m.role)) return 9;
-      if (m.role === 'field' && m.isDataField === true) return 9;
-      if (m.role === 'ignore') return 10;
-      return 11;
-    };
-    singles.sort((a, b) => priority(a.m) - priority(b.m) || a.idx - b.idx);
-
-    const result: DisplayRow[] = [];
-    let groupsInserted = false;
-    for (const s of singles) {
-      if (!groupsInserted && priority(s.m) >= 5) {
-        groups.forEach(g => result.push(g));
-        groupsInserted = true;
-      }
-      result.push({ kind: 'single', ...s });
-    }
-    if (!groupsInserted) groups.forEach(g => result.push(g));
-    return result;
-  }, [mappings]);
+  const displayRows: DisplayRow[] = useMemo(
+    () => buildMappingRows(mappings, headers), [mappings, headers]);
 
   const toggleGroup = (key: string) => {
     setExpandedGroups(prev => {
