@@ -38,20 +38,9 @@ const SHAPES = [
 ];
 
 import { getLabel } from '../utils/getLabel';
+import { encodingGroupKey } from '../utils/plotEncoding';
+import { findNearestTimePoint } from '../utils/trajectory';
 
-// Find nearest available time-point in a token's trajectory
-const findNearestTimePoint = (trajectory: { time: number }[], target: number): number | undefined => {
-  if (trajectory.length === 0) return undefined;
-  const exact = trajectory.find(p => p.time === target);
-  if (exact) return target;
-  let best = trajectory[0].time;
-  let bestDist = Math.abs(best - target);
-  for (const p of trajectory) {
-    const d = Math.abs(p.time - target);
-    if (d < bestDist) { best = p.time; bestDist = d; }
-  }
-  return best;
-};
 
 const drawShape = (ctx: CanvasRenderingContext2D, shape: string, x: number, y: number, size: number, scale: number, drawScale: number = 1, strokeWidth?: number) => {
   ctx.beginPath();
@@ -166,21 +155,7 @@ function computeMappings(data: SpeechToken[], config: PlotConfig, styleOverrides
 function groupData(data: SpeechToken[], mappings: any, plotType: string) {
     const groups: Record<string, SpeechToken[]> = {};
     data.forEach(t => {
-      let key = 'default';
-      const cVal = mappings.colorKey ? getLabel(t, mappings.colorKey) : '';
-      const sVal = mappings.shapeKey ? getLabel(t, mappings.shapeKey) : '';
-      const lVal = mappings.lineTypeKey ? getLabel(t, mappings.lineTypeKey) : '';
-
-      if (plotType === 'trajectory') {
-          if (mappings.colorKey && mappings.lineTypeKey && mappings.colorKey !== mappings.lineTypeKey) key = `${cVal}|${lVal}`;
-          else if (mappings.colorKey) key = cVal;
-          else if (mappings.lineTypeKey) key = lVal;
-      } else {
-          if (mappings.colorKey && mappings.shapeKey && mappings.colorKey !== mappings.shapeKey) key = `${cVal}|${sVal}`;
-          else if (mappings.colorKey) key = cVal;
-          else if (mappings.shapeKey) key = sVal;
-      }
-
+      const key = encodingGroupKey(t, mappings, plotType);
       if (!groups[key]) groups[key] = [];
       groups[key].push(t);
     });

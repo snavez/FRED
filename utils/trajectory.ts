@@ -73,3 +73,21 @@ export function computeMeanTimeGrid(
   }
   return Array.from(allTimes).sort((a, b) => a - b);
 }
+
+/**
+ * The trajectory time closest to `target`, or undefined for an empty trajectory.
+ * Datasets carry whatever time grid they were exported with, so a requested 50% may not
+ * exist verbatim; every plot samples through here so they all pick the same point.
+ */
+export function findNearestTimePoint(trajectory: { time: number }[], target: number): number | undefined {
+  if (trajectory.length === 0) return undefined;
+  const exact = trajectory.find(p => p.time === target);
+  if (exact) return target;
+  let best = trajectory[0].time;
+  let bestDist = Math.abs(best - target);
+  for (const p of trajectory) {
+    const d = Math.abs(p.time - target);
+    if (d < bestDist) { best = p.time; bestDist = d; }
+  }
+  return best;
+}

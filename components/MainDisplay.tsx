@@ -13,6 +13,9 @@ import {
 } from '../utils/spectralMoments';
 import { getLabel } from '../utils/getLabel';
 import { listFilterFields, filterFieldLabel } from '../utils/filterFields';
+import { encodingGroupKey } from '../utils/plotEncoding';
+import { collectFormantPoints, findEllipseOutliers, EllipseOutlier } from '../utils/outliers';
+import OutlierExportDialog from './OutlierExportDialog';
 import CanvasPlot from './CanvasPlot';
 import TrajectoryTimeSeries from './TrajectoryTimeSeries';
 import TrajectoryF1F2 from './TrajectoryF1F2';
@@ -247,6 +250,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     layerId?: string;
   } | null>(null);
 
+  const [showOutlierExport, setShowOutlierExport] = useState(false);
+
   const plotRef = useRef<PlotHandle>(null);
 
   // Derived: active layer & its config
@@ -428,6 +433,44 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   const spectralSweepGrid = useMemo(() =>
     spectralAxes.kind === 'coeff' ? [] : spectralAxes.indices,
     [spectralAxes]);
+
+  /**
+   * The tokens outside the ellipse the F1/F2 plot is currently drawing — every visible
+   * layer, grouped and sampled exactly as that layer draws it, so what the export lists
+   * is what the eye picks out on screen. Only computed while the dialog is open.
+   */
+  const outlierScan = useMemo(() => {
+    const empty = { outliers: [] as EllipseOutlier[], checked: 0, skipped: [] as { key: string; count: number }[] };
+    if (!showOutlierExport) return empty;
+    const visible = layers.filter(l => l.visible);
+    const normalization = layers[0].config.normalization || 'hz';
+    return visible.reduce((acc, layer) => {
+      const cfg = layer.config;
+      const maps = {
+        colorKey: cfg.colorBy === 'none' ? null : cfg.colorBy,
+        shapeKey: cfg.shapeBy === 'none' ? null : cfg.shapeBy,
+        lineTypeKey: cfg.lineTypeBy === 'none' ? null : cfg.lineTypeBy,
+      };
+      const groups = collectFormantPoints(
+        layerData[layer.id] || [], cfg,
+        t => encodingGroupKey(t, maps, cfg.plotType),
+        normalization, speakerStats,
+      );
+      const scan = findEllipseOutliers(
+        groups, cfg.ellipseSD, { x: 'F2', y: 'F1' }, visible.length > 1 ? layer.name : '',
+      );
+      return {
+        outliers: [...acc.outliers, ...scan.outliers],
+        checked: acc.checked + scan.checked,
+        skipped: [...acc.skipped, ...scan.skipped],
+      };
+    }, empty);
+  }, [showOutlierExport, layers, layerData, speakerStats]);
+
+  /** Most extreme first — the review queue starts with the worst offenders. */
+  const sortedOutliers = useMemo(
+    () => [...outlierScan.outliers].sort((a, b) => b.distance - a.distance),
+    [outlierScan]);
 
   const handleConfig = (key: keyof PlotConfig, val: any) => {
       updateLayerConfig(activeLayerId, key, val);
@@ -661,6 +704,16 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 </div>
               </div>
             )}
+            <HelpTooltip helpMode={helpMode} text="List every token outside the ellipse around its group, as a CSV to work through — a mistracked formant usually lands well outside its vowel's cloud. Each row says which axis it is extreme on, and carries the fields you need to find the token again.">
+            <button
+              onClick={() => setShowOutlierExport(true)}
+              className="flex items-center gap-1 px-1.5 py-1 rounded border border-slate-200 text-[10px] font-bold text-slate-500 hover:bg-slate-50 hover:text-slate-700"
+              title={`Export the tokens outside the ${currentConfig.ellipseSD}σ ellipse`}
+            >
+              <Download size={11} />
+              Outliers
+            </button>
+            </HelpTooltip>
           </div>
 
           <div className="flex items-center gap-1.5">
@@ -2914,6 +2967,19 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
         layers={layers}
         defaultTitle={bgConfig.colorBy !== 'none' ? bgConfig.colorBy : bgConfig.groupBy}
         activeTab={activeTab}
+      />
+
+      <OutlierExportDialog
+        isOpen={showOutlierExport}
+        onClose={() => setShowOutlierExport(false)}
+        outliers={sortedOutliers}
+        checked={outlierScan.checked}
+        skipped={outlierScan.skipped}
+        sd={currentConfig.ellipseSD}
+        axes={{ x: 'F2', y: 'F1' }}
+        multiLayer={layers.filter(l => l.visible).length > 1}
+        datasetMeta={datasetMeta ?? null}
+        pointInfoFields={currentConfig.tooltipFields || []}
       />
 
       {/* Close dropdowns on click outside */}

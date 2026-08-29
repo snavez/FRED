@@ -6,6 +6,7 @@
 
 import { SpeechToken, DatasetMeta } from '../types';
 import { getLabel } from '../utils/getLabel';
+import { csvCell, downloadTextFile } from '../utils/csv';
 
 /** R-safe column name: mirrors what make.names() produces for common cases. */
 export const rName = (name: string): string => {
@@ -13,9 +14,6 @@ export const rName = (name: string): string => {
   if (/^[0-9.]/.test(out)) out = 'X' + out;
   return out;
 };
-
-const csvCell = (v: string): string =>
-  /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 
 export interface RExportSpec {
   data: SpeechToken[];
@@ -111,13 +109,6 @@ ${perMeasure}
 
 /** Trigger browser downloads for the CSV and the script. */
 export const downloadRExport = (spec: RExportSpec): void => {
-  const save = (name: string, text: string, type: string) => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([text], { type }));
-    a.download = name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  };
-  save('fred_data.csv', buildRCsv(spec), 'text/csv');
-  save('fred_analysis.R', buildRScript(spec), 'text/plain');
+  downloadTextFile('fred_data.csv', buildRCsv(spec), 'text/csv');
+  downloadTextFile('fred_analysis.R', buildRScript(spec), 'text/plain');
 };

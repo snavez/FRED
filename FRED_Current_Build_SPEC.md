@@ -595,6 +595,33 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 - Standard deviation ellipses per group
 - Configurable: SD multiplier (1-3), line width, line opacity, fill opacity
 
+### Export outliers (F1/F2, point mode)
+- **Outliers** button beside the ellipse controls lists every token falling outside the
+  ellipse drawn around its group, as a CSV to work through — a mistracked formant lands
+  well outside its vowel's cloud, so the ellipse on screen doubles as a review queue.
+- Membership is decided by **Mahalanobis distance** from the group mean using the same
+  population covariance the ellipse is drawn from: a token is exported exactly when it
+  sits outside the ellipse on screen. The distance is invariant under a linear change of
+  axes, so the scan runs in data space and the normalisation in force does not change
+  which tokens are selected.
+- Follows the plot: current filters, the visible layers, each layer's grouping
+  (colour × shape), smoothing, normalisation, timepoint and its own σ setting. Groups of
+  fewer than three points have no ellipse, so they are reported as unjudged rather than
+  guessed at.
+- **Token fields** are chosen in the dialog, starting from the Point Info fields and
+  falling back to File ID — an export nobody can trace back to a recording is useless, so
+  the download is blocked until at least one is picked (`listPointFields`, shared with the
+  Point Info selector).
+- Columns: `layer` (multi-layer only), `group`, the chosen token fields, `F1`, `F2` as
+  plotted, `F1_z` / `F2_z` (per-axis deviation), `sd_distance` (Mahalanobis),
+  `ellipse_sd` (only when visible layers use different σ), and **`divergence`** — the axis
+  and direction of the excursion, worst first: `high F1`, `high F1; low F2`. A token
+  outside the ellipse but ordinary on each axis alone (a combination the ellipse's tilt
+  rules out) is named for whichever axis it deviates on most.
+- Rows are sorted by distance, worst first; the file is `fred_outliers_<σ>SD.csv`.
+- `utils/outliers.ts` holds the maths and the row building, so it is not tied to formants:
+  any two plotted axes can be scanned the same way.
+
 ### Centroids / Labels
 - Mean position markers per group
 - Display as shape marker or text label
@@ -809,6 +836,7 @@ FRED/
     ExportDialog.tsx                   # Export configuration modal
     StyleEditor.tsx                    # Floating style editor (colors/shapes/etc.)
     DataMappingDialog.tsx              # Column mapping dialog for import
+    OutlierExportDialog.tsx            # Ellipse-outlier CSV export (field picker + preview)
   services/
     csvParser.ts                       # CSV/TSV parsing, auto-detection, alias table
     csvParser.test.ts                  # Parser tests
@@ -824,6 +852,9 @@ FRED/
     filterFields.test.ts               # Label-field rule tests
     normalization.ts                   # Speaker stats, normalization (Lobanov, Nearey, etc.)
     plotEncoding.tsx                   # Shared encoding primitives (palette, shapes, dashes)
+    csv.ts                             # CSV cell quoting, row building, file download
+    outliers.ts                        # Tokens outside their group's ellipse (+ CSV rows)
+    outliers.test.ts                   # Outlier scan / divergence / CSV tests
     plotRange.ts                       # Axis ranges that fit what is drawn (fitRange, quantile)
     plotRange.test.ts                  # Range-fitting tests
     spectralMoments.ts                 # Spectral discovery/features (moments, regions, tracks, coeffs)

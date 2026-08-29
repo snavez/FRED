@@ -98,6 +98,26 @@ export interface EncodingMaps {
 }
 
 /** Compute colour/shape/line-type maps for a layer's data (mirrors CanvasPlot.computeMappings). */
+/**
+ * The key a token is grouped under for centroids, ellipses and mean trajectories: the
+ * encoded values that define one visual group. Points are grouped by colour and shape,
+ * trajectories by colour and line type — the channels each mode actually distinguishes.
+ * 'default' when nothing is encoded and the plot draws a single group.
+ */
+export const encodingGroupKey = (
+  token: SpeechToken,
+  maps: { colorKey: string | null; shapeKey: string | null; lineTypeKey: string | null },
+  plotType: string,
+): string => {
+  const secondaryKey = plotType === 'trajectory' ? maps.lineTypeKey : maps.shapeKey;
+  const colorValue = maps.colorKey ? getLabel(token, maps.colorKey) : '';
+  const secondaryValue = secondaryKey ? getLabel(token, secondaryKey) : '';
+  if (maps.colorKey && secondaryKey && maps.colorKey !== secondaryKey) return `${colorValue}|${secondaryValue}`;
+  if (maps.colorKey) return colorValue;
+  if (secondaryKey) return secondaryValue;
+  return 'default';
+};
+
 export const computeEncodingMaps = (data: SpeechToken[], config: PlotConfig, styleOverrides?: StyleOverrides): EncodingMaps => {
   const colorKey = config.colorBy === 'none' ? null : config.colorBy;
   const shapeKey = config.shapeBy === 'none' ? null : config.shapeBy;

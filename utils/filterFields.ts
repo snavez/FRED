@@ -71,3 +71,26 @@ export const listFilterFields = (
   }
   return fields;
 };
+
+/**
+ * Fields that identify a token: what you would need to find it again in the recording —
+ * the file, the speaker, the word, the segment, its duration. Wider than the label
+ * fields, because a measure such as duration is useful for telling two tokens apart, but
+ * narrower than every column: formants and the other plotted values describe a token
+ * rather than name it. Used by the Point Info selector and by the outlier export.
+ */
+export const listPointFields = (meta: DatasetMeta | null): FilterField[] => {
+  if (!meta) return [];
+  const fields: FilterField[] = [];
+  const seen = new Set<string>();
+  for (const m of meta.columnMappings) {
+    const key = m.role === 'duration' ? 'duration' : filterFieldKey(m);
+    if (!key || m.role === 'ignore') continue;
+    // Case-insensitive dedup, so 'file_id' and 'File_ID' do not both appear
+    const dedup = key.toLowerCase().trim();
+    if (seen.has(dedup)) continue;
+    seen.add(dedup);
+    fields.push({ key, label: filterFieldLabel(key, meta), visible: isVisibleFilterField(m) });
+  }
+  return fields;
+};
