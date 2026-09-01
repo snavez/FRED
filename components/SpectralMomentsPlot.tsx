@@ -1,7 +1,8 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { SpeechToken, PlotConfig, PlotHandle, ExportConfig, DatasetMeta, Layer } from '../types';
 import { getLabel } from '../utils/getLabel';
-import { fitRange } from '../utils/plotRange';
+import { fitRange, quantile } from '../utils/plotRange';
+import { durationFieldForRegion, getTokenDurationInUnit } from '../utils/duration';
 import { axisTicks, formatMeasureValue } from '../utils/axisTicks';
 import {
   drawShape, ShapeIcon, hexToRgb, computeEncodingMaps, EncodingMaps,
@@ -605,9 +606,20 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       // longer share an x-grid. Values are resampled onto a common millisecond grid and
       // averaged only where enough tokens still reach — short tokens drop out of the
       // tail rather than dragging the mean toward themselves.
-      const absolute = cfg.spectralContourAbsolute && data.some(t => t.duration > 0);
-      const durMs = (t: SpeechToken) => t.duration * (t.duration < 20 ? 1000 : 1);
-      const maxDur = absolute ? Math.max(...data.map(durMs).filter(d => d > 0), 0) : 0;
+      // The contour is stretched over the duration of the *region* it measures, which is
+      // rarely the token's whole duration: a release contour drawn across the segment
+      // duration would misreport how long the release lasted. The column is chosen in the
+      // controls, defaulting to whichever duration column names this region.
+      const durationField = cfg.spectralDurationField || durationFieldForRegion(datasetMeta ?? null, region);
+      const durMs = (t: SpeechToken) => getTokenDurationInUnit(t, true, durationField || undefined);
+      const absolute = cfg.spectralContourAbsolute && data.some(t => durMs(t) > 0);
+      // Only tokens that carry this contour set the time axis, and the longest few do not
+      // get to leave the rest in the first tenth of the plot: the axis reaches the 98th
+      // percentile, and anything past it is clipped like any other out-of-range point.
+      const drawnDurations = absolute
+        ? data.filter(t => steps.some(i => !isNaN(valueAt(t, i)))).map(durMs).filter(d => d > 0).sort((a, b) => a - b)
+        : [];
+      const maxDur = drawnDurations.length ? quantile(drawnDurations, 0.98) : 0;
       const MIN_TOKENS_FOR_MEAN = 2;
       const absGrid = absolute
         ? Array.from({ length: 40 }, (_, j) => (j / 39) * maxDur)

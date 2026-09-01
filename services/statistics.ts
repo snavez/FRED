@@ -243,6 +243,47 @@ const ranks = (values: number[]): number[] => {
  * For n=3..5000. Uses the approximation from Royston (1995).
  * Returns W statistic and p-value.
  */
+/**
+ * Least-squares fit of y on x, with the strength of the relationship.
+ *
+ * `r` is Pearson's correlation, `r2` the share of the variance in y the line accounts
+ * for, and `pValue` the two-tailed test of r against zero (t = r sqrt(n-2) / sqrt(1-r^2)
+ * on n-2 df) — how surprising this much correlation would be if the two variables were
+ * unrelated. Needs at least three points and spread on both axes; returns null otherwise,
+ * since a line through two points explains everything and means nothing.
+ */
+export interface LinearFit {
+  slope: number;
+  intercept: number;
+  /** Pearson correlation, -1…1. */
+  r: number;
+  /** Coefficient of determination. */
+  r2: number;
+  pValue: number;
+  n: number;
+}
+
+export const linearFit = (points: { x: number; y: number }[]): LinearFit | null => {
+  const pts = points.filter(p => isFinite(p.x) && isFinite(p.y));
+  const n = pts.length;
+  if (n < 3) return null;
+  const mx = pts.reduce((a, p) => a + p.x, 0) / n;
+  const my = pts.reduce((a, p) => a + p.y, 0) / n;
+  let sxx = 0, syy = 0, sxy = 0;
+  for (const p of pts) {
+    const dx = p.x - mx, dy = p.y - my;
+    sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
+  }
+  if (sxx <= 0 || syy <= 0) return null;
+  const slope = sxy / sxx;
+  const r = Math.max(-1, Math.min(1, sxy / Math.sqrt(sxx * syy)));
+  const df = n - 2;
+  // A perfect fit leaves no residual to test against; report it as unambiguous.
+  const pValue = Math.abs(r) >= 1 ? 0
+    : 2 * (1 - jStat.studentt.cdf(Math.abs(r) * Math.sqrt(df / (1 - r * r)), df));
+  return { slope, intercept: my - slope * mx, r, r2: r * r, pValue, n };
+};
+
 export const shapiroWilk = (x: number[]): { W: number; pValue: number } => {
   const n = x.length;
   if (n < 3) return { W: 1, pValue: 1 };

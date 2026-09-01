@@ -162,6 +162,32 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
   Drawn last so data never covers it, and inside the transformed space so it pans and zooms
   with the plot. The legend overlay sits wholly inside it.
 
+### Scatter (any variable against any other)
+- Tab under **General**, for the question you are still forming: whether two measurements
+  separate your categories at all. Any numeric variable in the dataset can go on either
+  axis — `COG_release_50%` against `release_dur`, a formant against a pitch, a duration
+  against a spectral coefficient.
+- **Measures** (`utils/measures.ts`) are the shared catalogue of numeric variables:
+  `listNumericMeasures` enumerates them (token duration, then duration / pitch / spectral
+  / data columns, then the formants the file carries), `measureValue` reads one from a
+  token, and `measureLabel` names the axis. A formant needs a timepoint before it names a
+  single number, so those measures get their own time dropdown per axis
+  (`formantMeasureKeys` says which).
+- Both axes live on the background layer, so every visible layer shares one coordinate
+  space, as on the F1/F2 and Spectral scatters.
+- **The same visual vocabulary as F1/F2**: colour and shape encodings, points (size,
+  opacity), SD ellipses per group, group means as markers or labels, the on-screen legend
+  and StyleEditor, hover point-info, pan/zoom, and image export. `renderEncodingControls`
+  takes a `forcePointMode` flag so a trajectory layer is not offered line controls this
+  plot cannot honour.
+- **Fit** (`linearFit` in `services/statistics.ts`): a least-squares line with Pearson's
+  `r`, `R²`, the two-tailed p-value against no relationship (t = r√(n−2)/√(1−r²) on n−2
+  df) and `n`, drawn over the x-range the data actually covers. Fit **All tokens** or
+  **per colour group** — a single line through several clouds can suggest a relationship
+  that holds in none of them. The readout is drawn on the plot for the active layer.
+- Ranges default to fitting the data (`fitRange`), with Min/Max boxes to pin them; data
+  is clipped to the frame.
+
 ### Spectral (Consonant analysis)
 - Tab between **Time Series** and **Data Summaries** (labelled **Spectral**; `activeTab` id
   stays `'spectral'`), for consonant spectral data.
@@ -304,13 +330,24 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
     track columns do not hide a Band Energy Ratio available only at 20/50/80%.
     Normalised time averages pointwise, which is valid because every token shares
     the grid. **Absolute** (`spectralContourAbsolute`) instead places each token's samples
-    at its real times from `token.duration`, resamples onto a common millisecond grid by
+    at its real times from the duration column chosen in the controls, resamples onto a
+    common millisecond grid by
     linear interpolation, and averages only where ≥2 tokens still reach — so short tokens
     drop out of the tail instead of dragging the mean down, and the duration difference
     that normalised time hides becomes visible.
   - **Density** — Gaussian-KDE density curves of one feature per colour × line-type group
     (active layer).
     Groups with no values are skipped rather than drawn as a flat line on the axis.
+- **Absolute-time contours measure the right span** (`utils/duration.ts`). A dataset can
+  hold several duration columns — the whole segment, the closure, the release — and a
+  release contour drawn across the segment duration misreports how long the release
+  lasted. The **Duration** control (shown only in Absolute mode) names the column, and
+  defaults to whichever duration column names the region being plotted
+  (`durationFieldForRegion`: region `release` → `release_dur`). Naming a column is a
+  statement about which span to measure, so a token with no value in it has **no**
+  duration and is left out, rather than falling back to its whole segment and stretching
+  the axis. The time axis reaches the 98th percentile of the durations of the tokens that
+  actually carry the contour; longer ones are clipped like any other out-of-range point.
 - **Visual controls per mode** (Row 2, beside Colour). Contours and density reuse the
   trajectory config the scatter already uses, so a setting means the same thing wherever
   it appears; the distribution reuses the shared box-plot config with the Data Summaries
@@ -837,6 +874,7 @@ FRED/
     StyleEditor.tsx                    # Floating style editor (colors/shapes/etc.)
     DataMappingDialog.tsx              # Column mapping dialog for import
     OutlierExportDialog.tsx            # Ellipse-outlier CSV export (field picker + preview)
+    VariableScatterPlot.tsx            # Scatter tab: any measure vs any measure, with fit
   services/
     csvParser.ts                       # CSV/TSV parsing, auto-detection, alias table
     csvParser.test.ts                  # Parser tests
@@ -853,6 +891,10 @@ FRED/
     normalization.ts                   # Speaker stats, normalization (Lobanov, Nearey, etc.)
     plotEncoding.tsx                   # Shared encoding primitives (palette, shapes, dashes)
     csv.ts                             # CSV cell quoting, row building, file download
+    duration.ts                        # Which span a plot measures (columns, units, region match)
+    duration.test.ts                   # Duration-source tests
+    measures.ts                        # Numeric-variable catalogue + value accessor
+    measures.test.ts                   # Measure catalogue / accessor tests
     outliers.ts                        # Tokens outside their group's ellipse (+ CSV rows)
     outliers.test.ts                   # Outlier scan / divergence / CSV tests
     plotRange.ts                       # Axis ranges that fit what is drawn (fitRange, quantile)

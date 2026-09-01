@@ -3,6 +3,7 @@ import {
   pairedTTest, wilcoxonSignedRank, rmOneWayAnova, friedmanTest,
   pairedPostHoc, runRepeatedAnalysis, detectDesign, runAnalysis,
   applicableRepeatedTests,
+  linearFit,
 } from './statistics';
 
 // ─── Paired t-test ────────────────────────────────────────────────
@@ -220,5 +221,52 @@ describe('test applicability', () => {
     // 'anova' needs 3+ groups; with 2 it must fall back, not crash
     const r = runAnalysis(grouped, 0.05, 'anova');
     expect('error' in r).toBe(false);
+  });
+});
+
+describe('linearFit', () => {
+  const line = (n: number, slope: number, intercept: number, noise = 0) =>
+    Array.from({ length: n }, (_, i) => ({ x: i, y: intercept + slope * i + (i % 2 ? noise : -noise) }));
+
+  it('recovers the slope and intercept of a clean line', () => {
+    const fit = linearFit(line(10, 2.5, 7))!;
+    expect(fit.slope).toBeCloseTo(2.5);
+    expect(fit.intercept).toBeCloseTo(7);
+    expect(fit.r).toBeCloseTo(1);
+    expect(fit.r2).toBeCloseTo(1);
+    expect(fit.pValue).toBe(0);
+    expect(fit.n).toBe(10);
+  });
+
+  it('signs the correlation with the slope', () => {
+    expect(linearFit(line(10, -3, 100))!.r).toBeCloseTo(-1);
+  });
+
+  it('reports a weak, non-significant fit for unrelated variables', () => {
+    // y alternates independently of x: no linear relationship to find
+    const points = Array.from({ length: 30 }, (_, i) => ({ x: i, y: i % 2 === 0 ? 1 : -1 }));
+    const fit = linearFit(points)!;
+    expect(Math.abs(fit.r)).toBeLessThan(0.2);
+    expect(fit.pValue).toBeGreaterThan(0.05);
+  });
+
+  it('finds a real relationship through noise, and says how sure it is', () => {
+    const fit = linearFit(line(40, 1, 0, 3))!;
+    expect(fit.r).toBeGreaterThan(0.9);
+    expect(fit.pValue).toBeLessThan(0.001);
+  });
+
+  it('needs three points and spread on both axes', () => {
+    expect(linearFit([{ x: 0, y: 0 }, { x: 1, y: 1 }])).toBeNull();
+    // Every x identical: no line to fit
+    expect(linearFit([{ x: 5, y: 0 }, { x: 5, y: 1 }, { x: 5, y: 2 }])).toBeNull();
+    // Every y identical: a flat line explains nothing
+    expect(linearFit([{ x: 0, y: 3 }, { x: 1, y: 3 }, { x: 2, y: 3 }])).toBeNull();
+  });
+
+  it('ignores points missing either value', () => {
+    const fit = linearFit([...line(6, 2, 1), { x: NaN, y: 5 }, { x: 3, y: NaN }])!;
+    expect(fit.n).toBe(6);
+    expect(fit.slope).toBeCloseTo(2);
   });
 });

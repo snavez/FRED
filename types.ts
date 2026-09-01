@@ -153,10 +153,26 @@ export interface PlotConfig {
   spectralDensityFill: number;               // density: area fill opacity
   spectralShowBand: boolean;                 // contours: ±1 SD band around each mean
   spectralContourAbsolute: boolean;          // contours: absolute (ms) instead of normalised
+  // Duration column an absolute-time contour is stretched over. '' = the token's own
+  // duration. A dataset can hold several (whole segment, closure, release), and a
+  // release contour is only honest over the release duration.
+  spectralDurationField: string;
   spectralCoeffFacets: boolean;              // box: one mini plot per coefficient
   spectralFlipSign: boolean;                 // box/density: negate values (k1: neg = rising)
   spectralXRange: [number, number];          // scatter X range ([0,0] = auto)
   spectralYRange: [number, number];          // scatter/box/density value range ([0,0] = auto)
+
+  // Variable scatter Config (any numeric measure against any other)
+  varXField: string;                         // measure on X ('' until chosen)
+  varYField: string;                         // measure on Y
+  varXTime: number;                          // timepoint for a formant X measure
+  varYTime: number;                          // timepoint for a formant Y measure
+  varXRange: [number, number];               // [0,0] = fit to the data
+  varYRange: [number, number];
+  varShowRegression: boolean;                // least-squares line
+  varRegressionPerGroup: boolean;            // one line per colour group vs one overall
+  varShowStats: boolean;                     // r / R² / p / n readout on the plot
+  varRegressionWidth: number;
 
   // Table Panel Config
   tableMode: 'browse' | 'summary' | 'analysis';

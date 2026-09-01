@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { SpeechToken, PlotConfig, ReferenceCentroid, PlotHandle, VariableType, StyleOverrides, Layer, DatasetMeta, NormalizationMethod } from '../types';
 import { SpeakerStatsMap, getRangeStep, getAxisLabel, computeNormalizedRange } from '../utils/normalization';
 import {
@@ -14,6 +14,9 @@ import {
 import { getLabel } from '../utils/getLabel';
 import { listFilterFields, filterFieldLabel } from '../utils/filterFields';
 import { encodingGroupKey } from '../utils/plotEncoding';
+import { listDurationFields, durationFieldForRegion } from '../utils/duration';
+import { listNumericMeasures, formantMeasureKeys, measureLabel } from '../utils/measures';
+import VariableScatterPlot from './VariableScatterPlot';
 import { collectFormantPoints, findEllipseOutliers, EllipseOutlier } from '../utils/outliers';
 import OutlierExportDialog from './OutlierExportDialog';
 import CanvasPlot from './CanvasPlot';
@@ -66,6 +69,7 @@ const TAB_GROUPS: { label: string; tabs: { id: string; label: string; icon: Reac
     { id: 'spectral', label: 'Spectral', icon: Waves },
   ] },
   { label: 'General', tabs: [
+    { id: 'scatter', label: 'Scatter', icon: MoveUpRight },
     { id: 'duration', label: 'Data Summaries', icon: BarChart2 },
     { id: 'dist', label: 'Distributions', icon: PieChart },
     { id: 'stats', label: 'Statistics', icon: Sigma },
@@ -423,6 +427,12 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     return f ? formatSpectralFeature(f) : '';
   }, [currentConfig.spectralFeature, bgConfig.spectralXFeature, spectralMeta]);
 
+  /** The duration column an absolute contour defaults to: the one naming its region. */
+  const spectralAutoDurationField = useMemo(() => {
+    const contour = resolveSpectralContour(currentConfig.spectralTimelineMoment, bgConfig.spectralXFeature, spectralMeta);
+    return durationFieldForRegion(datasetMeta ?? null, contour?.region ?? '');
+  }, [currentConfig.spectralTimelineMoment, bgConfig.spectralXFeature, spectralMeta, datasetMeta]);
+
   /** The contour family the timeline will actually draw. */
   const spectralTimelineValue = useMemo(() => {
     const c = resolveSpectralContour(currentConfig.spectralTimelineMoment, bgConfig.spectralXFeature, spectralMeta);
@@ -471,6 +481,38 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   const sortedOutliers = useMemo(
     () => [...outlierScan.outliers].sort((a, b) => b.distance - a.distance),
     [outlierScan]);
+
+  /** Every numeric variable the dataset offers, for the scatter axes. */
+  const measureOptions = useMemo(() => listNumericMeasures(datasetMeta ?? null), [datasetMeta]);
+  /** Measures that need a timepoint before they name one number. */
+  const formantMeasures = useMemo(() => formantMeasureKeys(datasetMeta ?? null), [datasetMeta]);
+
+  /** The range the scatter actually drew, so its Min/Max boxes show real numbers. */
+  const [varAutoRange, setVarAutoRange] = useState<{ x: [number, number], y: [number, number] } | null>(null);
+
+  /**
+   * Seed the axes on first arrival: the first two measures the dataset offers beat an
+   * empty plot, and the user changes them from there.
+   */
+  useEffect(() => {
+    if (activeTab !== 'scatter' || measureOptions.length === 0) return;
+    if (!bgConfig.varXField) updateLayerConfig(layers[0].id, 'varXField', measureOptions[0].key);
+    if (!bgConfig.varYField) {
+      updateLayerConfig(layers[0].id, 'varYField', (measureOptions[1] ?? measureOptions[0]).key);
+    }
+  }, [activeTab, measureOptions, bgConfig.varXField, bgConfig.varYField, layers, updateLayerConfig]);
+
+  const varRangeValue = (cfgRange: [number, number], axis: 'x' | 'y', end: 0 | 1): number => {
+    const isAuto = cfgRange[0] === 0 && cfgRange[1] === 0;
+    if (!isAuto) return cfgRange[end];
+    const auto = varAutoRange?.[axis];
+    return auto ? roundForInput(auto[end]) : 0;
+  };
+  const varRangeEdit = (cfgRange: [number, number], axis: 'x' | 'y', end: 0 | 1, raw: string): [number, number] => {
+    const next: [number, number] = [varRangeValue(cfgRange, axis, 0), varRangeValue(cfgRange, axis, 1)];
+    next[end] = parseFloat(raw) || 0;
+    return next;
+  };
 
   const handleConfig = (key: keyof PlotConfig, val: any) => {
       updateLayerConfig(activeLayerId, key, val);
@@ -568,13 +610,20 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
   /** Shared visual-encoding controls (Colour, Shape/Line Type, Lines/Means/Labels/Points/
    *  Ellipses) used by both the F1/F2 plot and the Spectral Moments scatter, so the two share
    *  an identical layout. Operates on the active layer via currentConfig/handleConfig. */
-  const renderEncodingControls = () => (
+  /**
+   * Colour / Shape / point-and-line controls, shared by every scatter-like tab.
+   * `forcePointMode` is for tabs that always draw points whatever the layer's plot type,
+   * so a trajectory layer is not offered line controls the plot cannot honour.
+   */
+  const renderEncodingControls = (forcePointMode = false) => {
+    const asTrajectory = !forcePointMode && currentConfig.plotType === 'trajectory';
+    return (
     <>
       {/* Colour */}
       {renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))}
 
       {/* Shape / Line Type */}
-      {currentConfig.plotType === 'trajectory'
+      {asTrajectory
         ? renderVariableSelect('Line Type', currentConfig.lineTypeBy, val => handleConfig('lineTypeBy', val))
         : renderVariableSelect('Shape', currentConfig.shapeBy, val => handleConfig('shapeBy', val))
       }
@@ -582,7 +631,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
       <div className="w-px h-6 bg-slate-300"></div>
 
       {/* ── Trajectory mode: Lines / Means / Labels ── */}
-      {currentConfig.plotType === 'trajectory' && (
+      {asTrajectory && (
         <>
           <div className="flex items-center gap-1.5">
             <span className="font-bold">Lines</span>
@@ -655,7 +704,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
       )}
 
       {/* ── Point mode: Pts / Ellip / Means / Labels ── */}
-      {currentConfig.plotType !== 'trajectory' && (
+      {!asTrajectory && (
         <>
           <div className="flex items-center gap-1.5">
             <label className="flex items-center gap-1 cursor-pointer" title="Show Individual Points">
@@ -769,7 +818,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
         </>
       )}
     </>
-  );
+    );
+  };
 
   const startRename = (layerId: string, currentName: string) => {
     setEditingLayerName(layerId);
@@ -959,7 +1009,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                )}
 
                {/* Point Info Field Selector (F1/F2, 3D & Spectral Moments) */}
-               {(activeTab === 'vowel' || activeTab === '3d' || activeTab === 'spectral') && (
+               {(activeTab === 'vowel' || activeTab === '3d' || activeTab === 'spectral' || activeTab === 'scatter') && (
                  <div className="relative">
                    <button
                      onClick={() => setShowPointInfoSettings(!showPointInfoSettings)}
@@ -1348,6 +1398,23 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       </HelpTooltip>
                     )}
 
+                    {/* Absolute time is only meaningful over the span the contour measures */}
+                    {currentConfig.spectralMode === 'timeline' && currentConfig.spectralContourAbsolute && (
+                      <HelpTooltip helpMode={helpMode} text="Which duration each contour is stretched over. A dataset can hold several — the whole segment, the closure, the release — and a release contour drawn across the segment duration would misreport how long the release lasted. Defaults to the duration column named after the region being plotted.">
+                      <div className="flex items-center gap-2">
+                        <label className="font-semibold text-slate-600">Duration:</label>
+                        <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
+                          value={currentConfig.spectralDurationField || spectralAutoDurationField}
+                          onChange={e => handleConfig('spectralDurationField', e.target.value)}>
+                          <option value="">Token duration</option>
+                          {listDurationFields(datasetMeta ?? null).map(f => (
+                            <option key={f.key} value={f.key}>{f.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      </HelpTooltip>
+                    )}
+
                     {/* Scatter: which data set, then the axes within it */}
                     {currentConfig.spectralMode === 'scatter' && (
                       <>
@@ -1473,6 +1540,74 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   </>
                 )}
 
+                {/* Scatter: any measure against any other */}
+                {activeTab === 'scatter' && (
+                  <>
+                    <HelpTooltip helpMode={helpMode} text="Any numeric variable in the dataset can go on either axis — a duration against a spectral moment, a formant against a pitch. Both axes live on the background layer so every layer shares one coordinate space.">
+                    <div className="flex items-center gap-2">
+                      <label className="font-semibold text-slate-600">X:</label>
+                      <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700 max-w-[170px]"
+                        value={bgConfig.varXField}
+                        onChange={e => updateLayerConfig(layers[0].id, 'varXField', e.target.value)}>
+                        {measureOptions.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+                      </select>
+                      {formantMeasures.has(bgConfig.varXField) && (
+                        <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
+                          value={bgConfig.varXTime ?? 50}
+                          onChange={e => updateLayerConfig(layers[0].id, 'varXTime', parseFloat(e.target.value))}>
+                          {availableTimePoints.map(t => <option key={t} value={t}>{tpLabel(t)}</option>)}
+                        </select>
+                      )}
+                      <label className="font-semibold text-slate-600">Y:</label>
+                      <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700 max-w-[170px]"
+                        value={bgConfig.varYField}
+                        onChange={e => updateLayerConfig(layers[0].id, 'varYField', e.target.value)}>
+                        {measureOptions.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+                      </select>
+                      {formantMeasures.has(bgConfig.varYField) && (
+                        <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
+                          value={bgConfig.varYTime ?? 50}
+                          onChange={e => updateLayerConfig(layers[0].id, 'varYTime', parseFloat(e.target.value))}>
+                          {availableTimePoints.map(t => <option key={t} value={t}>{tpLabel(t)}</option>)}
+                        </select>
+                      )}
+                    </div>
+                    </HelpTooltip>
+
+                    <div className="w-px h-6 bg-slate-200"></div>
+
+                    <HelpTooltip helpMode={helpMode} text="A least-squares line through the points, with Pearson's r, the share of variance it accounts for (R²), the two-tailed p-value against no relationship, and n. Fit per group when the clouds differ — a single line through several clouds can suggest a relationship that holds in none of them.">
+                    <div className="flex flex-col">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Fit</span>
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-1 cursor-pointer" title="Least-squares regression line">
+                          <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.varShowRegression} onChange={e => handleConfig('varShowRegression', e.target.checked)} />
+                          <span className="text-[10px] font-bold text-slate-600">Line</span>
+                        </label>
+                        {currentConfig.varShowRegression && (
+                          <>
+                            <select className="p-0.5 border rounded text-[10px]" title="What the line is fitted to"
+                              value={currentConfig.varRegressionPerGroup ? 'group' : 'all'}
+                              onChange={e => handleConfig('varRegressionPerGroup', e.target.value === 'group')}>
+                              <option value="all">All tokens</option>
+                              <option value="group">Per colour group</option>
+                            </select>
+                            <input type="number" min="0.5" max="8" step="0.5" title="Line width"
+                              className="w-10 p-0.5 border rounded text-[10px]"
+                              value={currentConfig.varRegressionWidth || 2}
+                              onChange={e => handleConfig('varRegressionWidth', parseFloat(e.target.value) || 1)} />
+                            <label className="flex items-center gap-1 cursor-pointer" title="Show r, R², p and n on the plot">
+                              <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.varShowStats} onChange={e => handleConfig('varShowStats', e.target.checked)} />
+                              <span className="text-[10px] font-bold text-slate-600">Stats</span>
+                            </label>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    </HelpTooltip>
+                  </>
+                )}
+
                 {/* Mode toggle (dist tab) */}
                 {activeTab === 'dist' && (
                   <HelpTooltip helpMode={helpMode} text="Counts = categorical bar chart of token frequencies. Distribution = continuous histogram of a numeric variable (duration, formants, etc.).">
@@ -1530,6 +1665,34 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 {/* Range Controls */}
                 {(activeTab !== 'spectral' || spectralMeta.available) && (
                 <div className="flex items-center gap-2 border-r border-slate-300 pr-4 mr-2">
+                  {/* Scatter: manual ranges on the shared coordinate space. 0 / 0 = auto-fit. */}
+                  {activeTab === 'scatter' && (
+                    <>
+                      <div className="flex flex-col" title="X axis range — set both to 0 for auto-fit">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight truncate max-w-[110px]">X · {measureLabel(bgConfig.varXField, bgConfig.varXTime, datasetMeta ?? null)}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-bold text-slate-500">Min</span>
+                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={varRangeValue(bgConfig.varXRange, 'x', 0)} onChange={e => updateLayerConfig(layers[0].id, 'varXRange', varRangeEdit(bgConfig.varXRange, 'x', 0, e.target.value))} />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-bold text-slate-500">Max</span>
+                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={varRangeValue(bgConfig.varXRange, 'x', 1)} onChange={e => updateLayerConfig(layers[0].id, 'varXRange', varRangeEdit(bgConfig.varXRange, 'x', 1, e.target.value))} />
+                        </div>
+                      </div>
+                      <div className="flex flex-col" title="Y axis range — set both to 0 for auto-fit">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight truncate max-w-[110px]">Y · {measureLabel(bgConfig.varYField, bgConfig.varYTime, datasetMeta ?? null)}</span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-bold text-slate-500">Min</span>
+                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={varRangeValue(bgConfig.varYRange, 'y', 0)} onChange={e => updateLayerConfig(layers[0].id, 'varYRange', varRangeEdit(bgConfig.varYRange, 'y', 0, e.target.value))} />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[9px] font-bold text-slate-500">Max</span>
+                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={varRangeValue(bgConfig.varYRange, 'y', 1)} onChange={e => updateLayerConfig(layers[0].id, 'varYRange', varRangeEdit(bgConfig.varYRange, 'y', 1, e.target.value))} />
+                        </div>
+                      </div>
+                    </>
+                  )}
+
                   {/* Spectral scatter: manual axis ranges on the shared (background) coordinate
                       space, labelled by the current axis measures. 0 / 0 = auto-fit. */}
                   {activeTab === 'spectral' && currentConfig.spectralMode === 'scatter' && (
@@ -2186,6 +2349,13 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   </div>
                 </div>
                 </HelpTooltip>
+              </div>
+            )}
+
+            {/* ── Scatter: Row 2 — the same visual controls as F1/F2 ── */}
+            {activeTab === 'scatter' && (
+              <div className="flex items-center gap-3 flex-wrap border-t border-slate-200 pt-2 min-h-[40px]">
+                {renderEncodingControls(true)}
               </div>
             )}
 
@@ -2903,6 +3073,17 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             datasetMeta={datasetMeta}
             onLegendClick={handleLegendClick}
             onAutoRange={setSpectralAutoRange}
+          />
+        )}
+        {activeTab === 'scatter' && (
+          <VariableScatterPlot
+            ref={plotRef}
+            layers={layers}
+            layerData={layerData}
+            activeLayerId={activeLayerId}
+            datasetMeta={datasetMeta ?? null}
+            onLegendClick={handleLegendClick}
+            onAutoRange={setVarAutoRange}
           />
         )}
         {activeTab === 'duration' && (

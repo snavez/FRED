@@ -15,41 +15,6 @@ interface TrajectoryTimeSeriesProps {
 }
 
 /** Get effective duration for a token, falling back to duration-like fields */
-const getTokenDuration = (t: SpeechToken): number => {
-  if (t.duration > 0) return t.duration;
-  // Fallback: check fields for a duration-like key
-  for (const [key, val] of Object.entries(t.fields)) {
-    const k = key.toLowerCase();
-    if (k === 'duration' || k === 'dur' || k.startsWith('dur_') || k.endsWith('_dur') || k.endsWith('_duration')) {
-      const n = parseFloat(val);
-      if (!isNaN(n) && n > 0) return n;
-    }
-  }
-  return 0;
-};
-
-/** Token duration for absolute-time plotting in the chosen x-axis unit (ms or seconds).
- *  If durationField is provided, reads that field from t.fields (falling back to
- *  SpeechToken.duration if the field is missing/unparseable). */
-const getTokenDurationInUnit = (t: SpeechToken, useMs: boolean, durationField?: string): number => {
-  // User-selected duration field takes priority for percentage data
-  if (durationField && t.fields[durationField] !== undefined) {
-    const raw = parseFloat(t.fields[durationField]);
-    if (!isNaN(raw) && raw > 0) {
-      if (useMs) return raw > 10 ? raw : raw * 1000;
-      return raw > 10 ? raw / 1000 : raw;
-    }
-  }
-  if (useMs) {
-    if (t.trajectoryDurationMs && t.trajectoryDurationMs > 0) return t.trajectoryDurationMs;
-    const d = getTokenDuration(t);
-    return d > 10 ? d : d * 1000;
-  }
-  if (t.trajectoryDurationMs && t.trajectoryDurationMs > 0) return t.trajectoryDurationMs / 1000;
-  const d = getTokenDuration(t);
-  return d > 10 ? d / 1000 : d;
-};
-
 const COLORS = [
   '#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', 
   '#ec4899', '#06b6d4', '#84cc16', '#64748b', '#dc2626', 
@@ -79,6 +44,7 @@ const DASH_PATTERNS = [
 const DASH_NAMES = ['solid', 'dash', 'dot', 'longdash', 'dotdash', 'solid'];
 
 import { getLabel } from '../utils/getLabel';
+import { getTokenDuration, getTokenDurationInUnit } from '../utils/duration';
 
 
 const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>(({ data, config, styleOverrides, onLegendClick, speakerStats, datasetMeta }, ref) => {
