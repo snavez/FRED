@@ -1944,12 +1944,13 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                   </>
                 )}
 
-                {/* General Visualization Controls (spectral has its own Row 2 for these) */}
-                {activeTab !== 'duration' && activeTab !== 'traj_series' && activeTab !== 'dist' && activeTab !== 'spectral' && (
+                {/* General Visualization Controls — tabs with their own Row 2 (spectral,
+                    scatter) carry Colour there instead, so it is not offered twice. */}
+                {activeTab !== 'duration' && activeTab !== 'traj_series' && activeTab !== 'dist' && activeTab !== 'spectral' && activeTab !== 'scatter' && (
                   renderVariableSelect('Colour', currentConfig.colorBy, v => handleConfig('colorBy', v))
                 )}
 
-                {activeTab !== 'traj_series' && activeTab !== 'duration' && activeTab !== 'dist' && activeTab !== 'spectral' && (
+                {activeTab !== 'traj_series' && activeTab !== 'duration' && activeTab !== 'dist' && activeTab !== 'spectral' && activeTab !== 'scatter' && (
                   <div className="h-6 w-px bg-slate-300"></div>
                 )}
 

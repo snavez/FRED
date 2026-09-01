@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, u
 import { SpeechToken, PlotConfig, PlotHandle, ExportConfig, DatasetMeta, Layer } from '../types';
 import { getLabel } from '../utils/getLabel';
 import { fitRange, quantile } from '../utils/plotRange';
+import { resampleContour } from '../utils/contours';
 import { durationFieldForRegion, getTokenDurationInUnit } from '../utils/duration';
 import { axisTicks, formatMeasureValue } from '../utils/axisTicks';
 import {
@@ -621,9 +622,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         : [];
       const maxDur = drawnDurations.length ? quantile(drawnDurations, 0.98) : 0;
       const MIN_TOKENS_FOR_MEAN = 2;
-      const absGrid = absolute
-        ? Array.from({ length: 40 }, (_, j) => (j / 39) * maxDur)
-        : [];
+      const ABS_SAMPLES = 40;
       /** Value of a token's contour at an absolute time, by linear interpolation. */
       const valueAtMs = (t: SpeechToken, ms: number): number => {
         const d = durMs(t);
@@ -636,18 +635,25 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         return a + (b - a) * (pos - lo);
       };
 
-      const xValues = absolute ? absGrid : steps;
       const perGroup = keys.map(k => {
         const toks = groups[k] || [];
-        const cells = xValues.map((x, j) => {
-          const vals = (absolute ? toks.map(t => valueAtMs(t, x)) : toks.map(t => valueAt(t, steps[j])))
-            .filter(v => !isNaN(v));
-          if (vals.length < (absolute ? MIN_TOKENS_FOR_MEAN : 1)) return { mean: NaN, sd: NaN };
+        if (absolute) {
+          // Resampled from this group's tokens alone (see utils/contours.ts), so its
+          // contour does not change when another group joins the plot.
+          const withData = toks.filter(t => steps.some(i => !isNaN(valueAt(t, i))));
+          const series = resampleContour(withData, {
+            durationMs: durMs, valueAtMs, samples: ABS_SAMPLES, minTokens: MIN_TOKENS_FOR_MEAN,
+          });
+          return { key: k, ...series, n: toks.length };
+        }
+        const cells = steps.map((_, j) => {
+          const vals = toks.map(t => valueAt(t, steps[j])).filter(v => !isNaN(v));
+          if (vals.length < 1) return { mean: NaN, sd: NaN };
           const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
           const sd = Math.sqrt(vals.reduce((a, b) => a + (b - mean) ** 2, 0) / vals.length);
           return { mean, sd };
         });
-        return { key: k, cells, n: toks.length };
+        return { key: k, xs: steps, cells, span: 0, n: toks.length };
       });
       // The mean contours are what this plot exists to show, so they always fit; the band
       // too when drawn. The individual lines are a long-tailed cloud around them and only
@@ -662,7 +668,11 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       const [fitLo, fitHi] = fitRange(must, cfg.spectralShowIndividual ? rawValues : []);
       const [vLo, vHi] = rangeOr(cfg.spectralYRange, fitLo, fitHi);
       reportRange([0, 0], [vLo, vHi]);
-      const xLo = absolute ? 0 : first, xHi = absolute ? maxDur : last;
+      const contourEnd = Math.max(...perGroup.map(g => g.span), 0);
+      // The axis holds every contour drawn; the faded cloud extends it only when shown,
+      // and only to its trimmed extent.
+      const absEnd = Math.max(contourEnd, cfg.spectralShowIndividual ? maxDur : 0) || maxDur || 1;
+      const xLo = absolute ? 0 : first, xHi = absolute ? absEnd : last;
       const mapX = (x: number) => area.x + ((x - xLo) / (xHi - xLo || 1)) * area.w;
       const mapY = (v: number) => area.y + area.h - ((v - vLo) / (vHi - vLo)) * area.h;
       const xTicks = absolute
@@ -680,9 +690,11 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       if (cfg.spectralShowIndividual) {
         const lineOpacity = cfg.trajectoryLineOpacity ?? 0.15;
         data.forEach(t => {
+          const span = absolute ? durMs(t) : 0;
           const path = (absolute
-            ? absGrid.map(x => ({ x, v: valueAtMs(t, x) }))
+            ? steps.map(i => ({ x: ((i - first) / (last - first || 1)) * span, v: valueAt(t, i) }))
             : steps.map(i => ({ x: i, v: valueAt(t, i) }))).filter(p => !isNaN(p.v));
+          if (absolute && !(span > 0)) return;
           if (path.length < 2) return;
           ctx.beginPath(); path.forEach((p, j) => { const x = mapX(p.x), y = mapY(p.v); if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
           ctx.strokeStyle = `rgba(${hexToRgb(enc.colorKey ? (enc.colorMap[getLabel(t, enc.colorKey)] || dc) : dc)},${lineOpacity})`;
@@ -695,7 +707,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       // ±1 SD ribbons first, so the mean lines read on top of them.
       if (cfg.spectralShowBand) {
         perGroup.forEach(g => {
-          const band = g.cells.map((c, j) => ({ ...c, x: xValues[j] })).filter(c => !isNaN(c.mean) && !isNaN(c.sd));
+          const band = g.cells.map((c, j) => ({ ...c, x: g.xs[j] })).filter(c => !isNaN(c.mean) && !isNaN(c.sd));
           if (band.length < 2) return;
           ctx.beginPath();
           band.forEach((c, j) => { const x = mapX(c.x), y = mapY(c.mean + c.sd); if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
@@ -711,11 +723,11 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         const color = colorForKey(g.key);
         ctx.globalAlpha = cfg.meanTrajectoryOpacity ?? 1;
         ctx.beginPath(); let started = false;
-        g.cells.forEach((c, j) => { if (isNaN(c.mean)) { started = false; return; } const x = mapX(xValues[j]), y = mapY(c.mean); if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); });
+        g.cells.forEach((c, j) => { if (isNaN(c.mean)) { started = false; return; } const x = mapX(g.xs[j]), y = mapY(c.mean); if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); });
         ctx.setLineDash(dashForKey(g.key).map(v => v * s)); ctx.strokeStyle = color; ctx.lineWidth = meanWidth; ctx.stroke();
         ctx.setLineDash([]);
         // Absolute mode resamples onto a fine grid, so per-sample dots would be noise.
-        if (!absolute && pointSize > 0) g.cells.forEach((c, j) => { if (isNaN(c.mean)) return; ctx.beginPath(); ctx.arc(mapX(xValues[j]), mapY(c.mean), pointSize * s, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); });
+        if (!absolute && pointSize > 0) g.cells.forEach((c, j) => { if (isNaN(c.mean)) return; ctx.beginPath(); ctx.arc(mapX(g.xs[j]), mapY(c.mean), pointSize * s, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); });
         ctx.globalAlpha = 1;
         // Group label at the end of its contour, halo'd so it stays readable over the cloud
         if (cfg.showTrajectoryLabels && g.key !== '__all__') {
@@ -723,7 +735,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
           if (last) {
             const size = exportConfig ? exportConfig.dataLabelSize : (cfg.meanTrajectoryLabelSize || 12);
             ctx.font = `bold ${size * s}px Inter, sans-serif`; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
-            const x = mapX(xValues[last.j]) - 4 * s, y = mapY(last.c.mean) - (pointSize + 3) * s;
+            const x = mapX(g.xs[last.j]) - 4 * s, y = mapY(last.c.mean) - (pointSize + 3) * s;
             ctx.strokeStyle = 'white'; ctx.lineWidth = 3 * s; ctx.lineJoin = 'round';
             const label = labelForKey(g.key); ctx.strokeText(label, x, y); ctx.fillStyle = color; ctx.fillText(label, x, y);
           }

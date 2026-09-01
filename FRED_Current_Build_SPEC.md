@@ -175,6 +175,7 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
   (`formantMeasureKeys` says which).
 - Both axes live on the background layer, so every visible layer shares one coordinate
   space, as on the F1/F2 and Spectral scatters.
+- Colour lives in Row 2 with the rest of the encodings, not twice.
 - **The same visual vocabulary as F1/F2**: colour and shape encodings, points (size,
   opacity), SD ellipses per group, group means as markers or labels, the on-screen legend
   and StyleEditor, hover point-info, pan/zoom, and image export. `renderEncodingControls`
@@ -346,8 +347,18 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
   (`durationFieldForRegion`: region `release` → `release_dur`). Naming a column is a
   statement about which span to measure, so a token with no value in it has **no**
   duration and is left out, rather than falling back to its whole segment and stretching
-  the axis. The time axis reaches the 98th percentile of the durations of the tokens that
-  actually carry the contour; longer ones are clipped like any other out-of-range point.
+  the axis.
+- **Each contour is resampled over its own span** (`utils/contours.ts`), from its own
+  tokens. A shared grid made a group's shape *and length* depend on the longest group
+  present, so adding a category silently redrew the ones already on the plot. The span
+  runs to the group's **median duration**: past that fewer than half its tokens are still
+  sounding, and a mean over the few longest describes them rather than the group. Two
+  consequences worth knowing: a contour's length is readable as that group's median
+  duration (/t/ ends at 26 ms, /tʰ/ at 59 ms, /ts/ at 77 ms in the release data), and
+  every sample averages at least half the group. The time axis covers every contour
+  drawn, extended to the 98th percentile of token durations only when the faded
+  individual lines are shown; those lines are drawn at each token's own sample times,
+  with no resampling at all.
 - **Visual controls per mode** (Row 2, beside Colour). Contours and density reuse the
   trajectory config the scatter already uses, so a setting means the same thing wherever
   it appears; the distribution reuses the shared box-plot config with the Data Summaries
@@ -890,6 +901,8 @@ FRED/
     filterFields.test.ts               # Label-field rule tests
     normalization.ts                   # Speaker stats, normalization (Lobanov, Nearey, etc.)
     plotEncoding.tsx                   # Shared encoding primitives (palette, shapes, dashes)
+    contours.ts                        # Mean contours over absolute time (per-group spans)
+    contours.test.ts                   # Contour resampling / span tests
     csv.ts                             # CSV cell quoting, row building, file download
     duration.ts                        # Which span a plot measures (columns, units, region match)
     duration.test.ts                   # Duration-source tests
