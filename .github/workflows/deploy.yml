@@ -3,6 +3,10 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [master]
+  # Lets a deploy be re-run from the Actions tab. A failed deploy cannot simply be
+  # re-run in place: that uploads a second github-pages artifact into the same run and
+  # the deploy step then refuses to choose between them.
+  workflow_dispatch:
 
 permissions:
   contents: read
