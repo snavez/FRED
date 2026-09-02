@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, u
 import { SpeechToken, PlotConfig, PlotHandle, ExportConfig, DatasetMeta, Layer } from '../types';
 import { getLabel } from '../utils/getLabel';
 import { fitRange, quantile } from '../utils/plotRange';
+import { axisFraction, panRange, zoomRange } from '../utils/zoomRange';
 import { resampleContour } from '../utils/contours';
 import { durationFieldForRegion, getTokenDurationInUnit } from '../utils/duration';
 import { axisTicks, formatMeasureValue } from '../utils/axisTicks';
@@ -28,6 +29,11 @@ interface SpectralMomentsPlotProps {
   onLegendClick?: (category: string, currentStyles: { color: string, shape: string, texture: number, lineType: string }, event: React.MouseEvent, layerId?: string) => void;
   /** Reports the axis range actually drawn, so the range inputs can show real numbers. */
   onAutoRange?: (range: { x: [number, number], y: [number, number] }) => void;
+  /**
+   * Zoom and pan move the axes rather than scaling the canvas: the frame stays put and
+   * the numbers on it change, so zooming out actually brings more data into view.
+   */
+  onViewRange?: (x: [number, number], y: [number, number]) => void;
 }
 
 interface MomentStats { min: number; max: number; q1: number; median: number; q3: number; mean: number; sd: number; count: number; values: number[]; }
@@ -97,12 +103,11 @@ const buildGroups = (data: SpeechToken[], enc: EncodingMaps, secondary: 'shape' 
   });
 };
 
-const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ layers, layerData, activeLayerId, datasetMeta, onLegendClick, onAutoRange }, ref) => {
+const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ layers, layerData, activeLayerId, datasetMeta, onLegendClick, onAutoRange, onViewRange }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hovered, setHovered] = useState<{ lines: string[] } | null>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
-  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const isDragging = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
   const scatterHits = useRef<{ token: SpeechToken, layer: Layer, x: number, y: number, extra: string[] }[]>([]);
@@ -792,12 +797,13 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       const legendEntries: { color: string, label: string, dash?: number[], texture?: number }[] = [];
       legendLayers.forEach(({ layer, enc }) => {
         const suffix = showTitles ? ` · ${layer.name}` : '';
+        // Counts belong in every legend, on screen and in export alike
         if (enc.colorKey && exportConfig.showColorLegend !== false) Object.keys(enc.colorMap).sort().forEach(k =>
-          legendEntries.push({ color: enc.colorMap[k], label: `${enc.colorKey}: ${k}${suffix}` }));
+          legendEntries.push({ color: enc.colorMap[k], label: `${enc.colorKey}: ${k} (n=${enc.colorCounts[k] || 0})${suffix}` }));
         if (enc.lineTypeKey && exportConfig.showLineTypeLegend !== false) Object.keys(enc.lineTypePatternMap).sort().forEach(k =>
-          legendEntries.push({ color: '#475569', dash: enc.lineTypePatternMap[k], label: `${enc.lineTypeKey}: ${k}${suffix}` }));
+          legendEntries.push({ color: '#475569', dash: enc.lineTypePatternMap[k], label: `${enc.lineTypeKey}: ${k} (n=${enc.lineTypeCounts[k] || 0})${suffix}` }));
         if (enc.textureKey && exportConfig.showTextureLegend !== false) Object.keys(enc.textureMap).sort().forEach(k =>
-          legendEntries.push({ color: '#475569', texture: enc.textureMap[k], label: `${enc.textureKey}: ${k}${suffix}` }));
+          legendEntries.push({ color: '#475569', texture: enc.textureMap[k], label: `${enc.textureKey}: ${k} (n=${enc.textureCounts[k] || 0})${suffix}` }));
       });
       const hasLegend = exportConfig.showLegend && legendEntries.length > 0;
       const itemS = (exportConfig.legendItemSize || 24) * drawScale;
@@ -861,7 +867,11 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
   // Wheel zoom (non-passive)
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas) return;
-    const onWheel = (e: WheelEvent) => { e.preventDefault(); const rect = canvas.getBoundingClientRect(); const mx = e.clientX - rect.left, my = e.clientY - rect.top; const factor = e.deltaY > 0 ? 0.92 : 1.08; setTransform(t => { const ns = Math.max(0.2, Math.min(20, t.scale * factor)); const r = ns / t.scale; return { x: mx - r * (mx - t.x), y: my - r * (my - t.y), scale: ns }; }); };
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      zoomAbout(e.clientX - rect.left, e.clientY - rect.top, e.deltaY > 0 ? 1 / 1.08 : 1.08);
+    };
     canvas.addEventListener('wheel', onWheel, { passive: false }); return () => canvas.removeEventListener('wheel', onWheel);
   }, []);
 
@@ -872,25 +882,54 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
     const rect = canvas.getBoundingClientRect(); const dpr = window.devicePixelRatio || 1;
     canvas.width = rect.width * dpr; canvas.height = rect.height * dpr;
     const ctx = canvas.getContext('2d'); if (!ctx) return;
-    ctx.save(); ctx.scale(dpr, dpr); ctx.translate(transform.x, transform.y); ctx.scale(transform.scale, transform.scale);
+    ctx.save(); ctx.scale(dpr, dpr);
     renderPlot(ctx, rect.width, rect.height, 1, 1); ctx.restore();
-  }, [renderPlot, transform]);
+  }, [renderPlot]);
 
   const handleMouseDown = (e: React.MouseEvent) => { isDragging.current = true; lastMouse.current = { x: e.clientX, y: e.clientY }; };
   const handleMouseUp = () => { isDragging.current = false; };
   const handleMouseMove = (e: React.MouseEvent) => {
     const container = containerRef.current;
     if (container) { const cr = container.getBoundingClientRect(); setMousePos({ x: e.clientX - cr.left, y: e.clientY - cr.top }); }
-    if (isDragging.current) { const dx = e.clientX - lastMouse.current.x, dy = e.clientY - lastMouse.current.y; lastMouse.current = { x: e.clientX, y: e.clientY }; setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy })); setHovered(null); return; }
+    if (isDragging.current) {
+      const dx = e.clientX - lastMouse.current.x, dy = e.clientY - lastMouse.current.y;
+      lastMouse.current = { x: e.clientX, y: e.clientY };
+      const view = lastReportedRange.current, area = frame();
+      if (onViewRange && view && area.w > 0 && area.h > 0) {
+        onViewRange(panRange(view.x, -dx / area.w), panRange(view.y, dy / area.h));
+      }
+      setHovered(null);
+      return;
+    }
     if (activeConfig.spectralMode !== 'scatter') { if (hovered) setHovered(null); return; }
     const canvas = canvasRef.current; if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
-    const mx = (e.clientX - rect.left - transform.x) / transform.scale, my = (e.clientY - rect.top - transform.y) / transform.scale;
-    let best: typeof scatterHits.current[number] | null = null; let bestD = 12 / transform.scale;
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    let best: typeof scatterHits.current[number] | null = null; let bestD = 12;
     for (const h of scatterHits.current) { const d = Math.hypot(h.x - mx, h.y - my); if (d < bestD) { bestD = d; best = h; } }
     if (best) setHovered({ lines: tooltipLines(best.token, best.layer, best.extra) }); else if (hovered) setHovered(null);
   };
-  const resetView = () => setTransform({ x: 0, y: 0, scale: 1 });
+  /** The frame in canvas pixels — the same margins renderPlot uses. */
+  const frame = () => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const w = rect?.width ?? 0, h = rect?.height ?? 0;
+    const gutter = legendLayers.length > 0 ? 288 : 24;
+    return { x: 82, y: 24, w: w - 82 - gutter, h: h - 24 - 64 };
+  };
+
+  /** Zoom both axes about a point in canvas pixels, by moving the ranges. */
+  const zoomAbout = (px: number, py: number, factor: number) => {
+    const view = lastReportedRange.current;
+    if (!onViewRange || !view) return;
+    const area = frame();
+    if (area.w <= 0 || area.h <= 0) return;
+    onViewRange(
+      zoomRange(view.x, axisFraction(px, area.x, area.w), factor),
+      zoomRange(view.y, axisFraction(py, area.y, area.h, true), factor),
+    );
+  };
+
+  const resetView = () => onViewRange?.([0, 0], [0, 0]);
 
   const dashArray = (name: number[]) => name.length ? name.join(',') : undefined;
 
@@ -998,8 +1037,8 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
           </div>
         </div>
       )}
-      {(transform.scale !== 1 || transform.x !== 0 || transform.y !== 0) && (
-        <button onClick={resetView} className="absolute bottom-2 left-2 px-2 py-1 text-[10px] font-semibold bg-white/90 border border-slate-200 rounded shadow-sm hover:bg-slate-50">Reset view</button>
+      {onViewRange && (
+        <button onClick={resetView} className="absolute bottom-2 left-2 px-2 py-1 text-[10px] font-semibold bg-white/90 border border-slate-200 rounded shadow-sm hover:bg-slate-50" title="Fit the axes to the data again">Fit to data</button>
       )}
       {hovered && (
         <div className="absolute pointer-events-none z-10 bg-slate-800 text-white text-[11px] rounded px-2 py-1 shadow-lg" style={{ left: mousePos.x + 12, top: mousePos.y + 12, maxWidth: 260 }}>

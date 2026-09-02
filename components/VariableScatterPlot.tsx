@@ -5,6 +5,7 @@ import { drawShape, hexToRgb, computeEncodingMaps, EncodingMaps, encodingGroupKe
 import { axisTicks, formatMeasureValue } from '../utils/axisTicks';
 import { measureLabel, measureValue } from '../utils/measures';
 import { fitRange } from '../utils/plotRange';
+import { axisFraction, panRange, zoomRange } from '../utils/zoomRange';
 import { linearFit, LinearFit } from '../services/statistics';
 
 /**
@@ -25,6 +26,11 @@ interface VariableScatterPlotProps {
   onLegendClick?: (category: string, currentStyles: { color: string, shape: string, texture: number, lineType: string }, event: React.MouseEvent, layerId?: string) => void;
   /** Reports the range actually drawn, so the Min/Max inputs can show real numbers. */
   onAutoRange?: (range: { x: [number, number], y: [number, number] }) => void;
+  /**
+   * Zoom and pan move the axes rather than scaling the canvas: the frame stays put and
+   * the numbers on it change, so zooming out actually brings more data into view.
+   */
+  onViewRange?: (x: [number, number], y: [number, number]) => void;
 }
 
 interface Plotted { token: SpeechToken; x: number; y: number; }
@@ -60,13 +66,12 @@ const buildGroups = (
 };
 
 const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
-  { layers, layerData, activeLayerId, datasetMeta, onLegendClick, onAutoRange }, ref,
+  { layers, layerData, activeLayerId, datasetMeta, onLegendClick, onAutoRange, onViewRange }, ref,
 ) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hovered, setHovered] = useState<{ lines: string[] } | null>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
-  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const isDragging = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
   const hits = useRef<{ token: SpeechToken, layer: Layer, x: number, y: number, coords: string[] }[]>([]);
@@ -293,7 +298,8 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
           Object.keys(enc.colorMap).sort().forEach(k => {
             ctx.fillStyle = enc.colorMap[k]; ctx.beginPath(); ctx.arc(lx + 5, ly + 5, 5, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = '#334155'; ctx.font = `11px Inter, sans-serif`;
-            ctx.fillText(k, lx + 16, ly); ly += 16;
+            // Counts belong in every legend, so a group's weight is never guessed at
+            ctx.fillText(`${k} (n=${enc.colorCounts[k] || 0})`, lx + 16, ly); ly += 16;
           });
           ly += 6;
         }
@@ -313,10 +319,9 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save(); ctx.scale(dpr, dpr);
-    ctx.translate(transform.x, transform.y); ctx.scale(transform.scale, transform.scale);
     renderPlot(ctx, w, h, 0, 1);
     ctx.restore();
-  }, [renderPlot, transform]);
+  }, [renderPlot]);
 
   useEffect(() => { draw(); }, [draw]);
   useEffect(() => {
@@ -339,8 +344,10 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
       const plotW = 2000 * gsX * scale, plotH = 1400 * gsY * scale;
       const entries: { color: string, label: string }[] = [];
       legendLayers.forEach(({ layer, enc }) => {
-        if (enc.colorKey) Object.keys(enc.colorMap).sort().forEach(k =>
-          entries.push({ color: enc.colorMap[k], label: showTitles ? `${k} · ${layer.name}` : k }));
+        if (enc.colorKey) Object.keys(enc.colorMap).sort().forEach(k => {
+          const label = `${k} (n=${enc.colorCounts[k] || 0})`;
+          entries.push({ color: enc.colorMap[k], label: showTitles ? `${label} · ${layer.name}` : label });
+        });
       });
       const hasLegend = exportConfig.showLegend && entries.length > 0;
       const legendW = hasLegend ? 460 * scale : 0;
@@ -373,6 +380,26 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
   }), [renderPlot, legendLayers, showTitles]);
 
   // ─── Interaction ───
+  /** The frame in canvas pixels — the same margins renderPlot uses. */
+  const frame = () => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const w = rect?.width ?? 0, h = rect?.height ?? 0;
+    const gutter = legendLayers.length > 0 ? 288 : 24;
+    return { x: 88, y: 24, w: w - 88 - gutter, h: h - 24 - 64 };
+  };
+
+  /** Zoom both axes about a point in canvas pixels, by moving the ranges. */
+  const zoomAbout = (px: number, py: number, factor: number) => {
+    const view = lastRange.current;
+    if (!onViewRange || !view) return;
+    const area = frame();
+    if (area.w <= 0 || area.h <= 0) return;
+    onViewRange(
+      zoomRange(view.x, axisFraction(px, area.x, area.w), factor),
+      zoomRange(view.y, axisFraction(py, area.y, area.h, true), factor),
+    );
+  };
+
   const onMove = (e: React.MouseEvent) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -380,11 +407,15 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
     setMousePos({ x: mx, y: my });
     if (isDragging.current) {
-      setTransform(t => ({ ...t, x: t.x + (e.clientX - lastMouse.current.x), y: t.y + (e.clientY - lastMouse.current.y) }));
+      const dx = e.clientX - lastMouse.current.x, dy = e.clientY - lastMouse.current.y;
       lastMouse.current = { x: e.clientX, y: e.clientY };
+      const view = lastRange.current, area = frame();
+      if (onViewRange && view && area.w > 0 && area.h > 0) {
+        onViewRange(panRange(view.x, -dx / area.w), panRange(view.y, dy / area.h));
+      }
       return;
     }
-    const px = (mx - transform.x) / transform.scale, py = (my - transform.y) / transform.scale;
+    const px = mx, py = my;
     let best: typeof hits.current[0] | null = null, bestD = 12;
     for (const h of hits.current) {
       const d = Math.hypot(h.x - px, h.y - py);
@@ -406,8 +437,9 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
       onMouseLeave={() => { isDragging.current = false; setHovered(null); }}
       onMouseMove={onMove}
       onWheel={e => {
-        const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-        setTransform(t => ({ ...t, scale: Math.max(0.2, Math.min(20, t.scale * factor)) }));
+        const rect = canvasRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        zoomAbout(e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? 1.1 : 1 / 1.1);
       }}
     >
       <canvas ref={canvasRef} className="w-full h-full" />
@@ -418,9 +450,10 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
         </div>
       )}
       <div className="absolute bottom-2 left-2 flex gap-1">
-        <button onClick={() => setTransform({ x: 0, y: 0, scale: 1 })}
-          className="px-2 py-1 text-[10px] font-bold bg-white/90 border border-slate-200 rounded hover:bg-white">
-          Reset view
+        <button onClick={() => onViewRange?.([0, 0], [0, 0])}
+          className="px-2 py-1 text-[10px] font-bold bg-white/90 border border-slate-200 rounded hover:bg-white"
+          title="Fit the axes to the data again">
+          Fit to data
         </button>
       </div>
     </div>

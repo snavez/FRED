@@ -13,6 +13,12 @@ interface CanvasPlotProps {
   onFitToData?: () => void;
   datasetMeta?: DatasetMeta | null;
   speakerStats?: SpeakerStatsMap;
+  /**
+   * Zoom and pan move the axes rather than scaling the canvas, so the frame stays put and
+   * the numbers on it change. The ranges live in the background layer's config, so the
+   * plot asks its owner to set them.
+   */
+  onViewRange?: (f1Range: [number, number], f2Range: [number, number]) => void;
 }
 
 const COLORS = [
@@ -38,6 +44,7 @@ const SHAPES = [
 ];
 
 import { getLabel } from '../utils/getLabel';
+import { axisFraction, panRange, zoomRange } from '../utils/zoomRange';
 import { encodingGroupKey } from '../utils/plotEncoding';
 import { findNearestTimePoint } from '../utils/trajectory';
 
@@ -274,10 +281,9 @@ const Legend = ({ layers, allMappings, onLegendClick }: {
   );
 };
 
-const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData, onLegendClick, onFitToData, datasetMeta, speakerStats }, ref) => {
+const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData, onLegendClick, onFitToData, datasetMeta, speakerStats, onViewRange }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   // Hover state uses refs + lightweight state to avoid triggering canvas redraws
   const hoveredTokenRef = useRef<SpeechToken | null>(null);
   const hoveredLayerIdRef = useRef<string | null>(null);
@@ -751,8 +757,6 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     ctx.fillRect(0, 0, width, height);
 
     ctx.save();
-    ctx.translate(translate.x, translate.y);
-    ctx.scale(scale, scale);
 
     // Grid/axes always use background (layers[0]) config for coordinate space.
     // The live view maps into an inset area (spectral-style frame with outside ticks
@@ -1163,10 +1167,10 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     if (ctx) {
         ctx.save();
         ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-        renderPlot(ctx, width, height, transform.scale, {x: transform.x, y: transform.y}, 1);
+        renderPlot(ctx, width, height, 1, { x: 0, y: 0 }, 1);
         ctx.restore();
     }
-  }, [layers, layerData, transform, allMappings, renderPlot]);
+  }, [layers, layerData, allMappings, renderPlot]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     isDragging.current = true;
@@ -1177,8 +1181,16 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     if (isDragging.current) {
       const dx = e.clientX - lastMousePos.current.x;
       const dy = e.clientY - lastMousePos.current.y;
-      setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy }));
       lastMousePos.current = { x: e.clientX, y: e.clientY };
+      if (onViewRange) {
+        const area = currentArea();
+        if (area.w > 0 && area.h > 0) {
+          onViewRange(
+            panRange(bgConfig.f1Range, (bgConfig.invertY ? -dy : dy) / area.h),
+            panRange(bgConfig.f2Range, (bgConfig.invertX ? dx : -dx) / area.w),
+          );
+        }
+      }
     } else {
       // Throttle hover hit-testing to one per animation frame
       const clientX = e.clientX;
@@ -1190,8 +1202,8 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         const canvas = canvasRef.current;
         if (!canvas) return;
         const rect = canvas.getBoundingClientRect();
-        const mouseX = (clientX - rect.left - transform.x) / transform.scale;
-        const mouseY = (clientY - rect.top - transform.y) / transform.scale;
+        const mouseX = clientX - rect.left;
+        const mouseY = clientY - rect.top;
 
         // Spatial grid lookup: check mouse cell + 8 neighbors
         const { grid, cols, rows, cellSize, originX, originY } = spatialGrid;
@@ -1199,7 +1211,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         const row = Math.floor((mouseY - originY) / cellSize);
         let closest: SpeechToken | null = null;
         let closestLayerId: string | null = null;
-        let minDist = 15 / transform.scale;
+        let minDist = 15;
 
         for (let dr = -1; dr <= 1; dr++) {
           for (let dc = -1; dc <= 1; dc++) {
@@ -1246,9 +1258,28 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     }
   };
 
+  /** The frame the data is drawn in, in canvas pixels. */
+  const currentArea = () => {
+    const canvas = canvasRef.current;
+    const rect = canvas?.getBoundingClientRect();
+    return plotArea(rect?.width ?? 0, rect?.height ?? 0, false);
+  };
+
+  /** Zoom both axes about a point, given in canvas pixels. */
+  const zoomAbout = (px: number, py: number, factor: number) => {
+    if (!onViewRange) return;
+    const area = currentArea();
+    if (area.w <= 0 || area.h <= 0) return;
+    onViewRange(
+      zoomRange(bgConfig.f1Range, axisFraction(py, area.y, area.h, !bgConfig.invertY), factor),
+      zoomRange(bgConfig.f2Range, axisFraction(px, area.x, area.w, bgConfig.invertX), factor),
+    );
+  };
+
   const handleWheel = (e: React.WheelEvent) => {
-    const scaleFactor = e.deltaY > 0 ? 0.95 : 1.05;
-    setTransform(t => ({ ...t, scale: Math.max(0.1, Math.min(50, t.scale * scaleFactor)) }));
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    zoomAbout(e.clientX - rect.left, e.clientY - rect.top, e.deltaY > 0 ? 1 / 1.05 : 1.05);
   };
 
   return (
@@ -1263,10 +1294,9 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
         className="cursor-move"
       />
       <div className="absolute bottom-4 left-4 flex space-x-2">
-        <button onClick={() => setTransform(t => ({ ...t, scale: t.scale * 1.2 }))} className="w-8 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 font-bold">+</button>
-        <button onClick={() => setTransform(t => ({ ...t, scale: t.scale * 0.8 }))} className="w-8 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 font-bold">-</button>
-        <button onClick={() => setTransform({ x: 0, y: 0, scale: 1 })} className="px-3 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 text-[10px] font-bold">RESET VIEW</button>
-        {onFitToData && <button onClick={() => { setTransform({ x: 0, y: 0, scale: 1 }); onFitToData(); }} className="px-3 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 text-[10px] font-bold">FIT</button>}
+        <button onClick={() => { const a = currentArea(); zoomAbout(a.x + a.w / 2, a.y + a.h / 2, 1.2); }} className="w-8 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 font-bold">+</button>
+        <button onClick={() => { const a = currentArea(); zoomAbout(a.x + a.w / 2, a.y + a.h / 2, 1 / 1.2); }} className="w-8 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 font-bold">-</button>
+        {onFitToData && <button onClick={onFitToData} className="px-3 h-8 bg-white border border-slate-200 rounded shadow-sm hover:bg-slate-50 text-[10px] font-bold">FIT TO DATA</button>}
       </div>
       {hoveredToken && (() => {
         const hoveredLayer = hoveredLayerId ? layers.find(l => l.id === hoveredLayerId) : layers[0];

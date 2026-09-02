@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState, useRef, useEffect } from 'react';
-import { Filter, Database, Upload, Search, Settings2 } from 'lucide-react';
+import { Filter, Database, Upload, Search, Settings2, RotateCcw } from 'lucide-react';
 import { PlotConfig, FilterState, SpeechToken, DatasetMeta, UNDEFINED_LABEL } from '../types';
 import { listFilterFields } from '../utils/filterFields';
 import { bandRatioBandsLabel } from '../utils/spectralMoments';
@@ -19,10 +19,12 @@ interface SidebarProps {
   datasetMeta?: DatasetMeta | null;
   onToggleFieldVisibility?: (key: string, visible: boolean) => void;
   onReopenMappingDialog?: () => void;
+  /** Select every value again, in every field — the way back from a filtered view. */
+  onResetFilters?: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
-  filters, setFilters, data, tokenCount, totalCount, handleFileUpload, activeLayerName, datasetMeta, onToggleFieldVisibility, onReopenMappingDialog
+  filters, setFilters, data, tokenCount, totalCount, handleFileUpload, activeLayerName, datasetMeta, onToggleFieldVisibility, onReopenMappingDialog, onResetFilters
 }) => {
   const [searchTerms, setSearchTerms] = useState<Record<string, string>>({});
   const [showFieldSettings, setShowFieldSettings] = useState(false);
@@ -258,11 +260,28 @@ const Sidebar: React.FC<SidebarProps> = ({
         {/* --- ALL FILTER SECTIONS: only shown when data is loaded --- */}
         {hasData && hasAnyFilters && (
           <section className="pt-2 border-t border-slate-100">
-            {/* Filters header with unified gear icon */}
+            {/* Filters header: reset, then the field-visibility gear */}
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-[11px] font-bold text-slate-400 uppercase tracking-widest flex items-center">
                 <Filter size={14} className="mr-2" /> Filters
               </h2>
+              <div className="flex items-center gap-1 ml-auto">
+                {onResetFilters && (
+                  <button
+                    onClick={onResetFilters}
+                    disabled={tokenCount === totalCount}
+                    className={`flex items-center gap-1 text-[10px] font-bold px-1.5 py-1 rounded border transition-colors ${
+                      tokenCount === totalCount
+                        ? 'border-slate-100 text-slate-300 cursor-default'
+                        : 'border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700'}`}
+                    title={tokenCount === totalCount
+                      ? 'Every token is already showing'
+                      : `Show all ${totalCount.toLocaleString()} tokens again — selects every value in every field`}
+                  >
+                    <RotateCcw size={11} />
+                    Reset
+                  </button>
+                )}
               {popoverEntries.length > 0 && (
                 <div className="relative" ref={fieldSettingsRef}>
                   <button
@@ -290,6 +309,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                   )}
                 </div>
               )}
+              </div>
             </div>
 
             <div className="space-y-4">

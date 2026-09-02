@@ -643,6 +643,12 @@ const App: React.FC = () => {
     return refs.sort((a, b) => a.label.localeCompare(b.label));
   }, [bgFilteredData, bgConfig.colorBy, bgConfig.useSmoothing]);
 
+  /** Put every value back in every filter, for the layer being edited. */
+  const handleResetFilters = useCallback(() => {
+    setLayers(prev => prev.map(l =>
+      l.id === activeLayerId ? { ...l, filters: computeSelectAllFilters(data, datasetMeta) } : l));
+  }, [activeLayerId, data, datasetMeta]);
+
   const handleToggleFieldVisibility = useCallback((key: string, visible: boolean) => {
     setDatasetMeta(prev => prev && ({
       ...prev,
@@ -667,6 +673,7 @@ const App: React.FC = () => {
         activeLayerName={activeLayer.isBackground ? undefined : activeLayer.name}
         datasetMeta={datasetMeta}
         onToggleFieldVisibility={handleToggleFieldVisibility}
+        onResetFilters={handleResetFilters}
         onReopenMappingDialog={storedFileData ? handleReopenMappingDialog : undefined}
       />
 

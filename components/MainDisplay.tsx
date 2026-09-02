@@ -300,6 +300,14 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
    */
   const [spectralAutoRange, setSpectralAutoRange] = useState<{ x: [number, number], y: [number, number] } | null>(null);
 
+  /**
+   * Zooming writes the visible range straight into the Min/Max boxes, so round it: the
+   * exact float behind a wheel tick is noise, and an unreadable box is worse than a
+   * hundredth of a Hz.
+   */
+  const roundRange = (r: [number, number]): [number, number] =>
+    [Math.round(r[0] * 100) / 100, Math.round(r[1] * 100) / 100];
+
   /** Round to a sensible step for display in a range box. */
   const roundForInput = (v: number) => {
     const mag = Math.abs(v);
@@ -3029,6 +3037,10 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             onFitToData={handleFitToData}
             datasetMeta={datasetMeta}
             speakerStats={speakerStats}
+            onViewRange={(f1Range, f2Range) => {
+              updateLayerConfig(layers[0].id, 'f1Range', roundRange(f1Range));
+              updateLayerConfig(layers[0].id, 'f2Range', roundRange(f2Range));
+            }}
           />
         )}
         {activeTab === '3d' && (
@@ -3074,6 +3086,10 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             datasetMeta={datasetMeta}
             onLegendClick={handleLegendClick}
             onAutoRange={setSpectralAutoRange}
+            onViewRange={(x, y) => {
+              updateLayerConfig(layers[0].id, 'spectralXRange', roundRange(x));
+              updateLayerConfig(layers[0].id, 'spectralYRange', roundRange(y));
+            }}
           />
         )}
         {activeTab === 'scatter' && (
@@ -3085,6 +3101,10 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             datasetMeta={datasetMeta ?? null}
             onLegendClick={handleLegendClick}
             onAutoRange={setVarAutoRange}
+            onViewRange={(x, y) => {
+              updateLayerConfig(layers[0].id, 'varXRange', roundRange(x));
+              updateLayerConfig(layers[0].id, 'varYRange', roundRange(y));
+            }}
           />
         )}
         {activeTab === 'duration' && (

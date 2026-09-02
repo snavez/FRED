@@ -791,15 +791,58 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
     // group name beneath them — so each has its own export size, falling back to the
     // size it has always used when the export dialog has not been asked to change it.
     const axisFont = exportConfig ? (exportConfig.yTickLabelSize ?? exportConfig.tickLabelSize) : (isExport ? 32 : 12);
-    const subLabelFont = exportConfig ? (exportConfig.xTickLabelSize ?? exportConfig.xAxisLabelSize) : (isExport ? 26 : 9);
+    const subLabelFont = exportConfig ? (exportConfig.xTickLabelSize ?? exportConfig.tickLabelSize) : (isExport ? 26 : 9);
     const barLabelFont = exportConfig ? exportConfig.dataLabelSize : (isExport ? 24 : 9);
-    const groupLabelFont = exportConfig ? (exportConfig.xGroupLabelSize ?? 0) : (isExport ? 0 : 10);
+    // The group names (/e/, /t/, …) are the x axis: an export without them says nothing.
+    // They used to default to 0 in export, which drew no group labels at all unless the
+    // dialog had been asked for a size.
+    const groupLabelFont = exportConfig ? (exportConfig.xGroupLabelSize ?? exportConfig.tickLabelSize) : (isExport ? 0 : 10);
 
     // Axis Offsets
     const xTickOffsetX = (exportConfig?.xAxisTickX || 0) * drawScale;
     const xTickOffsetY = (exportConfig?.xAxisTickY || 0) * drawScale;
     const yTickOffsetX = (exportConfig?.yAxisTickX || 0) * drawScale;
     const yTickOffsetY = (exportConfig?.yAxisTickY || 0) * drawScale; 
+
+    /**
+     * Draw an x-axis label centred on `cx`. It is shrunk a little to fit the width it
+     * has, and turned on its side when even that will not do — a category axis with
+     * twenty names has no room for them side by side, and rotating is how every other
+     * plotting tool answers that. Dropping the label is the last resort, when there is
+     * not even the height to stand it up in.
+     */
+    const drawFittedXLabel = (text: string, cx: number, y: number, slot: number, baseSize: number, room: number): boolean => {
+        const px = (size: number) => `${(size * drawScale) / scale}px Inter`;
+        const shrunk = Math.max(baseSize * 0.6, baseSize);
+        ctx.font = px(shrunk);
+        let w = ctx.measureText(text).width;
+        if (w <= slot) { ctx.fillText(text, cx, y); return true; }
+
+        // A mild squeeze first: a label only slightly too wide need not be turned.
+        const squeezed = Math.max(baseSize * 0.6, baseSize * (slot / w));
+        ctx.font = px(squeezed);
+        w = ctx.measureText(text).width;
+        if (w <= slot) { ctx.fillText(text, cx, y); return true; }
+
+        // Rotate: the label then costs height rather than width, so size it to the room
+        // beneath the axis (a 45° label stands w·sin45 tall).
+        const DIAGONAL = Math.SQRT1_2;
+        let size = squeezed;
+        if (w * DIAGONAL + size > room && w > 0) {
+            size = Math.max(baseSize * 0.4, size * ((room - size) / (w * DIAGONAL)));
+            ctx.font = px(size);
+            w = ctx.measureText(text).width;
+        }
+        if (w * DIAGONAL > room) return false;
+        ctx.save();
+        ctx.translate(cx, y - (size * drawScale) / scale * 0.4);
+        ctx.rotate(-Math.PI / 4);
+        ctx.textAlign = 'right';
+        ctx.fillText(text, 0, 0);
+        ctx.restore();
+        ctx.textAlign = 'center';
+        return true;
+    };
 
     // Helper to draw a bar
     const drawBar = (bx: number, by: number, bw: number, bh: number, color: string, texIdx: number, val: number, labelVal: string) => {
@@ -810,25 +853,24 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
         ctx.fillRect(bx, by, bw, bh);
         ctx.strokeRect(bx, by, bw, bh);
 
-        // Label
+        // Label — shrunk to sit inside its own bar, and skipped when it cannot.
         if (val > 0) {
             ctx.textAlign = 'center';
-            if (isExport) {
+            let size = barLabelFont;
+            ctx.font = `bold ${(size * drawScale) / scale}px Inter`;
+            const w = ctx.measureText(labelVal).width;
+            if (w > bw * 0.95) {
+                size = size * (bw * 0.95) / w;
+                ctx.font = `bold ${(size * drawScale) / scale}px Inter`;
+            }
+            if (size >= barLabelFont * 0.5) {
+                const y = by + bh / 2 + (isExport ? size * 0.4 * drawScale : 4);
                 ctx.fillStyle = 'white';
-                ctx.font = `bold ${(barLabelFont * drawScale) / scale}px Inter`;
-                ctx.strokeStyle = '#000000';
-                ctx.lineWidth = (3 * drawScale)/scale;
+                ctx.strokeStyle = isExport ? '#000000' : 'black';
+                ctx.lineWidth = ((isExport ? 3 : 2) * drawScale) / scale;
                 ctx.lineJoin = 'round';
-                const segCenterY = by + bh/2;
-                ctx.strokeText(labelVal, bx + bw/2, segCenterY + (barLabelFont * 0.4 * drawScale));
-                ctx.fillText(labelVal, bx + bw/2, segCenterY + (barLabelFont * 0.4 * drawScale));
-            } else {
-                ctx.fillStyle = 'white';
-                ctx.font = `bold ${(barLabelFont * drawScale) / scale}px Inter`;
-                ctx.strokeStyle = 'black';
-                ctx.lineWidth = (2 * drawScale)/scale;
-                ctx.strokeText(labelVal, bx + bw/2, by + bh/2 + 4);
-                ctx.fillText(labelVal, bx + bw/2, by + bh/2 + 4);
+                ctx.strokeText(labelVal, bx + bw/2, y);
+                ctx.fillText(labelVal, bx + bw/2, y);
             }
         }
     };
@@ -922,13 +964,12 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                          });
 
                          // Label for Primary Key
-                         if (showPrimaryLabel && barW > (20 * drawScale)) {
+                         if (showPrimaryLabel) {
                             ctx.fillStyle = '#475569';
-                            ctx.font = `${(subLabelFont * drawScale) / scale}px Inter`;
                             ctx.textAlign = 'center';
                             const labelX = bx + barW/2 + xTickOffsetX;
                             const labelY = cy + ch + (subLabelFont * 1.2 * drawScale) + xTickOffsetY;
-                            ctx.fillText(pk, labelX, labelY);
+                            drawFittedXLabel(pk, labelX, labelY, barW, subLabelFont, (height - labelY) * 0.9);
                          }
 
                      } else {
@@ -952,13 +993,12 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                          });
 
                          // Label for Primary Key (Centered under the group)
-                         if (showPrimaryLabel && primaryGroupW > (20 * drawScale)) {
+                         if (showPrimaryLabel) {
                             ctx.fillStyle = '#475569';
-                            ctx.font = `${(subLabelFont * drawScale) / scale}px Inter`;
                             ctx.textAlign = 'center';
                             const labelX = pBx + primaryGroupW/2 + xTickOffsetX;
                             const labelY = cy + ch + (subLabelFont * 1.2 * drawScale) + xTickOffsetY;
-                            ctx.fillText(pk, labelX, labelY);
+                            drawFittedXLabel(pk, labelX, labelY, primaryGroupW, subLabelFont, (height - labelY) * 0.9);
                          }
                      }
                  });
@@ -1020,11 +1060,10 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                         drawBar(bx, by, barW, h, item.color, item.tex, dispVal, label);
 
                         // X-axis label per bar in faceted grouped mode
-                        if (barW > (14 * drawScale)) {
+                        {
                             ctx.fillStyle = '#475569';
-                            ctx.font = `${(subLabelFont * drawScale) / scale}px Inter`;
                             ctx.textAlign = 'center';
-                            ctx.fillText(item.key, bx + barW/2 + xTickOffsetX, cy + ch + (subLabelFont * 1.2 * drawScale) + xTickOffsetY);
+                            drawFittedXLabel(item.key, bx + barW/2 + xTickOffsetX, cy + ch + (subLabelFont * 1.2 * drawScale) + xTickOffsetY, barW, subLabelFont, (height - (cy + ch)) * 0.8);
                         }
                     });
                 }
@@ -1113,13 +1152,12 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                          });
                          
                          // Label for Primary Key
-                         if (showPrimaryLabel && barW > (15 * drawScale)) {
+                         if (showPrimaryLabel) {
                             ctx.fillStyle = '#475569';
-                            ctx.font = `${(subLabelFont * drawScale) / scale}px Inter`;
                             ctx.textAlign = 'center';
                             const labelX = bx + barW/2 + xTickOffsetX;
                             const labelY = margin.top + chartH + (subLabelFont * 1.5 * drawScale) + xTickOffsetY;
-                            ctx.fillText(pk, labelX, labelY);
+                            drawFittedXLabel(pk, labelX, labelY, barW, subLabelFont, (height - labelY) * 0.9);
                          }
 
                      } else {
@@ -1141,13 +1179,12 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                              drawBar(bx, by, barW, h, color, tex, dispVal, label);
                          });
 
-                         if (showPrimaryLabel && primaryGroupW > (15 * drawScale)) {
+                         if (showPrimaryLabel) {
                             ctx.fillStyle = '#475569';
-                            ctx.font = `${(subLabelFont * drawScale) / scale}px Inter`;
                             ctx.textAlign = 'center';
                             const labelX = pBx + primaryGroupW/2 + xTickOffsetX;
                             const labelY = margin.top + chartH + (subLabelFont * 1.5 * drawScale) + xTickOffsetY;
-                            ctx.fillText(pk, labelX, labelY);
+                            drawFittedXLabel(pk, labelX, labelY, primaryGroupW, subLabelFont, (height - labelY) * 0.9);
                          }
                      }
                  });
@@ -1211,11 +1248,10 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                         // Sub-label for grouped items (only if enough space)
                         if (barW > (20 * drawScale)) {
                             ctx.fillStyle = '#475569';
-                            ctx.font = `${(subLabelFont * drawScale) / scale}px Inter`;
                             ctx.textAlign = 'center';
                             const labelX = bx + barW/2 + xTickOffsetX;
                             const labelY = margin.top + chartH + (subLabelFont * 1.5 * drawScale) + xTickOffsetY;
-                            ctx.fillText(item.subKey || item.key, labelX, labelY);
+                            drawFittedXLabel(item.subKey || item.key, labelX, labelY, barW, subLabelFont, (height - labelY) * 0.9);
                         }
                     });
                 }
@@ -1223,13 +1259,12 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
 
              // Group Label — suppress when only one group named 'All' (groupBy=none)
              const showGroupLabel = g !== 'All' && (groups.length > 1 || !isInteraction || !showPrimaryLabel);
-             if (showGroupLabel && groupLabelFont > 0 && (!isExport || isStacked || (exportConfig?.xGroupLabelSize ?? 0) > 0)) {
+             if (showGroupLabel && groupLabelFont > 0) {
                 ctx.fillStyle = '#0f172a';
-                ctx.font = `bold ${(groupLabelFont * drawScale) / scale}px Inter`;
                 ctx.textAlign = 'center';
                 const labelY = margin.top + chartH + (subLabelFont * 1.5 * drawScale) + (groupLabelFont * 1.5 * drawScale) + xTickOffsetY;
                 const finalY = isStacked ? labelY - (subLabelFont * drawScale) : labelY;
-                ctx.fillText(`/${g}/`, cx + groupW/2, finalY);
+                drawFittedXLabel(`/${g}/`, cx + groupW/2, finalY, groupW, groupLabelFont, (height - finalY) * 0.9);
              }
         });
     }
@@ -1354,7 +1389,11 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
        const { drawScale, width: plotW, height: plotH } = computeExportPlotSize(exportConfig, 2400, 1600);
        
        // Dynamic margins based on font sizes
-       const bottomMarginBase = Math.max(180, exportConfig.xAxisLabelSize * 1.5 + 30);
+       // The x axis has to hold the category names as well as its title, and a long name
+       // is turned on its side rather than dropped — so the margin answers to the tick
+       // size, not just the title's.
+       const xTickSize = exportConfig.xTickLabelSize ?? exportConfig.tickLabelSize;
+       const bottomMarginBase = Math.max(180, exportConfig.xAxisLabelSize * 1.5 + 30, xTickSize * 6);
        const leftMarginBase = Math.max(140, exportConfig.yAxisLabelSize * 1.2 + 40);
        const topMarginBase = exportConfig.showPlotTitle
            ? Math.max(200, (exportConfig.plotTitleSize || 128) + 100)

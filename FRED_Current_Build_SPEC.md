@@ -628,6 +628,10 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 - Performance: O(fields × tokens × active_filters) Set.has() operations; sub-10ms for typical datasets
 
 ### Sidebar Controls
+- **Reset** beside the Filters heading selects every value in every field again, so there
+  is a way back from a filtered view without hunting for which field is still narrowed.
+  It is disabled when nothing is filtered out, which also makes it a live indicator that
+  the view is complete.
 - Each filter section has **All** / **Clear** buttons
 - Search box appears when a field has >50 unique values
 - **Gear icon** (Settings2) opens a popover listing every label field with checkboxes to toggle sidebar visibility
@@ -646,6 +650,19 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 
 ### Points
 - Toggle visibility, configurable size (1-10) and opacity (0-1)
+
+### Zoom and pan move the axes, not the picture
+- Scaling the canvas shrank the frame along with the data, so zooming out to look for a
+  stray token just made everything smaller inside a smaller box and anything past the old
+  limits stayed hidden. Instead the frame stays where it is and the **range** it shows
+  changes (`utils/zoomRange.ts`): the wheel zooms about the cursor, dragging pans, and the
+  axis numbers — and the Min/Max boxes — say what is currently on screen.
+- Applied to the F1/F2 plot, the Spectral plot and the Scatter tab. The value under the
+  cursor stays under the cursor while zooming, and a zoom in followed by a zoom out
+  returns where it started.
+- Because the range *is* the view, "reset view" and "fit to data" are the same action:
+  each plot offers **Fit to data**, and typing in the Min/Max boxes is just another way to
+  set the same thing.
 
 ### Ellipses
 - Standard deviation ellipses per group
@@ -763,6 +780,21 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 ---
 
 ## 10. Export System
+
+### Export axis labels and legends
+- **Category labels are fitted, not dropped.** An export canvas is wide but its fonts are
+  wider: at the export tick size a row of category names overlapped into an unreadable
+  band. Labels now shrink a little to fit their bar and, when that is not enough, turn
+  45° — the answer every plotting tool gives; a label is only dropped when there is not
+  even the height to stand it up in. Bar value labels are fitted to their own bar the
+  same way.
+- Tick labels take the **tick** size (`xTickLabelSize ?? tickLabelSize`), not the axis
+  *title* size, and the bottom margin reserves room for them.
+- **Group names are drawn in exports.** They were suppressed unless `xGroupLabelSize` had
+  been set by hand, which left distribution exports with no x axis at all; they now
+  default to the tick size.
+- **Every legend carries counts**, on screen and in export alike: `label (n=…)` for
+  colour, line-type and texture keys, in every plot.
 
 ### Export Dialog
 - Full-screen modal with a scale-1 **layout preview** and a full-resolution download.
@@ -910,6 +942,8 @@ FRED/
     normalization.ts                   # Speaker stats, normalization (Lobanov, Nearey, etc.)
     plotEncoding.tsx                   # Shared encoding primitives (palette, shapes, dashes)
     contours.ts                        # Mean contours over absolute time (per-group spans)
+    zoomRange.ts                       # Zoom/pan by moving the axis range, not the canvas
+    zoomRange.test.ts                  # Zoom/pan range tests
     contours.test.ts                   # Contour resampling / span tests
     csv.ts                             # CSV cell quoting, row building, file download
     duration.ts                        # Which span a plot measures (columns, units, region match)
