@@ -177,6 +177,13 @@ const INITIAL_CONFIG: PlotConfig = {
   countRange: [0, 0] // Auto
 };
 
+/**
+ * Rows auto-detection reads. The mapping dialog previews five, but a column measured for
+ * only some segments — a release duration, a burst COG — can be empty in all five, so
+ * detection looks deeper before deciding what a column holds.
+ */
+const DETECTION_ROWS = 200;
+
 const INITIAL_FILTERS: FilterState = {
   filters: {},
 };
@@ -283,14 +290,17 @@ const App: React.FC = () => {
 
       let headers: string[];
       let sampleRows: string[][];
+      let detectionRows: string[][];
       if (detection.hasHeaders) {
         headers = rawFirstRow;
         sampleRows = restRows;
+        detectionRows = lines.slice(1, DETECTION_ROWS + 1).map(l => splitRow(l, delimiter));
       } else {
         headers = rawFirstRow.map((_, i) => `Col_${i + 1}`);
         sampleRows = [rawFirstRow, ...lines.slice(1, 5).map(l => splitRow(l, delimiter))];
+        detectionRows = [rawFirstRow, ...lines.slice(1, DETECTION_ROWS).map(l => splitRow(l, delimiter))];
       }
-      const detected = autoDetectMappings(headers, sampleRows);
+      const detected = autoDetectMappings(headers, detectionRows);
 
       const fileData = { rawText: text, headers, sampleData: sampleRows, fileName: file.name };
       setStoredFileData(fileData);
@@ -333,14 +343,17 @@ const App: React.FC = () => {
 
     let newHeaders: string[];
     let newSampleRows: string[][];
+    let newDetectionRows: string[][];
     if (isHeader) {
       newHeaders = rawFirstRow;
       newSampleRows = lines.slice(1, 6).map(l => splitRow(l, delimiter));
+      newDetectionRows = lines.slice(1, DETECTION_ROWS + 1).map(l => splitRow(l, delimiter));
     } else {
       newHeaders = rawFirstRow.map((_, i) => `Col_${i + 1}`);
       newSampleRows = [rawFirstRow, ...lines.slice(1, 5).map(l => splitRow(l, delimiter))];
+      newDetectionRows = [rawFirstRow, ...lines.slice(1, DETECTION_ROWS).map(l => splitRow(l, delimiter))];
     }
-    const detected = autoDetectMappings(newHeaders, newSampleRows);
+    const detected = autoDetectMappings(newHeaders, newDetectionRows);
     setMappingDialog(prev => prev ? {
       ...prev,
       headers: newHeaders,

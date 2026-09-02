@@ -130,6 +130,17 @@ const FORMANT_BARE_REGEX = /^(f[12345])$/i;
 const FORMANT_NAMED_REGEX = /^(f[12345])_([a-z][a-z0-9]*)(?:_(.+))?$/i;
 const PITCH_REGEX = /^f0_(\d+)(?:%|ms|sec)?(?:_(.+))?$/i;
 
+/**
+ * Cells that mean "no value here". Exporters disagree about how to write a measurement
+ * that was not taken — an empty cell, NA, NaN, a lone dash — and a column measured only
+ * for some segments (a release duration, say) is mostly these. Reading them as text would
+ * make such a column look categorical and hide it from every numeric menu.
+ */
+const MISSING_VALUES = new Set(['', 'na', 'n/a', 'nan', 'null', 'none', '-', '--', '.', '--undefined--']);
+
+/** Whether a cell holds an actual value, as opposed to a marker for a missing one. */
+export const hasValue = (raw: string): boolean => !MISSING_VALUES.has(raw.trim().toLowerCase());
+
 /** Names that should populate SpeechToken.xmin (now detected as regular fields) */
 const XMIN_NAMES = new Set(['xmin', 'onset', 'start', 'start_time']);
 
@@ -326,10 +337,14 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
     isDataField: false,
   });
 
-  /** Whether a column's sampled values are numbers (empty samples count as numeric). */
+  /**
+   * Whether a column's sampled values are numbers. Missing values are ignored rather than
+   * counted against it: a column measured for only some segments is still numeric, and a
+   * sample that happens to catch none of its values says nothing either way.
+   */
   const isMostlyNumeric = (header: string): boolean => {
     const colIdx = headers.indexOf(header);
-    const values = sampleRows.map(row => row[colIdx] || '').filter(v => v !== '');
+    const values = sampleRows.map(row => row[colIdx] || '').filter(hasValue);
     if (values.length === 0) return true;
     return values.filter(v => !isNaN(parseFloat(v))).length / values.length > 0.8;
   };
@@ -443,7 +458,7 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
 
     // 3. Remaining: check if categorical (≤50 unique values) or numeric
     const colIdx = headers.indexOf(header);
-    const values = sampleRows.map(row => row[colIdx] || '').filter(v => v !== '');
+    const values = sampleRows.map(row => row[colIdx] || '').filter(hasValue);
     const unique = new Set(values);
 
     // If no values in sample rows, default to field (not ignore) — full data may have values

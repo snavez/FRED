@@ -169,6 +169,46 @@ describe('autoDetectMappings', () => {
     expect(mappings.find(m => m.csvHeader === 'closure_dur')?.isDataField).toBe(true);
   });
 
+  it('keeps a sparse duration column numeric when its first rows are missing', () => {
+    // release_dur is only measured for stops, so the rows detection happens to see may
+    // hold nothing at all — the column is still a duration
+    const headers = ['MAU_dur', 'closure_dur', 'release_dur'];
+    const sampleRows = [
+      ['0.21', '', ''],
+      ['0.18', '', ''],
+      ['0.25', '', ''],
+      ['0.19', '0.055', '0.031'],
+      ['0.22', '', ''],
+    ];
+    const mappings = autoDetectMappings(headers, sampleRows);
+    for (const h of headers) {
+      expect(mappings.find(m => m.csvHeader === h)!.role).toBe('duration');
+    }
+  });
+
+  it('reads missing markers as missing, not as text', () => {
+    // The same column exported with NA / n/a / NaN rather than empty cells
+    const headers = ['MAU_dur', 'release_dur', 'COG_release_50%'];
+    const sampleRows = [
+      ['0.21', 'NA', 'NA'],
+      ['0.18', 'NA', 'NA'],
+      ['0.25', 'n/a', 'n/a'],
+      ['0.19', '0.031', '3200'],
+      ['0.22', 'NaN', 'NaN'],
+    ];
+    const mappings = autoDetectMappings(headers, sampleRows);
+    expect(mappings.find(m => m.csvHeader === 'release_dur')!.role).toBe('duration');
+    expect(mappings.find(m => m.csvHeader === 'COG_release_50%')!.role).toBe('spectral_cog');
+  });
+
+  it('still refuses a duration-named column that really holds labels', () => {
+    const headers = ['segment_dur'];
+    const sampleRows = Array.from({ length: 6 }, (_, i) => [i % 2 ? 'long' : 'short']);
+    const mappings = autoDetectMappings(headers, sampleRows);
+    expect(mappings[0].role).toBe('field');
+    expect(mappings[0].isDataField).toBe(false);
+  });
+
   it('detects region-labelled spectral columns and records the region', () => {
     const headers = ['COG_closure_20%', 'COG_release_20%', 'SD_release_t3', 'kurt_closure_k1'];
     const sampleRows = Array.from({ length: 25 }, (_, i) => [

@@ -72,6 +72,14 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 - A measure role only sticks to a column of numbers: `voice_pitch` holding high/low is
   auto-detected as a label, not a pitch measure, and the same guard applies to `*_dur`
   columns and to region-labelled spectral names
+- **Missing values are read as missing, not as text** (`hasValue`): exporters write an
+  unmeasured cell as empty, `NA`, `n/a`, `NaN`, `null`, `-` or `.`, and a column measured
+  for only some segments (a release duration, a burst COG) is mostly those. Counting them
+  as text made such a column look categorical, which dropped it from every numeric menu
+  while a fully-populated `MAU_dur` beside it came through fine.
+- **Detection reads deeper than the preview** (`DETECTION_ROWS`, 200 rows): the mapping
+  dialog previews five rows, but a sparse column can be empty in all five, which says
+  nothing about what it holds
 
 ### Data Mapping Dialog
 - Modal UI listing all detected columns with role dropdowns and sample data preview
