@@ -3,7 +3,7 @@ import React, { useState, useMemo, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import MainDisplay from './components/MainDisplay';
 import Header from './components/Header';
-import { detectDelimiter, splitRow, autoDetectMappings, parseWithMappings, detectHeaderRow, HeaderDetectionResult, TrajectoryFormatOverride } from './services/csvParser';
+import { detectDelimiter, splitRow, splitRows, autoDetectMappings, parseWithMappings, detectHeaderRow, HeaderDetectionResult, TrajectoryFormatOverride } from './services/csvParser';
 import { getLabel } from './utils/getLabel';
 import { filterFieldKey, listFilterFields } from './utils/filterFields';
 import { SpeechToken, PlotConfig, FilterState, ReferenceCentroid, Layer, LayerCounters, StyleOverrides, ColumnMapping, DatasetMeta, DatasetProvenance, NormalizationMethod, UNDEFINED_LABEL } from './types';
@@ -281,7 +281,7 @@ const App: React.FC = () => {
       if (uploadIdRef.current !== thisUpload) return;
       const text = event.target?.result as string;
       const delimiter = detectDelimiter(text);
-      const lines = text.split(/\r?\n/).filter(l => l.trim());
+      const lines = splitRows(text).filter(l => l.trim());
       if (lines.length < 2) return;
 
       const rawFirstRow = splitRow(lines[0], delimiter).map(h => h.trim().replace(/^"|"$/g, ''));
@@ -322,7 +322,7 @@ const App: React.FC = () => {
 
   const handleReopenMappingDialog = useCallback(() => {
     if (!storedFileData || !datasetMeta) return;
-    const rawFirstRow = splitRow(storedFileData.rawText.split(/\r?\n/)[0] || '', detectDelimiter(storedFileData.rawText)).map(h => h.trim().replace(/^"|"$/g, ''));
+    const rawFirstRow = splitRow(splitRows(storedFileData.rawText)[0] || '', detectDelimiter(storedFileData.rawText)).map(h => h.trim().replace(/^"|"$/g, ''));
     setMappingDialog({
       isOpen: true,
       ...storedFileData,
@@ -338,7 +338,7 @@ const App: React.FC = () => {
   const handleToggleFirstRowIsHeader = useCallback((isHeader: boolean) => {
     if (!mappingDialog) return;
     const delimiter = detectDelimiter(mappingDialog.rawText);
-    const lines = mappingDialog.rawText.split(/\r?\n/).filter(l => l.trim());
+    const lines = splitRows(mappingDialog.rawText).filter(l => l.trim());
     const rawFirstRow = mappingDialog.rawFirstRow;
 
     let newHeaders: string[];

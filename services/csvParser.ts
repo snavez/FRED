@@ -15,31 +15,65 @@ const MAX_LISTED_VALUES = 8;
  * Detect delimiter: tab vs comma based on first line.
  */
 export const detectDelimiter = (text: string): string => {
-  const firstLine = text.split(/\r?\n/)[0] || '';
+  const firstLine = splitRows(text)[0] || '';
   const tabs = (firstLine.match(/\t/g) || []).length;
   const commas = (firstLine.match(/,/g) || []).length;
   return tabs > commas ? '\t' : ',';
 };
 
 /**
- * Split a row by delimiter, respecting quoted fields.
+ * Split CSV text into rows. A newline inside a quoted field is part of the value, not the
+ * end of a row — exporters write those whenever a label contains a line break, and
+ * splitting the text on newlines first tears such a row in two: the tail of the row then
+ * arrives as a value of the first column, which is how a file id ends up holding half a
+ * row of formant numbers.
  */
-export const splitRow = (line: string, delimiter: string): string[] => {
-  const result: string[] = [];
+export const splitRows = (text: string): string[] => {
+  const rows: string[] = [];
   let cur = '';
   let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
     if (char === '"') {
+      // A doubled quote inside a quoted field is an escaped quote, not the end of one.
+      if (inQuotes && text[i + 1] === '"') { cur += '""'; i++; continue; }
       inQuotes = !inQuotes;
-    } else if (char === delimiter && !inQuotes) {
-      result.push(cur.trim().replace(/^"|"$/g, ''));
+      cur += char;
+    } else if ((char === '\n' || char === '\r') && !inQuotes) {
+      if (char === '\r' && text[i + 1] === '\n') i++;
+      rows.push(cur);
       cur = '';
     } else {
       cur += char;
     }
   }
-  result.push(cur.trim().replace(/^"|"$/g, ''));
+  rows.push(cur);
+  return rows;
+};
+
+/** Split one row into cells by delimiter, respecting quoted fields. */
+export const splitRow = (line: string, delimiter: string): string[] => {
+  const result: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  // A value that spanned lines in the file is still one value here; collapse the break so
+  // it reads as a single label rather than wrapping in every menu it appears in. The
+  // scanner has already consumed the quotes that delimited it, so what is left is the
+  // value itself — including any quote the file escaped as "".
+  const cell = (v: string) => v.replace(/\s*[\r\n]+\s*/g, ' ').trim();
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; continue; }
+      inQuotes = !inQuotes;
+    } else if (char === delimiter && !inQuotes) {
+      result.push(cell(cur));
+      cur = '';
+    } else {
+      cur += char;
+    }
+  }
+  result.push(cell(cur));
   return result;
 };
 
@@ -786,7 +820,7 @@ export const parseWithMappings = (
   formatOverride?: TrajectoryFormatOverride,
 ): { tokens: SpeechToken[], meta: DatasetMeta } => {
   const delimiter = detectDelimiter(text);
-  const lines = text.split(/\r?\n/);
+  const lines = splitRows(text);
   const minLines = firstRowIsData ? 1 : 2;
   if (lines.length < minLines) return { tokens: [], meta: { fileName, columnMappings: mappings, timePoints: [], rowCount: 0 } };
 

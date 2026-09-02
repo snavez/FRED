@@ -4,6 +4,7 @@ import {
   splitRow,
   autoDetectMappings,
   parseWithMappings,
+  splitRows,
 } from './csvParser';
 import { ColumnMapping } from '../types';
 
@@ -905,5 +906,52 @@ describe('band-ratio columns from FormantStudio', () => {
     const csv = 'speaker,COG_release_50%,SD_release_50%\nspk1,5104,2210\n';
     const mappings = autoDetectMappings(csv.split('\n')[0].split(','), [csv.split('\n')[1].split(',')]);
     expect(mappings.map(m => m.role)).toEqual(['speaker', 'spectral_cog', 'spectral_sd']);
+  });
+});
+
+describe('splitRows', () => {
+  const NL = String.fromCharCode(10);
+
+  it('splits plain rows on newlines', () => {
+    expect(splitRows(`a,b${NL}c,d`)).toEqual(['a,b', 'c,d']);
+  });
+
+  it('keeps a newline inside a quoted field with its value', () => {
+    // An exporter writes a label containing a line break this way. Splitting the text on
+    // newlines first tore the row in two, and the tail arrived as a file id.
+    const text = `id,label,x${NL}10092,"@${NL}",275.1${NL}10093,ok,3.5`;
+    const rows = splitRows(text);
+    expect(rows).toHaveLength(3);
+    expect(splitRow(rows[1], ',')).toEqual(['10092', '@', '275.1']);
+    expect(splitRow(rows[2], ',')).toEqual(['10093', 'ok', '3.5']);
+  });
+
+  it('handles CRLF, and an escaped quote inside a quoted field', () => {
+    const text = `a,b${String.fromCharCode(13)}${NL}"say ""hi""",2`;
+    const rows = splitRows(text);
+    expect(rows).toHaveLength(2);
+    expect(splitRow(rows[1], ',')).toEqual(['say "hi"', '2']);
+  });
+
+  it('keeps a quoted comma in one cell', () => {
+    expect(splitRow('10001,high,"Maungawhau,",m', ',')).toEqual(['10001', 'high', 'Maungawhau,', 'm']);
+  });
+
+  it('parses a file whose rows span lines, end to end', () => {
+    const text = [
+      'filename,MAU,f1_50',
+      '10001,k,500',
+      '10092,"@',
+      '",600',
+      '10093,t,700',
+    ].join(NL);
+    const mappings: ColumnMapping[] = [
+      { csvHeader: 'filename', role: 'file_id' },
+      { csvHeader: 'MAU', role: 'field', fieldName: 'MAU' },
+      { csvHeader: 'f1_50', role: 'formant', formant: 'f1', timePoint: 50 },
+    ];
+    const { tokens } = parseWithMappings(text, mappings, 'test.csv');
+    expect(tokens.map(t => t.file_id)).toEqual(['10001', '10092', '10093']);
+    expect(tokens[1].fields['MAU']).toBe('@');
   });
 });

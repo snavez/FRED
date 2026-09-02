@@ -43,6 +43,17 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 - Supports multiple formant variants (e.g., raw + smoothed); select between them via the Data dropdown in the config toolbar
 - Time points are derived from the data (not hardcoded); all plots use `findNearestTimePoint()` for flexible lookup
 
+### Rows and cells
+- **A row is not a line.** CSV allows a newline inside a quoted field, and exporters write
+  one whenever a label contains a line break. Splitting the text on newlines tore such a
+  row in two: the tail arrived as a row of its own, so the *file id* of that row held half
+  a row of formant numbers while the dialog — which samples the first few lines — looked
+  perfectly fine. `splitRows(text)` scans for newlines **outside** quotes, and every reader
+  (upload, header toggle, parse) goes through it.
+- `splitRow(line, delimiter)` splits one row into cells, keeping a quoted delimiter inside
+  its value (`"Maungawhau,"`), reading a doubled quote as an escaped one (`""` → `"`), and
+  collapsing a value that spanned lines into a single line so it reads as one label.
+
 ### Delimiters, headers, robustness (verified by probe tests)
 - Delimiter: comma or tab only (chosen by count in the first line). Semicolon files parse
   as a single column.
