@@ -5,6 +5,7 @@ import { drawShape, hexToRgb, computeEncodingMaps, EncodingMaps, encodingGroupKe
 import { axisTicks, formatMeasureValue } from '../utils/axisTicks';
 import { measureLabel, measureValue } from '../utils/measures';
 import { fitRange } from '../utils/plotRange';
+import { tooltipFieldsFor } from '../utils/pointInfo';
 import { axisFraction, panRange, zoomRange } from '../utils/zoomRange';
 import { linearFit, LinearFit } from '../services/statistics';
 
@@ -423,7 +424,8 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
     }
     if (!best) { setHovered(null); return; }
     const cfg = best.layer.config;
-    const fields = cfg.tooltipFields && cfg.tooltipFields.length > 0 ? cfg.tooltipFields : ['file_id'];
+    const chosen = tooltipFieldsFor(layers, best.layer);
+    const fields = chosen.length > 0 ? chosen : ['file_id'];
     const header = getLabel(best.token, cfg.colorBy) || best.token.file_id || best.token.id;
     const lines = [header];
     fields.forEach(f => { const v = tooltipValue(best!.token, f); if (v) lines.push(`${prettyField(f)}: ${v}`); });

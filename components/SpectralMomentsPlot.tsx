@@ -3,6 +3,7 @@ import { SpeechToken, PlotConfig, PlotHandle, ExportConfig, DatasetMeta, Layer }
 import { getLabel } from '../utils/getLabel';
 import { fitRange, quantile } from '../utils/plotRange';
 import { axisFraction, panRange, zoomRange } from '../utils/zoomRange';
+import { tooltipFieldsFor } from '../utils/pointInfo';
 import { resampleContour } from '../utils/contours';
 import { durationFieldForRegion, getTokenDurationInUnit } from '../utils/duration';
 import { axisTicks, formatMeasureValue } from '../utils/axisTicks';
@@ -133,7 +134,8 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
     return getLabel(t, field) || '';
   };
   const tooltipLines = (t: SpeechToken, layer: Layer, coords: string[]): string[] => {
-    const fields = layer.config.tooltipFields && layer.config.tooltipFields.length > 0 ? layer.config.tooltipFields : ['file_id'];
+    const chosen = tooltipFieldsFor(layers, layer);
+    const fields = chosen.length > 0 ? chosen : ['file_id'];
     const header = getLabel(t, layer.config.colorBy) || t.file_id || t.id;
     const lines = [header];
     fields.forEach(f => { const v = tooltipValue(t, f); if (v) lines.push(`${prettyField(f)}: ${v}`); });

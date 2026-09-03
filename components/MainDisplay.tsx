@@ -522,6 +522,16 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     return next;
   };
 
+  /**
+   * Apply a setting to every layer. Point Info is read as a property of the view — the
+   * fields you picked are the fields you expect on any point you hover — so it is not
+   * kept per layer, where a new layer would come up blank and a hover on it would look
+   * like a token with no data.
+   */
+  const setAllLayersConfig = (key: keyof PlotConfig, val: any) => {
+    layers.forEach(l => updateLayerConfig(l.id, key, val));
+  };
+
   const handleConfig = (key: keyof PlotConfig, val: any) => {
       updateLayerConfig(activeLayerId, key, val);
   };
@@ -1072,7 +1082,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                      const newFields = isChecked
                                        ? selected.filter(k => k !== field.key)
                                        : [...selected, field.key];
-                                     handleConfig('tooltipFields', newFields);
+                                     setAllLayersConfig('tooltipFields', newFields);
                                    }}
                                  />
                                  <span className="text-slate-700 font-medium">{field.label}</span>

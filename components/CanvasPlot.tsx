@@ -45,6 +45,7 @@ const SHAPES = [
 
 import { getLabel } from '../utils/getLabel';
 import { axisFraction, panRange, zoomRange } from '../utils/zoomRange';
+import { layerShowsPoints, tooltipFieldsFor } from '../utils/pointInfo';
 import { encodingGroupKey } from '../utils/plotEncoding';
 import { findNearestTimePoint } from '../utils/trajectory';
 
@@ -382,7 +383,9 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
     };
 
     layers.forEach(layer => {
-      if (!layer.visible) return;
+      // A layer showing only its means has no points to hover; indexing them anyway lets
+      // an invisible token win the hit-test and hide the point actually under the cursor.
+      if (!layerShowsPoints(layer)) return;
       const data = layerData[layer.id] || [];
       const config = layer.config;
       data.forEach(t => {
@@ -1300,7 +1303,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
       </div>
       {hoveredToken && (() => {
         const hoveredLayer = hoveredLayerId ? layers.find(l => l.id === hoveredLayerId) : layers[0];
-        const fields = hoveredLayer?.config.tooltipFields || [];
+        const fields = tooltipFieldsFor(layers, hoveredLayer);
         if (fields.length === 0) {
           return (
             <div className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 left-16 top-16 border border-slate-700 backdrop-blur-md min-w-[200px]">

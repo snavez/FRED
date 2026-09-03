@@ -638,6 +638,19 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 - Selected values that disappear from cross-filtered options remain in filter state — they reappear when the constraining filter is changed back
 - Performance: O(fields × tokens × active_filters) Set.has() operations; sub-10ms for typical datasets
 
+### Point Info (hover)
+- The fields a hovered point shows are a property of the **view**, not of a layer: the
+  popover writes them to every layer (`setAllLayersConfig`), and a tooltip falls back to
+  whichever layer has fields configured (`tooltipFieldsFor`). Kept per layer, a new layer
+  came up with none, and hovering one of its points showed the "choose some fields"
+  placeholder — indistinguishable from a token with no data.
+- **Only points that are drawn are hoverable** (`layerShowsPoints`). The hit-test index
+  used to hold every visible layer's tokens whether or not that layer drew them, so a
+  background layer showing just its means still won hits: the cursor sat on a visible
+  point but the tooltip described an invisible one behind it. A layer contributes to the
+  index when it draws points (`showPoints`), or, in trajectory mode, when its lines are
+  not fully transparent.
+
 ### Sidebar Controls
 - **Reset** beside the Filters heading selects every value in every field again, so there
   is a way back from a filtered view without hunting for which field is still narrowed.
@@ -963,6 +976,8 @@ FRED/
     measures.test.ts                   # Measure catalogue / accessor tests
     outliers.ts                        # Tokens outside their group's ellipse (+ CSV rows)
     outliers.test.ts                   # Outlier scan / divergence / CSV tests
+    pointInfo.ts                       # Which fields a hover shows; which layers are hoverable
+    pointInfo.test.ts                  # Point-info / hoverability tests
     plotRange.ts                       # Axis ranges that fit what is drawn (fitRange, quantile)
     plotRange.test.ts                  # Range-fitting tests
     spectralMoments.ts                 # Spectral discovery/features (moments, regions, tracks, coeffs)
