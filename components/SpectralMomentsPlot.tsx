@@ -682,8 +682,12 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       const xLo = absolute ? 0 : first, xHi = absolute ? absEnd : last;
       const mapX = (x: number) => area.x + ((x - xLo) / (xHi - xLo || 1)) * area.w;
       const mapY = (v: number) => area.y + area.h - ((v - vLo) / (vHi - vLo)) * area.h;
+      // Ticks describe the axis that was drawn, not the pooled token durations: a group
+      // with a long span (an /s/ among the stops) pushes the axis out past the crowd's
+      // 98th percentile, and numbering only as far as the crowd leaves the rest unlabelled.
       const xTicks = absolute
-        ? axisTicks(0, maxDur, 6).values.map(t => ({ pos: mapX(t), label: `${Math.round(t)}` }))
+        ? axisTicks(xLo, xHi, 6).values.filter(t => t >= xLo && t <= xHi)
+            .map(t => ({ pos: mapX(t), label: `${Math.round(t)}` }))
         : steps.map(i => ({ pos: mapX(i), label: tickLabel(i) }));
       drawFrame(ctx, area, xTicks, valueTicks(vLo, vHi, mapY),
         absolute ? 'Time (ms)' : axisLabel, spectralAxisLabel(measure, undefined, region, sm.bandRatio), s,
