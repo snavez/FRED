@@ -237,6 +237,8 @@ export interface NumericColumnStats {
   max: number;
   /** How many tokens carry a number here. */
   count: number;
+  /** How many distinct values, counted only far enough to tell a code from a measure. */
+  distinct: number;
 }
 
 /** Inclusive bounds on a numeric field. An absent bound is open. */
@@ -395,6 +397,10 @@ export interface ColumnMapping {
   /** Set when the column holds numbers, so it can be filtered by range. Measured over
    *  the whole column at import — a sample of the first rows can miss a sparse measure. */
   numeric?: NumericColumnStats;
+  /** How a numeric column is filtered, when the user has overridden the default: as a
+   *  list of values, or by bounds. Unset means decide from how many distinct values it
+   *  holds. Meaningless on a column that is not numeric. */
+  filterAs?: 'list' | 'range';
 }
 
 export type TrajectoryFormat = 'percentage' | 'time-slice' | 'single-point';

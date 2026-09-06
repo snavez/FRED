@@ -673,14 +673,22 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
   non-blank cells parse as numbers; blanks are ignored rather than counted against it.
 - A continuous numeric column is therefore **kept** rather than dropped as `ignore`: it
   becomes a hidden measure (`isDataField: true`, `showInSidebar: false`), listed in the
-  field-visibility popover (marked `123`, with a search box once the list is long) and
+  field-visibility popover (marked `min/max`, with a search box once the list is long) and
   shown as a range section when switched on. Only high-cardinality *free text* is dropped.
-- **Numeric and label fields are disjoint, by nature rather than by visibility**
-  (`isFilterField` excludes any numeric measure). Showing a numeric field must not turn it
-  back into a list of values, and the encoding menus — which share `listFilterFields` —
-  must never offer a continuous measure as a colour or shape. To filter a numeric column
-  as chips instead, set it to **Filter** in the mapping dialog; that clears `isDataField`
-  and it becomes an ordinary label field.
+- **What a column holds decides the control; Filter/Data decides where it appears**
+  (`filterMode`). The two are independent: a column classified **Filter** is one you want
+  in the sidebar, and wanting a threshold on it is exactly why. So numeric-ness alone
+  chooses between a value list and a pair of bounds — text is always a list, and a column
+  of numbers is bounded once it holds more than 12 distinct values, which is more than you
+  would want to pick from. `ColumnMapping.filterAs` overrides the guess in either
+  direction, and each section carries the switch (**Range** / **List**). Switching clears
+  the control being left behind, so an abandoned value list cannot keep filtering
+  invisibly.
+- The encoding menus share `listFilterFields`, which returns list-mode fields only, so a
+  continuous measure is never offered as a colour or shape — while a numeric column left
+  in list mode, being categorical in effect, still is.
+- **Sections follow column order** (`listSidebarFields`), value lists and ranges alike, so
+  a numeric field sits among its neighbours rather than in a pile at the end.
 - **Unmeasured tokens are kept by default.** A cell holding no number passes unless
   `includeMissing` is set false, so narrowing one field does not silently drop every token
   that was never measured on it. The section offers the choice, naming the count.

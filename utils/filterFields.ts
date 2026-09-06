@@ -1,5 +1,4 @@
 import { ColumnMapping, DatasetMeta, NumericColumnStats } from '../types';
-import { numericFieldKey } from './numericFields';
 
 /**
  * Which columns are *labels* — the fields you filter by in the sidebar and group by in
@@ -21,17 +20,41 @@ export const filterFieldKey = (m: ColumnMapping): string | null => {
 };
 
 /**
- * Whether a column can act as a label. Measures qualify only when explicitly shown, and a
- * measure of *numbers* never does: it is filtered by bounds instead (see
- * `listNumericFields`), so showing it must not turn it back into a list of values.
+ * Whether a column can be filtered at all — that is, whether the visibility popover offers
+ * it. Labels always qualify. A measure qualifies once explicitly shown, or as soon as it
+ * holds numbers, since bounding a measure is a reasonable thing to want; a measure of text
+ * stays out until asked for, so a wide dataset does not fill the popover with columns
+ * nobody filters on.
  */
 export const isFilterField = (m: ColumnMapping): boolean =>
-  filterFieldKey(m) !== null && !(m.numeric && m.isDataField)
-  && (m.showInSidebar === true || !m.isDataField);
+  filterFieldKey(m) !== null
+  && (!m.isDataField || m.showInSidebar === true || m.numeric !== undefined);
 
-/** Whether a label is currently listed in the sidebar. */
+/**
+ * Whether a filterable column is currently listed in the sidebar. Labels are listed unless
+ * hidden; measures stay hidden until shown, so an unset flag on a measure means hidden
+ * rather than relying on import to have written one.
+ */
 export const isVisibleFilterField = (m: ColumnMapping): boolean =>
-  isFilterField(m) && m.showInSidebar !== false;
+  isFilterField(m) && (m.isDataField ? m.showInSidebar === true : m.showInSidebar !== false);
+
+/** Above this many distinct values, a column of numbers is a measure rather than a code. */
+const LIST_MAX_DISTINCT = 12;
+
+/**
+ * Which control a filterable column gets: a list of its values, or a pair of bounds.
+ *
+ * This follows from what the column *holds*, not from whether it was classified Filter or
+ * Data — that classification decides where a column appears, and a column can very
+ * reasonably be a filter you want thresholds on. Text is always a list. A column of
+ * numbers is bounded once it holds more distinct values than you would want to pick from,
+ * and `filterAs` overrides the guess either way.
+ */
+export const filterMode = (m: ColumnMapping): 'list' | 'range' => {
+  if (!m.numeric) return 'list';
+  if (m.filterAs) return m.filterAs;
+  return m.numeric.distinct > LIST_MAX_DISTINCT ? 'range' : 'list';
+};
 
 /** Display name for a field key, honouring names the user assigned in the mapping dialog. */
 export const filterFieldLabel = (key: string, meta?: DatasetMeta | null): string => {
@@ -72,7 +95,7 @@ export const listFilterFields = (
   const fields: FilterField[] = [];
   const seen = new Set<string>();
   for (const m of meta.columnMappings) {
-    if (!isFilterField(m)) continue;
+    if (!isFilterField(m) || filterMode(m) !== 'list') continue;
     const key = filterFieldKey(m);
     if (!key || seen.has(key)) continue;
     const visible = isVisibleFilterField(m);
@@ -86,10 +109,10 @@ export const listFilterFields = (
 /**
  * The dataset's numeric fields — those filtered by a range rather than a value list.
  *
- * A column qualifies once import has measured it as numeric; label fields are excluded
- * even when their values happen to be numbers, because picking `1`, `2`, `5` off a list is
- * the better control for a handful of discrete codes. Kept apart from `listFilterFields`
- * so the encoding menus, which want categories, never offer a continuous measure.
+ * A column qualifies once import has measured it as numeric and `filterMode` puts it in
+ * range mode — whether it was classified Filter or Data. Kept apart from
+ * `listFilterFields` so the encoding menus, which want categories, never offer a
+ * continuous measure; a numeric column left in list mode stays on that side.
  */
 export const listNumericFields = (
   meta: DatasetMeta | null, scope: 'visible' | 'all' = 'visible',
@@ -98,13 +121,46 @@ export const listNumericFields = (
   const fields: NumericFilterField[] = [];
   const seen = new Set<string>();
   for (const m of meta.columnMappings) {
-    if (!m.numeric || !m.isDataField) continue;
-    const key = numericFieldKey(m);
+    if (!isFilterField(m) || filterMode(m) !== 'range' || !m.numeric) continue;
+    const key = filterFieldKey(m);
     if (!key || seen.has(key)) continue;
-    const visible = m.showInSidebar === true;
+    const visible = isVisibleFilterField(m);
     if (scope === 'visible' && !visible) continue;
     seen.add(key);
     fields.push({ key, label: filterFieldLabel(key, meta), visible, stats: m.numeric });
+  }
+  return fields;
+};
+
+/** One sidebar section: a field, and the control it gets. */
+export type SidebarField =
+  | { mode: 'list'; field: FilterField }
+  | { mode: 'range'; field: NumericFilterField };
+
+/**
+ * Every filterable field in **column order**, each tagged with the control it gets.
+ *
+ * The sidebar and the field-visibility popover both read this, so a numeric field sits
+ * among its neighbours rather than in a separate pile at the end — a section is where the
+ * column is, whether you pick its values or bound them.
+ */
+export const listSidebarFields = (
+  meta: DatasetMeta | null, scope: 'visible' | 'all' = 'visible',
+): SidebarField[] => {
+  if (!meta) return [];
+  const fields: SidebarField[] = [];
+  const seen = new Set<string>();
+  for (const m of meta.columnMappings) {
+    if (!isFilterField(m)) continue;
+    const key = filterFieldKey(m);
+    if (!key || seen.has(key)) continue;
+    const visible = isVisibleFilterField(m);
+    if (scope === 'visible' && !visible) continue;
+    seen.add(key);
+    const field = { key, label: filterFieldLabel(key, meta), visible };
+    fields.push(m.numeric && filterMode(m) === 'range'
+      ? { mode: 'range', field: { ...field, stats: m.numeric } }
+      : { mode: 'list', field });
   }
   return fields;
 };

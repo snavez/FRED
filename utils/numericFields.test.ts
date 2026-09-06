@@ -32,19 +32,19 @@ describe('parseNumericCell', () => {
 describe('measureNumericColumn', () => {
   it('reports the range over the whole column', () => {
     expect(measureNumericColumn(column(['28.8', '57.2', '67.1']), 'release_dur'))
-      .toEqual({ min: 28.8, max: 67.1, count: 3 });
+      .toEqual({ min: 28.8, max: 67.1, count: 3, distinct: 3 });
   });
 
   it('sees a column whose first rows are all blank — the reported case', () => {
     // A release measure is empty for every unreleased token, which can be the whole head
     // of the file; a sample of the first rows would call this column empty.
     const sparse = column([...Array(200).fill(''), '31', '44', '52']);
-    expect(measureNumericColumn(sparse, 'release_dur')).toEqual({ min: 31, max: 52, count: 3 });
+    expect(measureNumericColumn(sparse, 'release_dur')).toEqual({ min: 31, max: 52, count: 3, distinct: 3 });
   });
 
   it('tolerates a few stray non-numbers', () => {
     const stats = measureNumericColumn(column(['10', '20', '30', '40', 'n/a']), 'release_dur');
-    expect(stats).toEqual({ min: 10, max: 40, count: 4 });
+    expect(stats).toEqual({ min: 10, max: 40, count: 4, distinct: 4 });
   });
 
   it('is not numeric when the values are mostly text', () => {
@@ -78,7 +78,7 @@ describe('measureNumericColumns', () => {
       { csvHeader: 'place', role: 'field', fieldName: 'place' },
     ];
     const measured = measureNumericColumns(tokens, mappings);
-    expect(measured[0].numeric).toEqual({ min: 30, max: 60, count: 2 });
+    expect(measured[0].numeric).toEqual({ min: 30, max: 60, count: 2, distinct: 2 });
     expect(measured[1].numeric).toBeUndefined();
   });
 });

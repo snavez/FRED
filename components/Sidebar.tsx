@@ -2,7 +2,7 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { Filter, Database, Upload, Search, Settings2, RotateCcw } from 'lucide-react';
 import { PlotConfig, FilterState, NumericRange, SpeechToken, DatasetMeta, UNDEFINED_LABEL } from '../types';
-import { listFilterFields, listNumericFields, NumericFilterField } from '../utils/filterFields';
+import { filterMode, listFilterFields, listSidebarFields, NumericFilterField } from '../utils/filterFields';
 import { isOpenRange, withinRange } from '../utils/numericFields';
 import { bandRatioBandsLabel } from '../utils/spectralMoments';
 import { getLabel } from '../utils/getLabel';
@@ -19,13 +19,15 @@ interface SidebarProps {
   activeLayerName?: string;
   datasetMeta?: DatasetMeta | null;
   onToggleFieldVisibility?: (key: string, visible: boolean) => void;
+  /** Switch a numeric field between a list of its values and a pair of bounds. */
+  onSetFilterMode?: (key: string, mode: 'list' | 'range') => void;
   onReopenMappingDialog?: () => void;
   /** Select every value again, in every field — the way back from a filtered view. */
   onResetFilters?: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
-  filters, setFilters, data, tokenCount, totalCount, handleFileUpload, activeLayerName, datasetMeta, onToggleFieldVisibility, onReopenMappingDialog, onResetFilters
+  filters, setFilters, data, tokenCount, totalCount, handleFileUpload, activeLayerName, datasetMeta, onToggleFieldVisibility, onSetFilterMode, onReopenMappingDialog, onResetFilters
 }) => {
   const [searchTerms, setSearchTerms] = useState<Record<string, string>>({});
   const [showFieldSettings, setShowFieldSettings] = useState(false);
@@ -45,8 +47,16 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   // --- Label fields listed in the sidebar (shared rule with the encoding menus) ---
   const visibleFilterFields = useMemo(() => listFilterFields(datasetMeta), [datasetMeta]);
-  // --- Numeric fields: bounded rather than picked from ---
-  const visibleNumericFields = useMemo(() => listNumericFields(datasetMeta), [datasetMeta]);
+  // --- Every listed field in column order, each with the control it gets ---
+  const sidebarFields = useMemo(() => listSidebarFields(datasetMeta), [datasetMeta]);
+  /** Keys of listed fields that hold numbers, so a value list can offer bounds instead. */
+  const numericKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const m of datasetMeta?.columnMappings || []) {
+      if (m.numeric && filterMode(m) === 'list') keys.add(m.fieldName || m.csvHeader);
+    }
+    return keys;
+  }, [datasetMeta]);
 
   // --- Cross-filtered options: for each field, apply all OTHER active filters ---
   const fieldOptions = useMemo(() => {
@@ -107,7 +117,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   // --- Popover entries: every filterable field, listed or not. Numeric fields come last
   // and are usually many, so the popover offers a search once the list gets long. ---
   const popoverEntries = useMemo(
-    () => [...listFilterFields(datasetMeta, 'all'), ...listNumericFields(datasetMeta, 'all')],
+    () => listSidebarFields(datasetMeta, 'all').map(e => ({ ...e.field, numeric: e.mode === 'range' })),
     [datasetMeta],
   );
   const [fieldSearch, setFieldSearch] = useState('');
@@ -180,7 +190,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const hasData = data.length > 0;
-  const hasAnyFilters = visibleFilterFields.length > 0 || visibleNumericFields.length > 0;
+  const hasAnyFilters = sidebarFields.length > 0;
 
   /** Threshold for showing search box in a filter section */
   const SEARCH_THRESHOLD = 50;
@@ -202,6 +212,13 @@ const Sidebar: React.FC<SidebarProps> = ({
         <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex justify-between items-center">
           <span>{label}{showSearch ? ` (${filteredOptions.length})` : ''}</span>
           <span className="flex gap-2">
+            {onSetFilterMode && numericKeys.has(key) && (
+              <button
+                onClick={() => onSetFilterMode(key, 'range')}
+                className="hover:underline text-slate-400"
+                title="Filter this field by a minimum and maximum instead of picking values"
+              >Range</button>
+            )}
             <button onClick={() => selectAllForKey(key)} className={`hover:underline ${allSelected ? 'text-sky-700 font-extrabold' : 'text-slate-400'}`}>All</button>
             <button onClick={() => clearAllForKey(key)} className={`hover:underline ${selected.length === 0 ? 'text-sky-700 font-extrabold' : 'text-slate-400'}`}>Clear</button>
           </span>
@@ -258,18 +275,27 @@ const Sidebar: React.FC<SidebarProps> = ({
     return (
       <div key={key}>
         <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex justify-between items-center">
-          <span>{label}</span>
-          <button
-            onClick={() => clearRange(key)}
-            className={`hover:underline ${bounded ? 'text-slate-400' : 'text-sky-700 font-extrabold'}`}
-            title="Remove the bounds on this field"
-          >Any</button>
+          <span>{label} <span className="font-medium normal-case text-slate-400">({round(stats.min)}–{round(stats.max)})</span></span>
+          <span className="flex gap-2">
+            {onSetFilterMode && (
+              <button
+                onClick={() => onSetFilterMode(key, 'list')}
+                className="hover:underline text-slate-400"
+                title="Pick values from a list instead of setting bounds"
+              >List</button>
+            )}
+            <button
+              onClick={() => clearRange(key)}
+              className={`hover:underline ${bounded ? 'text-slate-400' : 'text-sky-700 font-extrabold'}`}
+              title="Remove the bounds on this field"
+            >Any</button>
+          </span>
         </label>
         <div className="flex items-center gap-1.5">
           <input
             type="number"
             className="w-full min-w-0 px-1.5 py-1 text-[11px] border border-slate-200 rounded focus:outline-none focus:border-sky-500"
-            placeholder={String(round(stats.min))}
+            placeholder="min"
             value={range.min ?? ''}
             onChange={e => setRangeBound(key, 'min', e.target.value)}
             title={`Keep tokens at or above this value (observed minimum ${stats.min})`}
@@ -278,7 +304,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           <input
             type="number"
             className="w-full min-w-0 px-1.5 py-1 text-[11px] border border-slate-200 rounded focus:outline-none focus:border-sky-500"
-            placeholder={String(round(stats.max))}
+            placeholder="max"
             value={range.max ?? ''}
             onChange={e => setRangeBound(key, 'max', e.target.value)}
             title={`Keep tokens at or below this value (observed maximum ${stats.max})`}
@@ -406,7 +432,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                             className="rounded text-sky-700"
                           />
                           <span className="text-xs text-slate-700">{entry.label}</span>
-                          {'stats' in entry && <span className="ml-auto text-[9px] font-bold text-slate-400 uppercase">123</span>}
+                          {entry.numeric && <span className="ml-auto text-[9px] font-bold text-slate-400" title="Numeric — filtered by a minimum and maximum">min/max</span>}
                         </label>
                       ))}
                       {shownPopoverEntries.length === 0 && (
@@ -420,8 +446,9 @@ const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             <div className="space-y-4">
-              {visibleFilterFields.map(({ key, label }) => renderDynamicFilterSection(key, label))}
-              {visibleNumericFields.map(renderNumericFilterSection)}
+              {sidebarFields.map(entry => entry.mode === 'range'
+                ? renderNumericFilterSection(entry.field)
+                : renderDynamicFilterSection(entry.field.key, entry.field.label))}
             </div>
           </section>
         )}

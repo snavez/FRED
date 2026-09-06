@@ -6,6 +6,8 @@ import {
   isVisibleFilterField,
   listFilterFields,
   listNumericFields,
+  listSidebarFields,
+  filterMode,
 } from './filterFields';
 import type { ColumnMapping, DatasetMeta } from '../types';
 
@@ -104,13 +106,41 @@ describe('filterFieldLabel', () => {
   });
 });
 
+const stats = (over: Partial<{ min: number; max: number; count: number; distinct: number }> = {}) =>
+  ({ min: 12, max: 96, count: 400, distinct: 40, ...over });
+
+describe('filterMode', () => {
+  it('gives text a list, whatever else is set', () => {
+    expect(filterMode({ csvHeader: 'MAU', role: 'field', fieldName: 'MAU' })).toBe('list');
+  });
+
+  it('bounds a column with more distinct values than you would pick from', () => {
+    expect(filterMode({ csvHeader: 'dur', role: 'field', numeric: stats() })).toBe('range');
+  });
+
+  it('lists a handful of numeric codes', () => {
+    expect(filterMode({ csvHeader: 'block', role: 'field', numeric: stats({ distinct: 3 }) })).toBe('list');
+  });
+
+  it('does not care whether the column was classified Filter or Data', () => {
+    const asFilter = { csvHeader: 'score', role: 'field' as const, numeric: stats(), isDataField: false };
+    const asData = { ...asFilter, isDataField: true, showInSidebar: true };
+    expect(filterMode(asFilter)).toBe('range');
+    expect(filterMode(asData)).toBe('range');
+  });
+
+  it('honours an explicit override in both directions', () => {
+    expect(filterMode({ csvHeader: 'a', role: 'field', numeric: stats(), filterAs: 'list' })).toBe('list');
+    expect(filterMode({ csvHeader: 'b', role: 'field', numeric: stats({ distinct: 3 }), filterAs: 'range' })).toBe('range');
+  });
+});
+
 describe('listNumericFields', () => {
-  const stats = { min: 12, max: 96, count: 400 };
   const dataset = meta([
     { csvHeader: 'MAU', role: 'field', fieldName: 'MAU', isDataField: false },
-    { csvHeader: 'release_dur', role: 'duration', fieldName: 'release_dur', isDataField: true, numeric: stats },
-    { csvHeader: 'COG_50%', role: 'spectral_cog', fieldName: 'COG_50%', isDataField: true, numeric: stats, showInSidebar: true },
-    { csvHeader: 'F1_50%', role: 'formant', formant: 'f1', timePoint: 50, numeric: stats },
+    { csvHeader: 'release_dur', role: 'duration', fieldName: 'release_dur', isDataField: true, numeric: stats() },
+    { csvHeader: 'COG_50%', role: 'spectral_cog', fieldName: 'COG_50%', isDataField: true, numeric: stats(), showInSidebar: true },
+    { csvHeader: 'F1_50%', role: 'formant', formant: 'f1', timePoint: 50, numeric: stats() },
   ]);
 
   it('lists only the numeric fields the user has shown', () => {
@@ -121,19 +151,54 @@ describe('listNumericFields', () => {
     expect(listNumericFields(dataset, 'all').map(f => f.key)).toEqual(['release_dur', 'COG_50%']);
   });
 
-  it('carries the observed range, so the boxes can show it', () => {
-    expect(listNumericFields(dataset, 'all')[0].stats).toEqual(stats);
+  it('carries the observed range, so the section header can show it', () => {
+    expect(listNumericFields(dataset, 'all')[0].stats).toEqual(stats());
   });
 
-  it('leaves label fields to the value lists, even when their values are numbers', () => {
-    const labelled = meta([
-      { csvHeader: 'block', role: 'field', fieldName: 'block', isDataField: false, numeric: stats },
+  it('bounds a numeric column classified as Filter — the reported case', () => {
+    // Classifying a column as Filter says where it appears, not how it is filtered: a
+    // filter you want a threshold on is exactly the case this exists for.
+    const filtered = meta([
+      { csvHeader: 'score', role: 'field', fieldName: 'score', isDataField: false, numeric: stats() },
     ]);
-    expect(listNumericFields(labelled, 'all')).toEqual([]);
-    expect(listFilterFields(labelled, 'all').map(f => f.key)).toEqual(['block']);
+    expect(listNumericFields(filtered).map(f => f.key)).toEqual(['score']);
+    expect(listFilterFields(filtered, 'all')).toEqual([]);
+  });
+
+  it('leaves a handful of numeric codes to the value list', () => {
+    const coded = meta([
+      { csvHeader: 'block', role: 'field', fieldName: 'block', isDataField: false, numeric: stats({ distinct: 3 }) },
+    ]);
+    expect(listNumericFields(coded, 'all')).toEqual([]);
+    expect(listFilterFields(coded, 'all').map(f => f.key)).toEqual(['block']);
   });
 
   it('is empty without a dataset', () => {
     expect(listNumericFields(null)).toEqual([]);
+  });
+});
+
+describe('listSidebarFields', () => {
+  const dataset = meta([
+    { csvHeader: 'MAU', role: 'field', fieldName: 'MAU', isDataField: false },
+    { csvHeader: 'score', role: 'field', fieldName: 'score', isDataField: false, numeric: stats() },
+    { csvHeader: 'word', role: 'field', fieldName: 'word', isDataField: false },
+  ]);
+
+  it('keeps column order, so a numeric field sits among its neighbours', () => {
+    expect(listSidebarFields(dataset).map(e => e.field.key)).toEqual(['MAU', 'score', 'word']);
+  });
+
+  it('tags each field with the control it gets', () => {
+    expect(listSidebarFields(dataset).map(e => e.mode)).toEqual(['list', 'range', 'list']);
+  });
+
+  it('carries the range stats only on the bounded fields', () => {
+    const bounded = listSidebarFields(dataset)[1];
+    expect(bounded.mode === 'range' && bounded.field.stats).toEqual(stats());
+  });
+
+  it('is empty without a dataset', () => {
+    expect(listSidebarFields(null)).toEqual([]);
   });
 });

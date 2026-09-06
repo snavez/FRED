@@ -19,6 +19,9 @@ import { getLabel } from './getLabel';
 /** Share of a column's non-blank cells that must be numbers for it to count as numeric. */
 const NUMERIC_SHARE = 0.8;
 
+/** Distinct values are counted no further than this — beyond it, it is a measure. */
+const DISTINCT_CAP = 64;
+
 /** The number in a cell, or NaN when it is blank or holds something that is not a number. */
 export const parseNumericCell = (raw: string): number => {
   const trimmed = raw.trim();
@@ -34,6 +37,9 @@ export const measureNumericColumn = (
   tokens: SpeechToken[], key: string,
 ): NumericColumnStats | null => {
   let filled = 0, count = 0, min = Infinity, max = -Infinity;
+  // Distinct values are counted only far enough to tell a handful of codes from a
+  // continuous measure; past the cap the exact number tells us nothing more.
+  const seen = new Set<number>();
   for (const token of tokens) {
     const raw = getLabel(token, key);
     if (raw.trim() === '') continue;
@@ -43,9 +49,10 @@ export const measureNumericColumn = (
     count++;
     if (value < min) min = value;
     if (value > max) max = value;
+    if (seen.size <= DISTINCT_CAP) seen.add(value);
   }
   if (count === 0 || count / filled < NUMERIC_SHARE) return null;
-  return { min, max, count };
+  return { min, max, count, distinct: seen.size };
 };
 
 /** Roles whose columns are not a single number per token, so cannot carry a range. */

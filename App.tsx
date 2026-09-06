@@ -6,7 +6,7 @@ import Header from './components/Header';
 import { detectDelimiter, splitRow, splitRows, autoDetectMappings, parseWithMappings, detectHeaderRow, HeaderDetectionResult, TrajectoryFormatOverride } from './services/csvParser';
 import { getLabel } from './utils/getLabel';
 import { filterFieldKey, listFilterFields } from './utils/filterFields';
-import { isOpenRange, numericFieldKey, withinRange } from './utils/numericFields';
+import { isOpenRange, withinRange } from './utils/numericFields';
 import { SpeechToken, PlotConfig, FilterState, ReferenceCentroid, Layer, LayerCounters, StyleOverrides, ColumnMapping, DatasetMeta, DatasetProvenance, NormalizationMethod, UNDEFINED_LABEL } from './types';
 import { isSidecarFor, parseProvenanceSidecar } from './services/provenance';
 import { computeSpeakerStats, computeNormalizedRange, SpeakerStatsMap } from './utils/normalization';
@@ -664,10 +664,37 @@ const App: React.FC = () => {
     setDatasetMeta(prev => prev && ({
       ...prev,
       columnMappings: prev.columnMappings.map(m =>
-        (filterFieldKey(m) === key || (m.numeric && numericFieldKey(m) === key))
-          ? { ...m, showInSidebar: visible } : m),
+        filterFieldKey(m) === key ? { ...m, showInSidebar: visible } : m),
     }));
   }, []);
+
+  /**
+   * Switch one numeric field between a list of values and a pair of bounds.
+   *
+   * The two controls hold their state in different places, so the one being left behind is
+   * cleared: an abandoned value list would otherwise keep filtering invisibly, and an
+   * abandoned range likewise.
+   */
+  const handleSetFilterMode = useCallback((key: string, mode: 'list' | 'range') => {
+    setDatasetMeta(prev => prev && ({
+      ...prev,
+      columnMappings: prev.columnMappings.map(m =>
+        filterFieldKey(m) === key ? { ...m, filterAs: mode } : m),
+    }));
+    setLayers(prev => prev.map(layer => {
+      const filters = { ...layer.filters.filters };
+      const ranges = { ...(layer.filters.ranges || {}) };
+      if (mode === 'range') {
+        delete filters[key];
+      } else {
+        delete ranges[key];
+        const values = new Set(data.map(t => getLabel(t, key)));
+        const hasEmpty = values.delete('');
+        filters[key] = [...values, ...(hasEmpty ? [UNDEFINED_LABEL] : [])];
+      }
+      return { ...layer, filters: { ...layer.filters, filters, ranges } };
+    }));
+  }, [data]);
 
   const activeLayerData = layerData[activeLayerId] || [];
 
@@ -685,6 +712,7 @@ const App: React.FC = () => {
         activeLayerName={activeLayer.isBackground ? undefined : activeLayer.name}
         datasetMeta={datasetMeta}
         onToggleFieldVisibility={handleToggleFieldVisibility}
+        onSetFilterMode={handleSetFilterMode}
         onResetFilters={handleResetFilters}
         onReopenMappingDialog={storedFileData ? handleReopenMappingDialog : undefined}
       />
