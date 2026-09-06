@@ -1,8 +1,9 @@
 
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { Filter, Database, Upload, Search, Settings2, RotateCcw } from 'lucide-react';
-import { PlotConfig, FilterState, SpeechToken, DatasetMeta, UNDEFINED_LABEL } from '../types';
-import { listFilterFields } from '../utils/filterFields';
+import { PlotConfig, FilterState, NumericRange, SpeechToken, DatasetMeta, UNDEFINED_LABEL } from '../types';
+import { listFilterFields, listNumericFields, NumericFilterField } from '../utils/filterFields';
+import { isOpenRange, withinRange } from '../utils/numericFields';
 import { bandRatioBandsLabel } from '../utils/spectralMoments';
 import { getLabel } from '../utils/getLabel';
 
@@ -44,6 +45,8 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   // --- Label fields listed in the sidebar (shared rule with the encoding menus) ---
   const visibleFilterFields = useMemo(() => listFilterFields(datasetMeta), [datasetMeta]);
+  // --- Numeric fields: bounded rather than picked from ---
+  const visibleNumericFields = useMemo(() => listNumericFields(datasetMeta), [datasetMeta]);
 
   // --- Cross-filtered options: for each field, apply all OTHER active filters ---
   const fieldOptions = useMemo(() => {
@@ -63,13 +66,19 @@ const Sidebar: React.FC<SidebarProps> = ({
       Object.entries(filterRecord).filter(([, v]) => v && v.length === 0).map(([k]) => k)
     );
 
+    // Active numeric bounds narrow the value lists too, so the chips a field offers are
+    // the values that actually survive the rest of the sidebar.
+    const rangeEntries = Object.entries(filters.ranges || {}).filter(([, r]) => !isOpenRange(r));
+    const passesRanges = (t: SpeechToken) =>
+      rangeEntries.every(([key, range]) => withinRange(getLabel(t, key), range));
+
     for (const { key } of visibleFilterFields) {
       // If some OTHER filter is empty, no data passes → no options
       const otherEmpty = [...emptyFilterKeys].some(k => k !== key);
       if (otherEmpty) { result[key] = []; continue; }
 
       // Apply all filters EXCEPT this field's own
-      let subset = data;
+      let subset = rangeEntries.length ? data.filter(passesRanges) : data;
       for (const entry of allFilterEntries) {
         if (entry.key === key) continue;
         subset = subset.filter(t => {
@@ -95,8 +104,17 @@ const Sidebar: React.FC<SidebarProps> = ({
     return result;
   }, [data, visibleFilterFields, filters]);
 
-  // --- Popover entries: every label field, listed or not ---
-  const popoverEntries = useMemo(() => listFilterFields(datasetMeta, 'all'), [datasetMeta]);
+  // --- Popover entries: every filterable field, listed or not. Numeric fields come last
+  // and are usually many, so the popover offers a search once the list gets long. ---
+  const popoverEntries = useMemo(
+    () => [...listFilterFields(datasetMeta, 'all'), ...listNumericFields(datasetMeta, 'all')],
+    [datasetMeta],
+  );
+  const [fieldSearch, setFieldSearch] = useState('');
+  const shownPopoverEntries = useMemo(() => {
+    const term = fieldSearch.trim().toLowerCase();
+    return term ? popoverEntries.filter(e => e.label.toLowerCase().includes(term)) : popoverEntries;
+  }, [popoverEntries, fieldSearch]);
 
   const toggleFieldInPopover = (entry: { key: string; visible: boolean }) => {
     onToggleFieldVisibility?.(entry.key, !entry.visible);
@@ -137,8 +155,32 @@ const Sidebar: React.FC<SidebarProps> = ({
     setFilters(prev => ({ ...prev, filters: { ...prev.filters, [key]: [] } }));
   };
 
+  /** Set one bound on a numeric field; an empty box clears that bound. */
+  const setRangeBound = (key: string, bound: 'min' | 'max', raw: string) => {
+    setFilters(prev => {
+      const ranges = { ...(prev.ranges || {}) };
+      const next: NumericRange = { ...(ranges[key] || {}) };
+      const parsed = parseFloat(raw);
+      if (raw.trim() === '' || isNaN(parsed)) delete next[bound];
+      else next[bound] = parsed;
+      ranges[key] = next;
+      return { ...prev, ranges };
+    });
+  };
+
+  const setIncludeMissing = (key: string, include: boolean) => {
+    setFilters(prev => ({
+      ...prev,
+      ranges: { ...(prev.ranges || {}), [key]: { ...((prev.ranges || {})[key] || {}), includeMissing: include } },
+    }));
+  };
+
+  const clearRange = (key: string) => {
+    setFilters(prev => ({ ...prev, ranges: { ...(prev.ranges || {}), [key]: {} } }));
+  };
+
   const hasData = data.length > 0;
-  const hasAnyFilters = visibleFilterFields.length > 0;
+  const hasAnyFilters = visibleFilterFields.length > 0 || visibleNumericFields.length > 0;
 
   /** Threshold for showing search box in a filter section */
   const SEARCH_THRESHOLD = 50;
@@ -203,6 +245,56 @@ const Sidebar: React.FC<SidebarProps> = ({
             </div>
           )}
         </div>
+      </div>
+    );
+  };
+
+  /** Render a min/max section for a numeric field. Blank bound = open on that side. */
+  const renderNumericFilterSection = ({ key, label, stats }: NumericFilterField) => {
+    const range = filters.ranges?.[key] || {};
+    const bounded = !isOpenRange(range);
+    const round = (v: number) => (Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 100) / 100);
+
+    return (
+      <div key={key}>
+        <label className="text-[10px] font-bold text-slate-500 uppercase mb-1.5 flex justify-between items-center">
+          <span>{label}</span>
+          <button
+            onClick={() => clearRange(key)}
+            className={`hover:underline ${bounded ? 'text-slate-400' : 'text-sky-700 font-extrabold'}`}
+            title="Remove the bounds on this field"
+          >Any</button>
+        </label>
+        <div className="flex items-center gap-1.5">
+          <input
+            type="number"
+            className="w-full min-w-0 px-1.5 py-1 text-[11px] border border-slate-200 rounded focus:outline-none focus:border-sky-500"
+            placeholder={String(round(stats.min))}
+            value={range.min ?? ''}
+            onChange={e => setRangeBound(key, 'min', e.target.value)}
+            title={`Keep tokens at or above this value (observed minimum ${stats.min})`}
+          />
+          <span className="text-[10px] text-slate-400 shrink-0">to</span>
+          <input
+            type="number"
+            className="w-full min-w-0 px-1.5 py-1 text-[11px] border border-slate-200 rounded focus:outline-none focus:border-sky-500"
+            placeholder={String(round(stats.max))}
+            value={range.max ?? ''}
+            onChange={e => setRangeBound(key, 'max', e.target.value)}
+            title={`Keep tokens at or below this value (observed maximum ${stats.max})`}
+          />
+        </div>
+        {bounded && stats.count < totalCount && (
+          <label className="flex items-center gap-1.5 mt-1 cursor-pointer" title={`${(totalCount - stats.count).toLocaleString()} tokens carry no value here`}>
+            <input
+              type="checkbox"
+              className="rounded text-sky-700"
+              checked={range.includeMissing !== false}
+              onChange={e => setIncludeMissing(key, e.target.checked)}
+            />
+            <span className="text-[10px] text-slate-500">Keep the {(totalCount - stats.count).toLocaleString()} unmeasured</span>
+          </label>
+        )}
       </div>
     );
   };
@@ -294,7 +386,18 @@ const Sidebar: React.FC<SidebarProps> = ({
                   {showFieldSettings && (
                     <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-20 w-56 py-2 max-h-80 overflow-y-auto">
                       <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase border-b border-slate-100 mb-1">Show in sidebar</div>
-                      {popoverEntries.map(entry => (
+                      {popoverEntries.length > 12 && (
+                        <div className="px-2 pb-1.5">
+                          <input
+                            type="text"
+                            placeholder="Search fields..."
+                            className="w-full px-2 py-1 text-[11px] border border-slate-200 rounded focus:outline-none focus:border-sky-500"
+                            value={fieldSearch}
+                            onChange={e => setFieldSearch(e.target.value)}
+                          />
+                        </div>
+                      )}
+                      {shownPopoverEntries.map(entry => (
                         <label key={entry.key} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
                           <input
                             type="checkbox"
@@ -303,8 +406,12 @@ const Sidebar: React.FC<SidebarProps> = ({
                             className="rounded text-sky-700"
                           />
                           <span className="text-xs text-slate-700">{entry.label}</span>
+                          {'stats' in entry && <span className="ml-auto text-[9px] font-bold text-slate-400 uppercase">123</span>}
                         </label>
                       ))}
+                      {shownPopoverEntries.length === 0 && (
+                        <div className="px-3 py-2 text-[11px] text-slate-400 italic">No fields match</div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -314,6 +421,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
             <div className="space-y-4">
               {visibleFilterFields.map(({ key, label }) => renderDynamicFilterSection(key, label))}
+              {visibleNumericFields.map(renderNumericFilterSection)}
             </div>
           </section>
         )}

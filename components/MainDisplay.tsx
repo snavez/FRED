@@ -123,6 +123,52 @@ const HelpTooltip: React.FC<{ text: string; helpMode: boolean; children: React.R
   );
 };
 
+/**
+ * How a group's trajectory is summarised — shared by every plot that draws one, because
+ * it is a statement about the data rather than styling for one tab.
+ *
+ * The quantile band and the median belong together: on a skewed distribution mean ± SD
+ * reaches below where any token sits and puts the line above the typical one.
+ */
+const TrajectorySummaryControls: React.FC<{
+  config: PlotConfig;
+  onChange: (key: keyof PlotConfig, val: any) => void;
+  helpMode: boolean;
+}> = ({ config, onChange, helpMode }) => (
+  <HelpTooltip helpMode={helpMode} text="The line is the mean or the median of each group at every sampled position, and the ribbon is either mean ± 1 SD or the 16th–84th percentiles. Prefer median and quantiles for a skewed measure.">
+    <div className="flex flex-col">
+      <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Summary</span>
+      <div className="flex items-center gap-2">
+        <select
+          className="p-0.5 border rounded text-[10px]"
+          value={config.trajectoryCentre ?? 'mean'}
+          onChange={e => onChange('trajectoryCentre', e.target.value)}
+          title="Which centre the group line traces"
+        >
+          <option value="mean">Mean</option>
+          <option value="median">Median</option>
+        </select>
+        <select
+          className="p-0.5 border rounded text-[10px]"
+          value={config.trajectoryBand ?? 'sd'}
+          onChange={e => onChange('trajectoryBand', e.target.value)}
+          title="The spread shaded around each group line"
+        >
+          <option value="none">No band</option>
+          <option value="sd">±1 SD</option>
+          <option value="quantile">16–84%</option>
+        </select>
+        {(config.trajectoryBand ?? 'sd') !== 'none' && (
+          <input type="range" min="0" max="1" step="0.02" title="Band Opacity"
+            value={opacityToSlider(config.trajectoryBandOpacity ?? 0.18)}
+            onChange={e => onChange('trajectoryBandOpacity', sliderToOpacity(parseFloat(e.target.value)))}
+            className="w-14 h-1 accent-slate-600" />
+        )}
+      </div>
+    </div>
+  </HelpTooltip>
+);
+
 const MainDisplay: React.FC<MainDisplayProps> = ({
   layers, layerData, activeLayerId, setActiveLayerId,
   updateLayerConfig, addLayer, removeLayer, reorderLayer,
@@ -1405,7 +1451,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                       </div>
                     )}
                     {currentConfig.spectralMode === 'timeline' && (
-                      <HelpTooltip helpMode={helpMode} text="Normalised draws every token on a 0→1 axis, which discards duration — a 30 ms and a 120 ms segment look the same width. Absolute uses each token's real duration in milliseconds; the group mean is drawn only where enough tokens still overlap.">
+                      <HelpTooltip helpMode={helpMode} text="Normalised draws every token on a 0→1 axis, which discards duration — a 30 ms and a 120 ms segment look the same width. Absolute lays the same summary across each group's median duration in milliseconds, so each curve ends at its own median and every point still averages the same phase of every token.">
                       <div className="flex items-center gap-2">
                         <label className="font-semibold text-slate-600">Mode:</label>
                         <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700" value={currentConfig.spectralContourAbsolute ? 'absolute' : 'normalised'} onChange={e => handleConfig('spectralContourAbsolute', e.target.value === 'absolute')}>
@@ -1814,6 +1860,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         </select>
                       </div>
                     </div>
+                    <HelpTooltip helpMode={helpMode} text="Normalised plots every token over 0–100% of its own segment. Absolute lays the same summary across each group's median duration, so the groups' durations are comparable by eye and every point still averages the same phase of every token.">
                     <div className="flex flex-col justify-center">
                       <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">X-Axis</span>
                       <div className="flex rounded border border-slate-300 overflow-hidden">
@@ -1827,6 +1874,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                         >Absolute</button>
                       </div>
                     </div>
+                    </HelpTooltip>
+                    <TrajectorySummaryControls config={currentConfig} onChange={handleConfig} helpMode={helpMode} />
                     {/* Duration field selector — only when absolute mode AND percentage-format data
                         (time-slice data uses its own native extraction range). */}
                     {currentConfig.timeNormalized === false && datasetMeta?.trajectoryFormat === 'percentage' && durationFieldOptions.length > 0 && (
@@ -2459,19 +2508,11 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                                 onChange={e => handleConfig('meanTrajectoryPointSize', parseFloat(e.target.value))}
                                 className="w-14 h-1 accent-slate-600" />
                             )}
-                            <label className="flex items-center gap-1 cursor-pointer" title="Shade ±1 standard deviation around each group mean">
-                              <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.spectralShowBand} onChange={e => handleConfig('spectralShowBand', e.target.checked)} />
-                              <span className="text-[10px] font-bold text-slate-600">±1 SD</span>
-                            </label>
-                            {currentConfig.spectralShowBand && (
-                              <input type="range" min="0" max="1" step="0.02" title="Band Opacity"
-                                value={opacityToSlider(currentConfig.spectralBandOpacity ?? 0.18)}
-                                onChange={e => handleConfig('spectralBandOpacity', sliderToOpacity(parseFloat(e.target.value)))}
-                                className="w-14 h-1 accent-slate-600" />
-                            )}
                           </div>
                         </div>
                         </HelpTooltip>
+
+                        <TrajectorySummaryControls config={currentConfig} onChange={handleConfig} helpMode={helpMode} />
 
                         <HelpTooltip helpMode={helpMode} text="Name each mean contour at its end, so the plot reads without the legend.">
                         <div className="flex flex-col">

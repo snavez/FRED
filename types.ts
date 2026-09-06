@@ -63,6 +63,12 @@ export interface PlotConfig {
   timeNormalized: boolean;
   showMeanTrajectories: boolean;
   snapMeansToGrid: boolean;
+  /** The group summary every trajectory plot draws: where the line goes, and what the
+   *  ribbon around it means. Shared, because it is a statistical choice about the data
+   *  rather than a styling choice about one plot. */
+  trajectoryCentre: 'mean' | 'median';
+  trajectoryBand: 'none' | 'sd' | 'quantile';
+  trajectoryBandOpacity: number;
   /** Field name to use as token duration in absolute-time plots.
    *  Empty/undefined = fall back to SpeechToken.duration (from the duration-role column). */
   trajectoryDurationField?: string;
@@ -149,9 +155,7 @@ export interface PlotConfig {
   spectralTrajRange: [number, number];
   spectralViolin: boolean;                   // box mode: false = box, true = violin
   spectralShowIndividual: boolean;           // contours: faded per-token lines
-  spectralBandOpacity: number;               // contours: ±1 SD band fill opacity
   spectralDensityFill: number;               // density: area fill opacity
-  spectralShowBand: boolean;                 // contours: ±1 SD band around each mean
   spectralContourAbsolute: boolean;          // contours: absolute (ms) instead of normalised
   // Duration column an absolute-time contour is stretched over. '' = the token's own
   // duration. A dataset can hold several (whole segment, closure, release), and a
@@ -227,8 +231,26 @@ export interface PlotConfig {
   countRange: [number, number];
 }
 
+/** What a numeric column holds, measured over every row rather than a sample. */
+export interface NumericColumnStats {
+  min: number;
+  max: number;
+  /** How many tokens carry a number here. */
+  count: number;
+}
+
+/** Inclusive bounds on a numeric field. An absent bound is open. */
+export interface NumericRange {
+  min?: number;
+  max?: number;
+  /** Whether tokens with no number here are kept. Defaults to true. */
+  includeMissing?: boolean;
+}
+
 export interface FilterState {
   filters: Record<string, string[]>;  // field name → selected values (empty = nothing passes)
+  /** Bounds on numeric fields. A field with no entry is unfiltered. */
+  ranges?: Record<string, NumericRange>;
 }
 
 // Multi-Layer System
@@ -370,6 +392,9 @@ export interface ColumnMapping {
   spectralRegion?: string;      // Segment region for spectral columns (e.g. "closure", "release")
   showInSidebar?: boolean;
   isDataField?: boolean;      // true = data/plot value (no sidebar), false/undefined = filter/label
+  /** Set when the column holds numbers, so it can be filtered by range. Measured over
+   *  the whole column at import — a sample of the first rows can miss a sparse measure. */
+  numeric?: NumericColumnStats;
 }
 
 export type TrajectoryFormat = 'percentage' | 'time-slice' | 'single-point';

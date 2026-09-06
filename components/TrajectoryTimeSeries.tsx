@@ -3,6 +3,8 @@ import React, { useRef, useEffect, useMemo, useState, forwardRef, useImperativeH
 import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, NormalizationMethod, DatasetMeta } from '../types';
 import { normalizeFormant, SpeakerStatsMap } from '../utils/normalization';
 import { interpolateTrajectoryAt, computeMeanTimeGrid } from '../utils/trajectory';
+import { contourSeries, SummaryOptions } from '../utils/contours';
+import { quantile } from '../utils/plotRange';
 import { computeExportPlotSize } from '../utils/exportLayout';
 
 interface TrajectoryTimeSeriesProps {
@@ -46,6 +48,15 @@ const DASH_NAMES = ['solid', 'dash', 'dot', 'longdash', 'dotdash', 'solid'];
 import { getLabel } from '../utils/getLabel';
 import { getTokenDuration, getTokenDurationInUnit } from '../utils/duration';
 
+
+/** One formant's group summary, ready to draw: the centre line and the ribbon around it. */
+interface ChannelSummary {
+  pts: { x: number; y: number }[];
+  band: { x: number; lo: number; hi: number }[];
+}
+
+/** Both formants of one group, summarised over the same time grid. */
+interface GroupSummary { f1: ChannelSummary; f2: ChannelSummary }
 
 const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>(({ data, config, styleOverrides, onLegendClick, speakerStats, datasetMeta }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -133,77 +144,83 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     return data.some(t => getTokenDuration(t) > 10);
   }, [datasetMeta, data]);
 
-  /** Compute mean trajectories. Uses native-time grids for absolute mode (no 50-bin synthesis). */
-  const meanTrajectories = useMemo(() => {
+  /**
+   * Summarise each group's trajectory, one channel at a time.
+   *
+   * Tokens are always sampled on the shared normalised grid, so every point summarises the
+   * same phase of every token and `n` never shrinks along the curve. Absolute time only
+   * moves those samples onto a millisecond axis, laid out across the group's median
+   * duration (see utils/contours.ts) — so a group's curve ends at its own median duration
+   * and the duration differences between groups stay visible.
+   */
+  const meanTrajectories = useMemo<Record<string, GroupSummary> | null>(() => {
     if (!config.showMeanTrajectories) return null;
-    const result: Record<string, { f1: {x:number, y:number}[], f2: {x:number, y:number}[] }> = {};
+    const result: Record<string, GroupSummary> = {};
 
     const onset = config.trajectoryOnset ?? 0;
     const offset = config.trajectoryOffset ?? 100;
     const normM = (config.normalization || 'hz') as NormalizationMethod;
+    const summary: SummaryOptions = {
+      centre: config.trajectoryCentre ?? 'mean', band: config.trajectoryBand ?? 'sd',
+    };
+    const absolute = config.timeNormalized === false;
+    const durationMs = (t: SpeechToken) => getTokenDurationInUnit(t, useMs, config.trajectoryDurationField);
 
     Object.entries(combinedGroups).forEach(([compKey, tokens]) => {
       const tks = tokens as SpeechToken[];
+      const gridTimes = computeMeanTimeGrid(
+        tks.map(tk => tk.trajectory), onset, offset,
+        config.snapMeansToGrid ? datasetMeta?.timePoints : undefined,
+      );
 
-      if (config.timeNormalized) {
-        // ── Normalized mode: sample at each point on the common grid ──
-        const gridTimes = computeMeanTimeGrid(
-          tks.map(tk => tk.trajectory), onset, offset,
-          config.snapMeansToGrid ? datasetMeta?.timePoints : undefined,
-        );
-        const f1Sums = new Array(gridTimes.length).fill(0);
-        const f2Sums = new Array(gridTimes.length).fill(0);
-        const counts = new Array(gridTimes.length).fill(0);
-        tks.forEach(t => {
-          const sts = speakerStats?.[t.speaker || '__all__'];
-          gridTimes.forEach((gridT, idx) => {
-            const pt = interpolateTrajectoryAt(t.trajectory, gridT);
-            if (!pt) return;
-            const f1 = normalizeFormant(config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1, 'f1', normM, sts);
-            const f2 = normalizeFormant(config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2, 'f2', normM, sts);
-            if (!isNaN(f1) && !isNaN(f2)) { f1Sums[idx] += f1; f2Sums[idx] += f2; counts[idx]++; }
-          });
+      /** A token's normalised formant at grid point `i`, or NaN where it has none. */
+      const channelValue = (channel: 'f1' | 'f2') => (t: SpeechToken, i: number) => {
+        const pt = interpolateTrajectoryAt(t.trajectory, gridTimes[i]);
+        if (!pt) return NaN;
+        const raw = channel === 'f1'
+          ? (config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1)
+          : (config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2);
+        return normalizeFormant(raw, channel, normM, speakerStats?.[t.speaker || '__all__']);
+      };
+
+      const channel = (name: 'f1' | 'f2'): ChannelSummary => {
+        const { xs, cells } = contourSeries(tks, {
+          positions: gridTimes,
+          valueAt: channelValue(name),
+          summary,
+          ...(absolute ? { durationMs } : {}),
         });
-        const f1Pts = gridTimes.map((x, i) => ({ x, y: counts[i] ? f1Sums[i] / counts[i] : NaN })).filter(p => !isNaN(p.y));
-        const f2Pts = gridTimes.map((x, i) => ({ x, y: counts[i] ? f2Sums[i] / counts[i] : NaN })).filter(p => !isNaN(p.y));
-        result[compKey] = { f1: f1Pts, f2: f2Pts };
-      } else {
-        // ── Absolute mode: build grid from union of each token's native times ──
-        // For each token, absoluteTime = (trajectoryTime / 100) * tokenDurationInUnit.
-        const absSet = new Set<number>();
-        tks.forEach(t => {
-          const dur = getTokenDurationInUnit(t, useMs, config.trajectoryDurationField);
-          if (dur <= 0) return;
-          t.trajectory.forEach(p => {
-            if (p.time < onset || p.time > offset) return;
-            absSet.add((p.time / 100) * dur);
-          });
-        });
-        const gridTimes = Array.from(absSet).sort((a, b) => a - b);
-        const f1Sums = new Array(gridTimes.length).fill(0);
-        const f2Sums = new Array(gridTimes.length).fill(0);
-        const counts = new Array(gridTimes.length).fill(0);
-        tks.forEach(t => {
-          const dur = getTokenDurationInUnit(t, useMs, config.trajectoryDurationField);
-          if (dur <= 0) return;
-          const sts = speakerStats?.[t.speaker || '__all__'];
-          gridTimes.forEach((gt, idx) => {
-            const pct = (gt / dur) * 100;
-            if (pct < onset || pct > offset) return;
-            const pt = interpolateTrajectoryAt(t.trajectory, pct);
-            if (!pt) return;
-            const f1 = normalizeFormant(config.useSmoothing ? (pt.f1_smooth ?? pt.f1) : pt.f1, 'f1', normM, sts);
-            const f2 = normalizeFormant(config.useSmoothing ? (pt.f2_smooth ?? pt.f2) : pt.f2, 'f2', normM, sts);
-            if (!isNaN(f1) && !isNaN(f2)) { f1Sums[idx] += f1; f2Sums[idx] += f2; counts[idx]++; }
-          });
-        });
-        const f1Pts = gridTimes.map((x, i) => ({ x, y: counts[i] ? f1Sums[i] / counts[i] : NaN })).filter(p => !isNaN(p.y));
-        const f2Pts = gridTimes.map((x, i) => ({ x, y: counts[i] ? f2Sums[i] / counts[i] : NaN })).filter(p => !isNaN(p.y));
-        result[compKey] = { f1: f1Pts, f2: f2Pts };
-      }
+        return {
+          pts: cells.map((c, i) => ({ x: xs[i], y: c.centre })).filter(p => !isNaN(p.y)),
+          band: cells.map((c, i) => ({ x: xs[i], lo: c.lo, hi: c.hi }))
+            .filter(b => !isNaN(b.lo) && !isNaN(b.hi)),
+        };
+      };
+
+      result[compKey] = { f1: channel('f1'), f2: channel('f2') };
     });
     return result;
-  }, [combinedGroups, config.timeNormalized, config.showMeanTrajectories, config.useSmoothing, config.trajectoryOnset, config.trajectoryOffset, config.snapMeansToGrid, config.normalization, datasetMeta, speakerStats, useMs]);
+  }, [combinedGroups, config.timeNormalized, config.showMeanTrajectories, config.useSmoothing, config.trajectoryOnset, config.trajectoryOffset, config.snapMeansToGrid, config.normalization, config.trajectoryCentre, config.trajectoryBand, config.trajectoryDurationField, datasetMeta, speakerStats, useMs]);
+
+  /**
+   * How far the time axis reaches.
+   *
+   * Normalised time always runs 0–100%. Absolute time reaches the 98th percentile of the
+   * token durations, and at least the longest group summary: a handful of very long
+   * tokens must not leave every curve bunched into the first tenth of the plot. Anything
+   * past it is clipped like any other out-of-range point.
+   */
+  const xMax = useMemo(() => {
+    if (config.timeNormalized !== false) return 100;
+    const durations = data
+      .map(t => getTokenDurationInUnit(t, useMs, config.trajectoryDurationField))
+      .filter(d => d > 0).sort((a, b) => a - b);
+    const bulk = durations.length ? quantile(durations, 0.98) : 0;
+    const summaries: GroupSummary[] = meanTrajectories ? Object.values(meanTrajectories) : [];
+    const longestSummary = Math.max(0, ...summaries.flatMap(g =>
+      [g.f1, g.f2].map(ch => (ch.pts.length ? ch.pts[ch.pts.length - 1].x : 0))));
+    return Math.max(0.1, bulk, longestSummary);
+  }, [data, config.timeNormalized, config.trajectoryDurationField, meanTrajectories, useMs]);
 
   // drawScale parameter added
   const renderPlot = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number, scale: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
@@ -214,7 +231,6 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
 
     ctx.scale(scale, scale);
 
-    const xMax = config.timeNormalized ? 100 : Math.max(0.1, ...data.map(t => getTokenDurationInUnit(t, useMs, config.trajectoryDurationField)));
     // Use specific frequency range for time series
     const [yMin, yMax] = config.timeSeriesFrequencyRange || [0, 4000];
 
@@ -415,9 +431,25 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
 
-      Object.entries(meanTrajectories).forEach(([compKey, linesData]) => {
+      const summaries = Object.entries(meanTrajectories) as [string, GroupSummary][];
+
+      // Spread ribbons first, so the centre lines read on top of them.
+      summaries.forEach(([compKey, lines]) => {
+        const color = colorMap[compKey.split('|')[0]] || colorMap['All'] || '#000';
+        ([lines.f1, lines.f2]).forEach(ch => {
+          if (ch.band.length < 2) return;
+          ctx.beginPath();
+          ch.band.forEach((b, i) => { const x = mapX(b.x), y = mapY(b.hi); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+          for (let i = ch.band.length - 1; i >= 0; i--) ctx.lineTo(mapX(ch.band[i].x), mapY(ch.band[i].lo));
+          ctx.closePath();
+          ctx.globalAlpha = config.trajectoryBandOpacity ?? 0.18;
+          ctx.fillStyle = color; ctx.fill();
+          ctx.globalAlpha = 1;
+        });
+      });
+
+      summaries.forEach(([compKey, lines]) => {
         const [cVal, lVal] = compKey.split('|');
-        const lines = linesData as { f1: {x:number, y:number}[], f2: {x:number, y:number}[] };
         const color = colorMap[cVal] || colorMap['All'] || '#000';
         
         let dashPattern: number[] = [];
@@ -449,8 +481,8 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
             ctx.globalAlpha = 1;
         };
 
-        drawMean(lines.f1, false);
-        drawMean(lines.f2, true);
+        drawMean(lines.f1.pts, false);
+        drawMean(lines.f2.pts, true);
         ctx.setLineDash([]);
 
         // Draw points on mean trajectory if enabled
@@ -465,8 +497,8 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
                     ctx.fill();
                 });
             };
-            drawPts(lines.f1);
-            drawPts(lines.f2);
+            drawPts(lines.f1.pts);
+            drawPts(lines.f2.pts);
             ctx.globalAlpha = 1;
         }
       });
@@ -479,11 +511,10 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
 
         // Collect label positions at the rightmost point of each group's F1 mean line
         const labelEntries: { x: number; y: number; label: string; color: string }[] = [];
-        Object.entries(meanTrajectories).forEach(([compKey, linesData]) => {
+        summaries.forEach(([compKey, lines]) => {
           const [cVal, lVal] = compKey.split('|');
-          const lines = linesData as { f1: {x:number,y:number}[], f2: {x:number,y:number}[] };
           const color = colorMap[cVal] || colorMap['All'] || '#000';
-          if (lines.f1.length === 0) return;
+          if (lines.f1.pts.length === 0) return;
 
           // Label text based on meanLabelType
           const displayL = lVal === 'Default' ? 'All' : lVal;
@@ -498,7 +529,7 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
             else labelText = displayL;
           }
 
-          const lastPt = lines.f1[lines.f1.length - 1];
+          const lastPt = lines.f1.pts[lines.f1.pts.length - 1];
           labelEntries.push({ x: mapX(lastPt.x), y: mapY(lastPt.y), label: labelText, color });
         });
 
@@ -880,7 +911,6 @@ const TrajectoryTimeSeries = forwardRef<PlotHandle, TrajectoryTimeSeriesProps>((
     const height = rect.height;
     const area = { x: 82, y: 24, w: width - 82 - 248, h: height - 24 - 56 };
 
-    const xMax = config.timeNormalized ? 100 : Math.max(0.1, ...data.map(t => getTokenDurationInUnit(t, useMs, config.trajectoryDurationField)));
     const [yMin, yMax] = config.timeSeriesFrequencyRange || [0, 4000];
     // Mirror the renderer's label strip so hover positions match drawn positions
     let labelMargin = 0;

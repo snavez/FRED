@@ -1,4 +1,5 @@
-import { ColumnMapping, DatasetMeta } from '../types';
+import { ColumnMapping, DatasetMeta, NumericColumnStats } from '../types';
+import { numericFieldKey } from './numericFields';
 
 /**
  * Which columns are *labels* — the fields you filter by in the sidebar and group by in
@@ -19,9 +20,14 @@ export const filterFieldKey = (m: ColumnMapping): string | null => {
   return m.fieldName || m.csvHeader || null;
 };
 
-/** Whether a column can act as a label. Measures qualify only when explicitly shown. */
+/**
+ * Whether a column can act as a label. Measures qualify only when explicitly shown, and a
+ * measure of *numbers* never does: it is filtered by bounds instead (see
+ * `listNumericFields`), so showing it must not turn it back into a list of values.
+ */
 export const isFilterField = (m: ColumnMapping): boolean =>
-  filterFieldKey(m) !== null && (m.showInSidebar === true || !m.isDataField);
+  filterFieldKey(m) !== null && !(m.numeric && m.isDataField)
+  && (m.showInSidebar === true || !m.isDataField);
 
 /** Whether a label is currently listed in the sidebar. */
 export const isVisibleFilterField = (m: ColumnMapping): boolean =>
@@ -42,11 +48,16 @@ export const filterFieldLabel = (key: string, meta?: DatasetMeta | null): string
   return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 };
 
-/** One label field: the key tokens are read by, its display name, and its visibility. */
+/** One filterable field: the key tokens are read by, its display name, and its visibility. */
 export interface FilterField {
   key: string;
   label: string;
   visible: boolean;
+}
+
+/** A field of measurements, filtered by bounds rather than by picking values. */
+export interface NumericFilterField extends FilterField {
+  stats: NumericColumnStats;
 }
 
 /**
@@ -68,6 +79,32 @@ export const listFilterFields = (
     if (scope === 'visible' && !visible) continue;
     seen.add(key);
     fields.push({ key, label: filterFieldLabel(key, meta), visible });
+  }
+  return fields;
+};
+
+/**
+ * The dataset's numeric fields — those filtered by a range rather than a value list.
+ *
+ * A column qualifies once import has measured it as numeric; label fields are excluded
+ * even when their values happen to be numbers, because picking `1`, `2`, `5` off a list is
+ * the better control for a handful of discrete codes. Kept apart from `listFilterFields`
+ * so the encoding menus, which want categories, never offer a continuous measure.
+ */
+export const listNumericFields = (
+  meta: DatasetMeta | null, scope: 'visible' | 'all' = 'visible',
+): NumericFilterField[] => {
+  if (!meta) return [];
+  const fields: NumericFilterField[] = [];
+  const seen = new Set<string>();
+  for (const m of meta.columnMappings) {
+    if (!m.numeric || !m.isDataField) continue;
+    const key = numericFieldKey(m);
+    if (!key || seen.has(key)) continue;
+    const visible = m.showInSidebar === true;
+    if (scope === 'visible' && !visible) continue;
+    seen.add(key);
+    fields.push({ key, label: filterFieldLabel(key, meta), visible, stats: m.numeric });
   }
   return fields;
 };

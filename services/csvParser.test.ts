@@ -323,10 +323,20 @@ describe('autoDetectMappings', () => {
     expect(mappings[0].fieldName).toBe('dialect');
   });
 
-  it('classifies high-cardinality numeric unknown columns as ignore', () => {
+  it('keeps a continuous numeric column as a hidden measure, filterable by range', () => {
     const headers = ['measurement'];
     // Generate 25 unique numeric values → numeric-heavy + >20 unique
     const sampleRows = Array.from({ length: 25 }, (_, i) => [String(100 + i * 3.7)]);
+    const mappings = autoDetectMappings(headers, sampleRows);
+
+    expect(mappings[0].role).toBe('field');
+    expect(mappings[0].isDataField).toBe(true);
+    expect(mappings[0].showInSidebar).toBe(false);
+  });
+
+  it('still drops a high-cardinality free-text column', () => {
+    const headers = ['comment'];
+    const sampleRows = Array.from({ length: 60 }, (_, i) => [`note number ${i}`]);
     const mappings = autoDetectMappings(headers, sampleRows);
 
     expect(mappings[0].role).toBe('ignore');

@@ -5,6 +5,7 @@ import {
   isFilterField,
   isVisibleFilterField,
   listFilterFields,
+  listNumericFields,
 } from './filterFields';
 import type { ColumnMapping, DatasetMeta } from '../types';
 
@@ -100,5 +101,39 @@ describe('filterFieldLabel', () => {
 
   it('title-cases a raw column name otherwise', () => {
     expect(filterFieldLabel('voice_pitch')).toBe('Voice Pitch');
+  });
+});
+
+describe('listNumericFields', () => {
+  const stats = { min: 12, max: 96, count: 400 };
+  const dataset = meta([
+    { csvHeader: 'MAU', role: 'field', fieldName: 'MAU', isDataField: false },
+    { csvHeader: 'release_dur', role: 'duration', fieldName: 'release_dur', isDataField: true, numeric: stats },
+    { csvHeader: 'COG_50%', role: 'spectral_cog', fieldName: 'COG_50%', isDataField: true, numeric: stats, showInSidebar: true },
+    { csvHeader: 'F1_50%', role: 'formant', formant: 'f1', timePoint: 50, numeric: stats },
+  ]);
+
+  it('lists only the numeric fields the user has shown', () => {
+    expect(listNumericFields(dataset).map(f => f.key)).toEqual(['COG_50%']);
+  });
+
+  it('lists every numeric field for the visibility popover', () => {
+    expect(listNumericFields(dataset, 'all').map(f => f.key)).toEqual(['release_dur', 'COG_50%']);
+  });
+
+  it('carries the observed range, so the boxes can show it', () => {
+    expect(listNumericFields(dataset, 'all')[0].stats).toEqual(stats);
+  });
+
+  it('leaves label fields to the value lists, even when their values are numbers', () => {
+    const labelled = meta([
+      { csvHeader: 'block', role: 'field', fieldName: 'block', isDataField: false, numeric: stats },
+    ]);
+    expect(listNumericFields(labelled, 'all')).toEqual([]);
+    expect(listFilterFields(labelled, 'all').map(f => f.key)).toEqual(['block']);
+  });
+
+  it('is empty without a dataset', () => {
+    expect(listNumericFields(null)).toEqual([]);
   });
 });

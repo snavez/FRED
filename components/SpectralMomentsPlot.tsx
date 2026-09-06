@@ -4,7 +4,7 @@ import { getLabel } from '../utils/getLabel';
 import { fitRange, quantile } from '../utils/plotRange';
 import { axisFraction, panRange, zoomRange } from '../utils/zoomRange';
 import { tooltipFieldsFor } from '../utils/pointInfo';
-import { resampleContour } from '../utils/contours';
+import { contourSeries, hasContour, SummaryOptions } from '../utils/contours';
 import { durationFieldForRegion, getTokenDurationInUnit } from '../utils/duration';
 import { axisTicks, formatMeasureValue } from '../utils/axisTicks';
 import {
@@ -183,6 +183,20 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
   };
   const drawEmpty = (ctx: CanvasRenderingContext2D, w: number, h: number, msg: string, s: number) => {
     ctx.fillStyle = '#94a3b8'; ctx.font = `${14 * s}px Inter, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(msg, w / 2, h / 2);
+  };
+  /**
+   * Name the groups that have a colour in the key but nothing on the plot. A group whose
+   * tokens carry no values for the chosen measurement is simply absent, which reads as a
+   * drawing fault rather than as missing data.
+   */
+  const drawMissingNote = (
+    ctx: CanvasRenderingContext2D, area: { x: number, y: number, w: number, h: number },
+    labels: string[], s: number,
+  ) => {
+    if (labels.length === 0) return;
+    ctx.fillStyle = '#94a3b8'; ctx.font = `italic ${11 * s}px Inter, sans-serif`;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    ctx.fillText(`No values for this measurement: ${labels.join(', ')}`, area.x + 8 * s, area.y + area.h - 8 * s);
   };
 
   // ─── Legend (per visible layer, colour/shape/line-type sections) ──
@@ -610,10 +624,9 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       data.forEach(t => steps.forEach(i => { const v = valueAt(t, i); if (!isNaN(v)) rawValues.push(v); }));
       if (rawValues.length === 0) { drawEmpty(ctx, width, height, 'No valid values for the selected measurement.', s); return; }
 
-      // Absolute mode places each token's samples at its own real times, so tokens no
-      // longer share an x-grid. Values are resampled onto a common millisecond grid and
-      // averaged only where enough tokens still reach — short tokens drop out of the
-      // tail rather than dragging the mean toward themselves.
+      // Absolute mode keeps the same summary and only moves it onto a millisecond axis,
+      // laid out across each group's median duration: every point still averages the same
+      // phase of every token, and none drops out of the tail.
       // The contour is stretched over the duration of the *region* it measures, which is
       // rarely the token's whole duration: a release contour drawn across the segment
       // duration would misreport how long the release lasted. The column is chosen in the
@@ -628,39 +641,21 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         ? data.filter(t => steps.some(i => !isNaN(valueAt(t, i)))).map(durMs).filter(d => d > 0).sort((a, b) => a - b)
         : [];
       const maxDur = drawnDurations.length ? quantile(drawnDurations, 0.98) : 0;
-      const MIN_TOKENS_FOR_MEAN = 2;
-      const ABS_SAMPLES = 40;
-      /** Value of a token's contour at an absolute time, by linear interpolation. */
-      const valueAtMs = (t: SpeechToken, ms: number): number => {
-        const d = durMs(t);
-        if (!(d > 0) || ms > d) return NaN;
-        const pos = (ms / d) * (steps.length - 1);
-        const lo = Math.floor(pos), hi = Math.min(steps.length - 1, lo + 1);
-        const a = valueAt(t, steps[lo]), b = valueAt(t, steps[hi]);
-        if (isNaN(a)) return NaN;
-        if (isNaN(b) || lo === hi) return a;
-        return a + (b - a) * (pos - lo);
+      const summary: SummaryOptions = {
+        centre: cfg.trajectoryCentre ?? 'mean', band: cfg.trajectoryBand ?? 'sd',
       };
 
+      // Groups are summarised across the shared normalised grid whichever axis is drawn;
+      // absolute time only changes where those samples are placed (see utils/contours.ts).
       const perGroup = keys.map(k => {
         const toks = groups[k] || [];
-        if (absolute) {
-          // Resampled from this group's tokens alone (see utils/contours.ts), so its
-          // contour does not change when another group joins the plot.
-          const withData = toks.filter(t => steps.some(i => !isNaN(valueAt(t, i))));
-          const series = resampleContour(withData, {
-            durationMs: durMs, valueAtMs, samples: ABS_SAMPLES, minTokens: MIN_TOKENS_FOR_MEAN,
-          });
-          return { key: k, ...series, n: toks.length };
-        }
-        const cells = steps.map((_, j) => {
-          const vals = toks.map(t => valueAt(t, steps[j])).filter(v => !isNaN(v));
-          if (vals.length < 1) return { mean: NaN, sd: NaN };
-          const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
-          const sd = Math.sqrt(vals.reduce((a, b) => a + (b - mean) ** 2, 0) / vals.length);
-          return { mean, sd };
+        const series = contourSeries(toks, {
+          positions: steps,
+          valueAt: (t, j) => valueAt(t, steps[j]),
+          summary,
+          ...(absolute ? { durationMs: durMs } : {}),
         });
-        return { key: k, xs: steps, cells, span: 0, n: toks.length };
+        return { key: k, ...series, n: toks.length };
       });
       // The mean contours are what this plot exists to show, so they always fit; the band
       // too when drawn. The individual lines are a long-tailed cloud around them and only
@@ -668,9 +663,9 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       // the means as a flat line along the bottom.
       const must: number[] = [];
       perGroup.forEach(g => g.cells.forEach(c => {
-        if (isNaN(c.mean)) return;
-        must.push(c.mean);
-        if (cfg.spectralShowBand && !isNaN(c.sd)) { must.push(c.mean - c.sd); must.push(c.mean + c.sd); }
+        if (isNaN(c.centre)) return;
+        must.push(c.centre);
+        if (!isNaN(c.lo)) { must.push(c.lo); must.push(c.hi); }
       }));
       const [fitLo, fitHi] = fitRange(must, cfg.spectralShowIndividual ? rawValues : []);
       const [vLo, vHi] = rangeOr(cfg.spectralYRange, fitLo, fitHi);
@@ -715,16 +710,16 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         });
       }
 
-      // ±1 SD ribbons first, so the mean lines read on top of them.
-      if (cfg.spectralShowBand) {
+      // Spread ribbons first, so the centre lines read on top of them.
+      if (summary.band !== 'none') {
         perGroup.forEach(g => {
-          const band = g.cells.map((c, j) => ({ ...c, x: g.xs[j] })).filter(c => !isNaN(c.mean) && !isNaN(c.sd));
+          const band = g.cells.map((c, j) => ({ ...c, x: g.xs[j] })).filter(c => !isNaN(c.lo) && !isNaN(c.hi));
           if (band.length < 2) return;
           ctx.beginPath();
-          band.forEach((c, j) => { const x = mapX(c.x), y = mapY(c.mean + c.sd); if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
-          for (let j = band.length - 1; j >= 0; j--) ctx.lineTo(mapX(band[j].x), mapY(band[j].mean - band[j].sd));
+          band.forEach((c, j) => { const x = mapX(c.x), y = mapY(c.hi); if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+          for (let j = band.length - 1; j >= 0; j--) ctx.lineTo(mapX(band[j].x), mapY(band[j].lo));
           ctx.closePath();
-          ctx.fillStyle = `rgba(${hexToRgb(colorForKey(g.key))},${cfg.spectralBandOpacity ?? 0.18})`; ctx.fill();
+          ctx.fillStyle = `rgba(${hexToRgb(colorForKey(g.key))},${cfg.trajectoryBandOpacity ?? 0.18})`; ctx.fill();
         });
       }
 
@@ -734,25 +729,32 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         const color = colorForKey(g.key);
         ctx.globalAlpha = cfg.meanTrajectoryOpacity ?? 1;
         ctx.beginPath(); let started = false;
-        g.cells.forEach((c, j) => { if (isNaN(c.mean)) { started = false; return; } const x = mapX(g.xs[j]), y = mapY(c.mean); if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); });
+        g.cells.forEach((c, j) => { if (isNaN(c.centre)) { started = false; return; } const x = mapX(g.xs[j]), y = mapY(c.centre); if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); });
         ctx.setLineDash(dashForKey(g.key).map(v => v * s)); ctx.strokeStyle = color; ctx.lineWidth = meanWidth; ctx.stroke();
         ctx.setLineDash([]);
-        // Absolute mode resamples onto a fine grid, so per-sample dots would be noise.
-        if (!absolute && pointSize > 0) g.cells.forEach((c, j) => { if (isNaN(c.mean)) return; ctx.beginPath(); ctx.arc(mapX(g.xs[j]), mapY(c.mean), pointSize * s, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); });
+        // Both axes draw the same samples, so the dots mark real measurements either way.
+        if (pointSize > 0) g.cells.forEach((c, j) => { if (isNaN(c.centre)) return; ctx.beginPath(); ctx.arc(mapX(g.xs[j]), mapY(c.centre), pointSize * s, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); });
         ctx.globalAlpha = 1;
         // Group label at the end of its contour, halo'd so it stays readable over the cloud
         if (cfg.showTrajectoryLabels && g.key !== '__all__') {
-          const last = g.cells.map((c, j) => ({ c, j })).reverse().find(({ c }) => !isNaN(c.mean));
+          const last = g.cells.map((c, j) => ({ c, j })).reverse().find(({ c }) => !isNaN(c.centre));
           if (last) {
             const size = exportConfig ? exportConfig.dataLabelSize : (cfg.meanTrajectoryLabelSize || 12);
             ctx.font = `bold ${size * s}px Inter, sans-serif`; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
-            const x = mapX(g.xs[last.j]) - 4 * s, y = mapY(last.c.mean) - (pointSize + 3) * s;
+            const x = mapX(g.xs[last.j]) - 4 * s, y = mapY(last.c.centre) - (pointSize + 3) * s;
             ctx.strokeStyle = 'white'; ctx.lineWidth = 3 * s; ctx.lineJoin = 'round';
             const label = labelForKey(g.key); ctx.strokeText(label, x, y); ctx.fillStyle = color; ctx.fillText(label, x, y);
           }
         }
       });
       ctx.restore();
+      // A group can be in the key and still have no line: none of its tokens carry this
+      // measurement, or (in absolute mode) none carry the duration the contour is drawn
+      // over. Say so rather than leaving the reader to hunt for a line that was never
+      // drawn.
+      drawMissingNote(ctx, area,
+        perGroup.filter(g => g.key !== '__all__' && !hasContour(g))
+          .map(g => `${labelForKey(g.key)} (${g.n})`), s);
       return;
     }
 
@@ -793,6 +795,10 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         ctx.globalAlpha = 1;
       });
       ctx.restore();
+      const drawn = new Set(series.map(c => c.key));
+      drawMissingNote(ctx, area,
+        keys.filter(k => k !== '__all__' && !drawn.has(k))
+          .map(k => `${labelForKey(k)} (${(groups[k] || []).length})`), s);
     }
   }, [sm, layers, layerData, activeConfig, activeData, activeLayer, bgConfig, legendLayers]);
 

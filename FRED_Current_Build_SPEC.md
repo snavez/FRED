@@ -343,21 +343,48 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
     (`spectralCoeffFacets`) draws small multiples — one panel per coefficient sharing the
     group axis, each on **its own scale**, because k0 runs into the tens of thousands while
     k1 is a few hundred and a shared axis would flatten all but k0.
-  - **Mean contours** — per colour × line-type group mean of one measurement family (`spectralTimelineMoment`,
-    a `region:moment` ref such as `release:COG`) across the track grid, with an optional **±1 SD band** (`spectralShowBand`) and faded per-token
-    lines (`spectralShowIndividual`). Grid selection is per measure and region: a dense
+  - **Mean contours** — per colour × line-type group summary of one measurement family
+    (`spectralTimelineMoment`, a `region:moment` ref such as `release:COG`) across the
+    track grid, with an optional **spread band** and faded per-token lines
+    (`spectralShowIndividual`). Grid selection is per measure and region: a dense
     track is preferred for that family, otherwise its %-timepoints are used. Thus COG
     track columns do not hide a Band Energy Ratio available only at 20/50/80%.
-    Normalised time averages pointwise, which is valid because every token shares
-    the grid. **Absolute** (`spectralContourAbsolute`) instead places each token's samples
-    at its real times from the duration column chosen in the controls, resamples onto a
-    common millisecond grid by
-    linear interpolation, and averages only where ≥2 tokens still reach — so short tokens
-    drop out of the tail instead of dragging the mean down, and the duration difference
-    that normalised time hides becomes visible.
+    Both axes summarise the **same** normalised grid, pointwise across tokens.
+    **Absolute** (`spectralContourAbsolute`) changes only where those samples are
+    *placed*: across the group's median duration, read from the duration column chosen in
+    the controls. So the duration difference that normalised time hides becomes visible,
+    each curve ends at its own group's median duration, and the summary itself is
+    unchanged — see **Phase-aligned time** below.
   - **Density** — Gaussian-KDE density curves of one feature per colour × line-type group
     (active layer).
     Groups with no values are skipped rather than drawn as a flat line on the axis.
+- **A group with nothing to draw says so.** Colour groups come from the tokens in view, so
+  a category can hold a colour in the key and still have no curve: none of its tokens
+  carry the chosen measurement, or (in absolute mode) none carry the duration column the
+  contour is drawn over. Mean contours and density name those groups under the plot — *No
+  values for this measurement: d (4)* — instead of leaving the reader hunting for a line
+  that was never drawn (`hasContour` in `utils/contours.ts`).
+- **Phase-aligned time** (`utils/contours.ts`). Every trajectory plot summarises its groups
+  on the shared **normalised** grid, whatever axis is drawn: at each of the grid's
+  positions, across all the group's tokens. A millisecond axis is then a matter of
+  *placement* — the positions keep their spacing but are laid out across the group's
+  **median duration**. Sampling each token at fixed real times instead would go wrong two
+  ways, and did: at 30 ms a 30 ms token has finished while a 100 ms token is 30% in, so a
+  fixed-time mean averages different phases of the gesture; and tokens drop out of the
+  average as the clock passes their duration, leaving the right-hand end of every curve
+  computed from the longest, atypical few — which matters most when duration correlates
+  with what is plotted. Under phase alignment neither happens: `n` is the same at every
+  point of a curve, and every point averages the same phase of every token. What the axis
+  then cannot show is duration spread *within* a group; the faded per-token lines, drawn
+  at their own real durations, carry that.
+- **Group summary: centre and band** (`trajectoryCentre`, `trajectoryBand`,
+  `trajectoryBandOpacity`, shared across trajectory plots because it is a statement about
+  the data rather than styling for one tab). The line is the **mean** or the **median**;
+  the ribbon is **none**, **±1 SD**, or the **16th–84th percentiles**. A skewed measure is
+  misdescribed by mean ± SD — it can put the lower bound below anything observed and the
+  line above the typical token — so pair a median with the quantile band. The SD band is
+  always `mean ± sd`, even under a median line: a median plus a standard deviation is not
+  a quantity, and the two not being concentric is the honest reading.
 - **Absolute-time contours measure the right span** (`utils/duration.ts`). A dataset can
   hold several duration columns — the whole segment, the closure, the release — and a
   release contour drawn across the segment duration misreports how long the release
@@ -385,8 +412,9 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
   - **Mean contours** — **Line Type** supplies the second grouping variable. *Lines*: individual contours on/off (`spectralShowIndividual`)
     with opacity (`trajectoryLineOpacity`) and width (`trajectoryLineWidth`). *Means*:
     line width (`meanTrajectoryWidth`), opacity (`meanTrajectoryOpacity`), sample dots
-    (`showMeanTrajectoryPoints` + `meanTrajectoryPointSize`), ±1 SD band
-    (`spectralShowBand` + `spectralBandOpacity`). *Labels*: name each mean at the end of
+    (`showMeanTrajectoryPoints` + `meanTrajectoryPointSize`). *Summary*: centre line and
+    spread band (`trajectoryCentre`, `trajectoryBand`, `trajectoryBandOpacity`).
+    *Labels*: name each mean at the end of
     its contour (`showTrajectoryLabels` + `meanTrajectoryLabelSize`).
   - **Distribution** — **Fill Type** supplies the second grouping variable. *Show*: Quartiles / Outliers / Mean marker / raw Points (with
     opacity and size). *Box*: whisker extent (1.5×IQR or Min–Max), centre line
@@ -450,7 +478,7 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
   background layer (`spectralXRange` / `spectralYRange`), labelled by the current axis features
   (e.g. "X · COG @50%", "Y · COG k1 (slope)"); summary modes expose a single value-axis Min/Max
   for the active layer (density writes X, box/contours write Y). Both Min and Max at 0 =
-  auto-fit. With bands on, the contour auto-range widens to fit the ±1 SD ribbons.
+  auto-fit. With a band on, the contour auto-range widens to fit its ribbons.
   While a range is still auto, the plot reports the range it actually drew
   (`onAutoRange` → `spectralAutoRange` in MainDisplay) and the inputs display *those*
   numbers, so the arrows step from what is on screen. Editing one end seeds the other from
@@ -620,6 +648,8 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 - **Flat, independent filters** — no hierarchical dependency between fields
 - `FilterState.filters: Record<string, string[]>` — single generic dictionary for all filter state
 - Empty array = nothing selected = nothing passes for that field
+- `FilterState.ranges: Record<string, NumericRange>` — bounds on numeric fields. **The
+  opposite convention**: a field with no entry, or with no bound set, is unfiltered
 - On import, `computeSelectAllFilters()` populates all filter arrays with all unique values
 - Filter keys match field names from `datasetMeta.columnMappings` (e.g., `'speaker'`, `'file_id'`, `'type'`, `'phoneme'`, `'duration'`)
 - Accessor pattern: `speaker` and `file_id` access dedicated SpeechToken properties; `duration` accesses `t.duration.toString()`; all others access `t.fields[key]`
@@ -631,9 +661,35 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 - `formant` and `ignore` roles never appear as filters
 - Filter section order mirrors CSV column order
 
+### Numeric Fields — Filtering by Value (`utils/numericFields.ts`)
+- Picking values off a list is useless for a column of measurements; what you want there
+  is *drop anything under 20 ms*. A numeric field is filtered by an inclusive **min** and
+  **max**, each optional, so one control covers `>`, `<` and a window between thresholds.
+- **Measured over the whole column, not a sample.** Import samples 200 rows to guess a
+  column's role, but a measure taken only on some segments — a release duration, a burst
+  COG — can be blank for the whole head of the file and still be a column of numbers. So
+  `measureNumericColumns` re-reads every parsed token and records `min`/`max`/`count` on
+  the mapping (`ColumnMapping.numeric`). A column counts as numeric when ≥80% of its
+  non-blank cells parse as numbers; blanks are ignored rather than counted against it.
+- A continuous numeric column is therefore **kept** rather than dropped as `ignore`: it
+  becomes a hidden measure (`isDataField: true`, `showInSidebar: false`), listed in the
+  field-visibility popover (marked `123`, with a search box once the list is long) and
+  shown as a range section when switched on. Only high-cardinality *free text* is dropped.
+- **Numeric and label fields are disjoint, by nature rather than by visibility**
+  (`isFilterField` excludes any numeric measure). Showing a numeric field must not turn it
+  back into a list of values, and the encoding menus — which share `listFilterFields` —
+  must never offer a continuous measure as a colour or shape. To filter a numeric column
+  as chips instead, set it to **Filter** in the mapping dialog; that clears `isDataField`
+  and it becomes an ordinary label field.
+- **Unmeasured tokens are kept by default.** A cell holding no number passes unless
+  `includeMissing` is set false, so narrowing one field does not silently drop every token
+  that was never measured on it. The section offers the choice, naming the count.
+
 ### Cross-Filtering (Faceted Search)
 - **Excel-style cross-filtering**: selecting values in one filter constrains available options in all other filters
 - For each visible filter field X, options are computed by applying ALL other active filters to the data, then extracting unique values for X
+- Active numeric bounds narrow the value lists too, so the chips a field offers are the
+  values that actually survive the rest of the sidebar
 - If any other filter has an empty selection (nothing passes), all fields show "No values"
 - Selected values that disappear from cross-filtered options remain in filter state — they reappear when the constraining filter is changed back
 - Performance: O(fields × tokens × active_filters) Set.has() operations; sub-10ms for typical datasets

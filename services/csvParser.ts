@@ -1,5 +1,6 @@
 
 import { SpeechToken, TrajectoryPoint, ColumnMapping, ColumnRole, DatasetMeta, TrajectoryFormat, TrajectoryUnit, TrajectorySpacing } from '../types';
+import { measureNumericColumns } from '../utils/numericFields';
 import { detectSpectralRole, spectralColumnRegion } from '../utils/spectralMoments';
 
 /** Threshold: ≥ this many non-target timepoints per formant = trajectory data. */
@@ -506,18 +507,26 @@ export const autoDetectMappings = (headers: string[], sampleRows: string[][]): C
       };
     }
 
-    if (unique.size <= 50) {
-      const numericCount = values.filter(v => !isNaN(parseFloat(v))).length;
-      const mostlyNumeric = values.length > 0 && numericCount / values.length > 0.8;
-      if (mostlyNumeric && unique.size > 20) {
-        return { csvHeader: header, role: 'ignore' as ColumnRole };
-      }
+    // A column of numbers is kept whatever its cardinality: it is a measure, hidden from
+    // the sidebar until asked for, and filtered there by range rather than by value. Only
+    // free text with too many distinct values to pick from is dropped.
+    if (isMostlyNumeric(header)) {
       return {
         csvHeader: header,
         role: 'field' as ColumnRole,
         fieldName: header,
-        showInSidebar: !mostlyNumeric,
-        isDataField: mostlyNumeric,
+        showInSidebar: false,
+        isDataField: true,
+      };
+    }
+
+    if (unique.size <= 50) {
+      return {
+        csvHeader: header,
+        role: 'field' as ColumnRole,
+        fieldName: header,
+        showInSidebar: true,
+        isDataField: false,
       };
     }
 
@@ -791,7 +800,7 @@ function parseLongFormat(
     tokens,
     meta: {
       fileName,
-      columnMappings: mappings,
+      columnMappings: measureNumericColumns(tokens, mappings),
       timePoints: commonGrid,
       rowCount: tokens.length,
       formantVariants,
@@ -1021,7 +1030,7 @@ export const parseWithMappings = (
 
   const meta: DatasetMeta = {
     fileName,
-    columnMappings: mappings,
+    columnMappings: measureNumericColumns(tokens, mappings),
     timePoints: sortedTimePoints,
     timePointLabels,
     rowCount: tokens.length,

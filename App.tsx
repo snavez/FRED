@@ -6,6 +6,7 @@ import Header from './components/Header';
 import { detectDelimiter, splitRow, splitRows, autoDetectMappings, parseWithMappings, detectHeaderRow, HeaderDetectionResult, TrajectoryFormatOverride } from './services/csvParser';
 import { getLabel } from './utils/getLabel';
 import { filterFieldKey, listFilterFields } from './utils/filterFields';
+import { isOpenRange, numericFieldKey, withinRange } from './utils/numericFields';
 import { SpeechToken, PlotConfig, FilterState, ReferenceCentroid, Layer, LayerCounters, StyleOverrides, ColumnMapping, DatasetMeta, DatasetProvenance, NormalizationMethod, UNDEFINED_LABEL } from './types';
 import { isSidecarFor, parseProvenanceSidecar } from './services/provenance';
 import { computeSpeakerStats, computeNormalizedRange, SpeakerStatsMap } from './utils/normalization';
@@ -36,6 +37,9 @@ const INITIAL_CONFIG: PlotConfig = {
   timeNormalized: true,
   showMeanTrajectories: true,
   snapMeansToGrid: true,
+  trajectoryCentre: 'mean',
+  trajectoryBand: 'sd',
+  trajectoryBandOpacity: 0.18,
   showIndividualLines: true,
   trajectoryLineOpacity: 0.1,
   trajectoryLineWidth: 1,
@@ -108,8 +112,6 @@ const INITIAL_CONFIG: PlotConfig = {
   spectralTrajRange: [0, 0],
   spectralViolin: false,
   spectralShowIndividual: true,
-  spectralShowBand: true,
-  spectralBandOpacity: 0.18,
   spectralDensityFill: 0.18,
   spectralContourAbsolute: false,
   spectralDurationField: '',
@@ -423,12 +425,20 @@ const App: React.FC = () => {
       if (values.length === 0) return [];
     }
 
+    // Numeric fields are bounded rather than picked from: a field with no bounds set is
+    // unfiltered, the opposite of an empty value list.
+    const rangeEntries = Object.entries(currentFilters.ranges || {})
+      .filter(([, range]) => !isOpenRange(range));
+
     return sourceData.filter(token => {
       for (const { accessor, set } of filterEntries) {
         const val = accessor(token);
         // Empty/missing values are checked against the UNDEFINED_LABEL sentinel
         const effectiveVal = val === '' ? UNDEFINED_LABEL : val;
         if (!set.has(effectiveVal)) return false;
+      }
+      for (const [key, range] of rangeEntries) {
+        if (!withinRange(getLabel(token, key), range)) return false;
       }
       return true;
     });
@@ -649,11 +659,13 @@ const App: React.FC = () => {
       l.id === activeLayerId ? { ...l, filters: computeSelectAllFilters(data, datasetMeta) } : l));
   }, [activeLayerId, data, datasetMeta]);
 
+  /** Show or hide one field in the sidebar — a label field or a numeric one alike. */
   const handleToggleFieldVisibility = useCallback((key: string, visible: boolean) => {
     setDatasetMeta(prev => prev && ({
       ...prev,
       columnMappings: prev.columnMappings.map(m =>
-        filterFieldKey(m) === key ? { ...m, showInSidebar: visible } : m),
+        (filterFieldKey(m) === key || (m.numeric && numericFieldKey(m) === key))
+          ? { ...m, showInSidebar: visible } : m),
     }));
   }, []);
 
