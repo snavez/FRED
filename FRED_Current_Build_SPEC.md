@@ -930,6 +930,14 @@ Each section is collapsible with a dot indicator when non-default values are set
   boxes or a group of bars) and **Y Axis Ticks** (`yTickLabelSize`). Each is optional and
   falls back to the size that axis already uses; the global Font Scale slider moves any
   overrides by the same ratio.
+
+  These settings reach the canvas through **one shared frame**, `drawPlotFrame` in
+  `utils/plotFrame.ts`: gridlines, tick labels, the border and both axis titles. Each plot
+  used to draw its own axes, and a plot that drew its own quietly ignored the overlay —
+  the sliders simply did nothing on that tab, with nothing on screen to say they had been
+  missed (as happened to **General → Scatter**). Sizes fall back to the screen defaults
+  (11 px ticks, 13 px titles) when no `exportConfig` is supplied, so the on-screen frame is
+  unaffected by export settings. A new plot honours the overlay by construction.
 - **Legend**: show/hide toggle, position (Right/Bottom/Inside/Custom), per-layer controls with editable titles, heading/item font sizes
 
 ### NudgePad Component

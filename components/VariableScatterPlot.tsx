@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
+import { drawPlotFrame } from '../utils/plotFrame';
 import { SpeechToken, PlotConfig, PlotHandle, ExportConfig, DatasetMeta, Layer } from '../types';
 import { getLabel } from '../utils/getLabel';
 import { drawShape, hexToRgb, computeEncodingMaps, EncodingMaps, encodingGroupKey } from '../utils/plotEncoding';
@@ -149,25 +150,13 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
 
     // ─── Frame ───
     const xt = axisTicks(xLo, xHi, 6), yt = axisTicks(yLo, yHi, 6);
-    ctx.lineWidth = 1 * s; ctx.font = `${11 * s}px Inter, sans-serif`; ctx.fillStyle = '#64748b';
-    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    yt.values.forEach(v => {
-      const y = mapY(v);
-      ctx.strokeStyle = '#eef2f7'; ctx.beginPath(); ctx.moveTo(area.x, y); ctx.lineTo(area.x + area.w, y); ctx.stroke();
-      ctx.fillText(formatMeasureValue(v), area.x - 6 * s, y);
+    drawPlotFrame(ctx, {
+      area, scale: s, exportConfig, yLabelOffset: 60,
+      xTicks: xt.values.map(v => ({ pos: mapX(v), label: formatMeasureValue(v) })),
+      yTicks: yt.values.map(v => ({ pos: mapY(v), label: formatMeasureValue(v) })),
+      xLabel: measureLabel(xField, xTime, datasetMeta),
+      yLabel: measureLabel(yField, yTime, datasetMeta),
     });
-    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    xt.values.forEach(v => {
-      const x = mapX(v);
-      ctx.strokeStyle = '#f1f5f9'; ctx.beginPath(); ctx.moveTo(x, area.y); ctx.lineTo(x, area.y + area.h); ctx.stroke();
-      ctx.fillText(formatMeasureValue(v), x, area.y + area.h + 6 * s);
-    });
-    ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1.5 * s; ctx.strokeRect(area.x, area.y, area.w, area.h);
-    ctx.fillStyle = '#334155'; ctx.font = `600 ${13 * s}px Inter, sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-    ctx.fillText(measureLabel(xField, xTime, datasetMeta), area.x + area.w / 2, area.y + area.h + 42 * s);
-    ctx.save(); ctx.translate(area.x - 60 * s, area.y + area.h / 2); ctx.rotate(-Math.PI / 2);
-    ctx.fillText(measureLabel(yField, yTime, datasetMeta), 0, 0); ctx.restore();
 
     // Data is clipped to the frame: a hand-set range must not spill over the axes.
     ctx.save();

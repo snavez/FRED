@@ -5,6 +5,7 @@ import { fitRange, quantile } from '../utils/plotRange';
 import { axisFraction, panRange, zoomRange } from '../utils/zoomRange';
 import { tooltipFieldsFor } from '../utils/pointInfo';
 import { contourSeries, hasContour, SummaryOptions } from '../utils/contours';
+import { drawPlotFrame } from '../utils/plotFrame';
 import { durationFieldForRegion, getTokenDurationInUnit } from '../utils/duration';
 import { axisTicks, formatMeasureValue } from '../utils/axisTicks';
 import {
@@ -149,38 +150,6 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
    * on is the reading, and the line has to be visible without being mistaken for a
    * gridline.
    */
-  const drawFrame = (ctx: CanvasRenderingContext2D, area: { x: number, y: number, w: number, h: number }, xTicks: { pos: number, label: string }[], yTicks: { pos: number, label: string }[], xLabel: string, yLabel: string, s: number, zero?: { x?: number, y?: number }, exportConfig?: ExportConfig) => {
-    const xTickSize = exportConfig ? (exportConfig.xTickLabelSize ?? exportConfig.tickLabelSize) : 11;
-    const yTickSize = exportConfig ? (exportConfig.yTickLabelSize ?? exportConfig.tickLabelSize) : 11;
-    const xLabelSize = exportConfig ? exportConfig.xAxisLabelSize : 13;
-    const yLabelSize = exportConfig ? exportConfig.yAxisLabelSize : 13;
-    const xTickX = (exportConfig?.xAxisTickX ?? 0) * s;
-    const xTickY = (exportConfig?.xAxisTickY ?? 0) * s;
-    const yTickX = (exportConfig?.yAxisTickX ?? 0) * s;
-    const yTickY = (exportConfig?.yAxisTickY ?? 0) * s;
-    const xLabelX = (exportConfig?.xAxisLabelX ?? 0) * s;
-    const xLabelY = (exportConfig?.xAxisLabelY ?? 0) * s;
-    const yLabelX = (exportConfig?.yAxisLabelX ?? 0) * s;
-    const yLabelY = (exportConfig?.yAxisLabelY ?? 0) * s;
-    ctx.lineWidth = 1 * s; ctx.fillStyle = '#64748b';
-    ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.font = `${yTickSize * s}px Inter, sans-serif`;
-    yTicks.forEach(t => { ctx.strokeStyle = '#eef2f7'; ctx.beginPath(); ctx.moveTo(area.x, t.pos); ctx.lineTo(area.x + area.w, t.pos); ctx.stroke(); ctx.fillText(t.label, area.x - 6 * s + yTickX, t.pos + yTickY); });
-    ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.font = `${xTickSize * s}px Inter, sans-serif`;
-    xTicks.forEach(t => { ctx.strokeStyle = '#f1f5f9'; ctx.beginPath(); ctx.moveTo(t.pos, area.y); ctx.lineTo(t.pos, area.y + area.h); ctx.stroke(); ctx.fillText(t.label, t.pos + xTickX, area.y + area.h + 6 * s + xTickY); });
-    if (zero?.y !== undefined) {
-      ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1.5 * s; ctx.setLineDash([5 * s, 4 * s]);
-      ctx.beginPath(); ctx.moveTo(area.x, zero.y); ctx.lineTo(area.x + area.w, zero.y); ctx.stroke(); ctx.setLineDash([]);
-    }
-    if (zero?.x !== undefined) {
-      ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1.5 * s; ctx.setLineDash([5 * s, 4 * s]);
-      ctx.beginPath(); ctx.moveTo(zero.x, area.y); ctx.lineTo(zero.x, area.y + area.h); ctx.stroke(); ctx.setLineDash([]);
-    }
-    ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1.5 * s; ctx.strokeRect(area.x, area.y, area.w, area.h);
-    ctx.fillStyle = '#334155'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-    ctx.font = `600 ${xLabelSize * s}px Inter, sans-serif`;
-    ctx.fillText(xLabel, area.x + area.w / 2 + xLabelX, area.y + area.h + 42 * s + xLabelY);
-    ctx.save(); ctx.translate(area.x - 52 * s + yLabelX, area.y + area.h / 2 + yLabelY); ctx.rotate(-Math.PI / 2); ctx.font = `600 ${yLabelSize * s}px Inter, sans-serif`; ctx.fillText(yLabel, 0, 0); ctx.restore();
-  };
   const drawEmpty = (ctx: CanvasRenderingContext2D, w: number, h: number, msg: string, s: number) => {
     ctx.fillStyle = '#94a3b8'; ctx.font = `${14 * s}px Inter, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(msg, w / 2, h / 2);
   };
@@ -291,10 +260,13 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       const mapX = (v: number) => area.x + ((v - xLo) / (xHi - xLo)) * area.w;
       const mapY = (v: number) => area.y + area.h - ((v - yLo) / (yHi - yLo)) * area.h;
 
-      drawFrame(ctx, area,
-        valueTicks(xLo, xHi, mapX), valueTicks(yLo, yHi, mapY),
-        spectralFeatureAxisLabel(xF, sm.bandRatio), spectralFeatureAxisLabel(yF, sm.bandRatio), s,
-        { x: zeroPos(xF.measure, xLo, xHi, mapX), y: zeroPos(yF.measure, yLo, yHi, mapY) }, exportConfig);
+      drawPlotFrame(ctx, {
+        area, scale: s, exportConfig,
+        xTicks: valueTicks(xLo, xHi, mapX), yTicks: valueTicks(yLo, yHi, mapY),
+        xLabel: spectralFeatureAxisLabel(xF, sm.bandRatio),
+        yLabel: spectralFeatureAxisLabel(yF, sm.bandRatio),
+        zero: { x: zeroPos(xF.measure, xLo, xHi, mapX), y: zeroPos(yF.measure, yLo, yHi, mapY) },
+      });
 
       ctx.save();
       ctx.beginPath(); ctx.rect(area.x, area.y, area.w, area.h); ctx.clip();
@@ -481,11 +453,13 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         const mapY = (v: number) => panel.y + panel.h - ((v - yLo) / (yHi - yLo)) * panel.h;
         const slotW = panel.w / stats.length;
         const boxW = cfg.boxWidth > 0 ? Math.min(cfg.boxWidth * s, slotW * 0.9) : Math.min(60 * s, slotW * 0.6);
-        drawFrame(ctx, panel,
-          stats.map((g, i) => ({ pos: panel.x + (i + 0.5) * slotW, label: labelForKey(g.key) })),
-          valueTicks(yLo, yHi, mapY, compact ? 4 : 99),
-          compact ? '' : groupAxisLabel, yLabel, s,
-          { y: zeroPos(panelMeasure, yLo, yHi, mapY) }, exportConfig);
+        drawPlotFrame(ctx, {
+          area: panel, scale: s, exportConfig,
+          xTicks: stats.map((g, i) => ({ pos: panel.x + (i + 0.5) * slotW, label: labelForKey(g.key) })),
+          yTicks: valueTicks(yLo, yHi, mapY, compact ? 4 : 99),
+          xLabel: compact ? '' : groupAxisLabel, yLabel,
+          zero: { y: zeroPos(panelMeasure, yLo, yHi, mapY) },
+        });
         ctx.save();
         ctx.beginPath(); ctx.rect(panel.x, panel.y, panel.w, panel.h); ctx.clip();
         drawBoxes(stats, panel, mapY, slotW, boxW);
@@ -684,9 +658,12 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         ? axisTicks(xLo, xHi, 6).values.filter(t => t >= xLo && t <= xHi)
             .map(t => ({ pos: mapX(t), label: `${Math.round(t)}` }))
         : steps.map(i => ({ pos: mapX(i), label: tickLabel(i) }));
-      drawFrame(ctx, area, xTicks, valueTicks(vLo, vHi, mapY),
-        absolute ? 'Time (ms)' : axisLabel, spectralAxisLabel(measure, undefined, region, sm.bandRatio), s,
-        { y: zeroPos(measure, vLo, vHi, mapY) }, exportConfig);
+      drawPlotFrame(ctx, {
+        area, scale: s, exportConfig, xTicks, yTicks: valueTicks(vLo, vHi, mapY),
+        xLabel: absolute ? 'Time (ms)' : axisLabel,
+        yLabel: spectralAxisLabel(measure, undefined, region, sm.bandRatio),
+        zero: { y: zeroPos(measure, vLo, vHi, mapY) },
+      });
 
       // Everything from here draws data: clip it to the frame so nothing spills outside
       // the axes when a range is trimmed or set by hand.
@@ -776,8 +753,12 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       const dMax = Math.max(...curves.flatMap(c => c.dens), 1e-9);
       const mapX = (v: number) => area.x + ((v - xLo) / (xHi - xLo)) * area.w;
       const mapY = (d: number) => area.y + area.h - (d / dMax) * area.h * 0.95;
-      drawFrame(ctx, area, valueTicks(xLo, xHi, mapX), [], spectralFeatureAxisLabel(feature, sm.bandRatio, flip), 'Density', s,
-        { x: zeroPos(feature.measure, xLo, xHi, mapX) }, exportConfig);
+      drawPlotFrame(ctx, {
+        area, scale: s, exportConfig,
+        xTicks: valueTicks(xLo, xHi, mapX), yTicks: [],
+        xLabel: spectralFeatureAxisLabel(feature, sm.bandRatio, flip), yLabel: 'Density',
+        zero: { x: zeroPos(feature.measure, xLo, xHi, mapX) },
+      });
       ctx.save();
       ctx.beginPath(); ctx.rect(area.x, area.y, area.w, area.h); ctx.clip();
       curves.forEach(c => {
