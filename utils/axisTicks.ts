@@ -84,7 +84,12 @@ export const axisTicks = (min: number, max: number, target = 5): AxisTicks => {
 export const formatMeasureValue = (value: number, significant = 3): string => {
   if (!isFinite(value)) return '';
   if (value === 0) return '0';
+  // No caller can mean "nought significant digits", and a value rounded to none reads as
+  // 0 — a wrong number, not a coarse one. Guarded because passing this function straight
+  // to `map` once did exactly that: the array index arrived here as the digit count, and
+  // the first value of every list was rounded away.
+  const digits = Math.max(1, Math.floor(significant) || 3);
   const magnitude = Math.floor(Math.log10(Math.abs(value)));
-  const decimals = Math.max(0, Math.min(20, significant - 1 - magnitude));
+  const decimals = Math.max(0, Math.min(20, digits - 1 - magnitude));
   return parseFloat(value.toFixed(decimals)).toString();
 };

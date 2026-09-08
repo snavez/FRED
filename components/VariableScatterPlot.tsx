@@ -168,9 +168,13 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
     // ─── Frame ───
     // Ticks first: the frame's margins depend on how wide its labels are, so a bigger tick
     // font for print pushes the axis title further out instead of running underneath it.
+    // Tick text comes from axisTicks, which formats every label to the decimals its step
+    // needs. Labelling each value separately went wrong twice: `values.map(fn)` handed the
+    // array index to the formatter as its significant-digit count, so the lowest tick was
+    // rounded to nothing — a 0.02 axis started at "0" — and the per-value formatting also
+    // dropped trailing zeros, leaving 0.10 reading as 0.1 among neighbours with two.
     const xt = axisTicks(xLo, xHi, 6), yt = axisTicks(yLo, yHi, 6);
-    const yTickLabels = yt.values.map(formatMeasureValue);
-    const spacing = frameSpacing(yTickLabels, exportConfig);
+    const spacing = frameSpacing(yt.labels, exportConfig);
     const legendGutter = (!exportConfig && legendLayers.length > 0) ? 288 : 24;
     // The export composition places the plot itself; on screen the graph offset is not used.
     const margin = {
@@ -188,8 +192,8 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
     drawPlotFrame(ctx, {
       area, scale: s, exportConfig,
       yLabelOffset: spacing.yLabelOffset, xLabelOffset: spacing.xLabelOffset,
-      xTicks: xt.values.map(v => ({ pos: mapX(v), label: formatMeasureValue(v) })),
-      yTicks: yt.values.map((v, i) => ({ pos: mapY(v), label: yTickLabels[i] })),
+      xTicks: xt.values.map((v, i) => ({ pos: mapX(v), label: xt.labels[i] })),
+      yTicks: yt.values.map((v, i) => ({ pos: mapY(v), label: yt.labels[i] })),
       xLabel: axisTitle(xField, xTime, xSegment),
       yLabel: axisTitle(yField, yTime, ySegment),
     });

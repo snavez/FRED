@@ -974,6 +974,24 @@ Each section is collapsible with a dot indicator when non-default values are set
   unaffected by export settings. A new plot honours the overlay by construction.
 - **Legend**: show/hide toggle, position (Right/Bottom/Inside/Custom), per-layer controls with editable titles, heading/item font sizes
 
+### Axis Tick Labels (`utils/axisTicks.ts`)
+
+`axisTicks` returns `values`, the `step` they sit on, and `labels` already formatted to the
+decimals that step needs. **Plots draw `labels`; they never re-format the values.** Two
+faults follow from labelling each value independently, and both were live on the scatter:
+
+- `values.map(formatMeasureValue)` passes the array **index** as the second argument, which
+  that function reads as its significant-digit count. The first tick therefore asked for
+  *nought* digits and was rounded to `0` — so an axis stepping 0.02 read `0, 0.04, 0.06 …`,
+  the lowest tick drawn in the right place but labelled with the wrong number. It looked
+  right only when the axis started at 0, where the first tick really is 0.
+- Per-value formatting drops trailing zeros, so `0.10` read as `0.1` beside neighbours
+  showing two decimals.
+
+`formatMeasureValue` now refuses a digit count below one — no caller can mean "no
+significant digits", and a value rounded to none is a wrong number rather than a coarse
+one. It remains the right function for a value standing alone: a tooltip, a box centre.
+
 ### Export Composition (`utils/exportLayout.ts`, `utils/plotFrame.ts`)
 
 - **`composeExport` places the plot and its legend** on the exported canvas, so every plot

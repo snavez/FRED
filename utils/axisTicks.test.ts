@@ -109,3 +109,118 @@ describe('formatMeasureValue', () => {
     expect(formatMeasureValue(NaN)).toBe('');
   });
 });
+
+describe('axis labels are true whatever range the user sets', () => {
+  /** Every axis a reader might set on a duration measured in seconds. */
+  const ranges: [number, number][] = [
+    [0, 0.12], [0, 0.37], [0.005, 0.09], [0, 13], [-0.5, 0.5],
+    [0.02, 0.04], [1200, 8400], [0, 1], [0.001, 0.009],
+  ];
+
+  it('never labels a non-zero tick as zero — the reported 0.02 read as 0', () => {
+    // The whole column must agree about how many decimals a duration has: formatting each
+    // tick on its own dropped the trailing zeros, so 0.00 became 0 and 0.10 became 0.1
+    // among neighbours reading 0.02 and 0.04.
+    const { values, labels } = axisTicks(0, 0.12, 6);
+    expect(labels).toEqual(['0.00', '0.02', '0.04', '0.06', '0.08', '0.10', '0.12']);
+    values.forEach((v, i) => {
+      if (v !== 0) expect(parseFloat(labels[i])).not.toBe(0);
+    });
+  });
+
+  it('labels every tick with its own value, to the step it sits on', () => {
+    for (const [lo, hi] of ranges) {
+      const { values, labels, step } = axisTicks(lo, hi, 6);
+      values.forEach((v, i) => {
+        expect(parseFloat(labels[i])).toBeCloseTo(v, 10);
+        expect(labels[i]).toBe(formatTickValue(v, step));
+      });
+    }
+  });
+
+  it('gives every tick on an axis the same number of decimals', () => {
+    for (const [lo, hi] of ranges) {
+      const { labels } = axisTicks(lo, hi, 6);
+      const decimals = labels.map(l => (l.split('.')[1] || '').length);
+      expect(new Set(decimals).size).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('never repeats a label on one axis', () => {
+    for (const [lo, hi] of ranges) {
+      const { labels } = axisTicks(lo, hi, 6);
+      expect(new Set(labels).size).toBe(labels.length);
+    }
+  });
+
+  it('keeps ticks inside the range the user asked for', () => {
+    for (const [lo, hi] of ranges) {
+      for (const v of axisTicks(lo, hi, 6).values) {
+        expect(v).toBeGreaterThanOrEqual(lo - 1e-9);
+        expect(v).toBeLessThanOrEqual(hi + 1e-9);
+      }
+    }
+  });
+
+  it('is right for a sub-millisecond step, where rounding to whole numbers was not', () => {
+    // The spectral timeline used to label its millisecond axis with Math.round, which
+    // collapses a fractional step onto repeated whole numbers.
+    const { values, labels } = axisTicks(0, 3, 6);
+    expect(new Set(labels).size).toBe(labels.length);
+    values.forEach((v, i) => expect(parseFloat(labels[i])).toBeCloseTo(v, 10));
+  });
+});
+
+describe('the lowest tick keeps its value', () => {
+  it('does not round the first label away when the axis starts above zero', () => {
+    // Reported: a y axis stepping 0.02 read 0, 0.04, 0.06 … — the lowest tick drawn in
+    // the right place but labelled 0. `values.map(formatMeasureValue)` handed the array
+    // index to the formatter as its significant-digit count, so index 0 asked for none.
+    const { values, labels } = axisTicks(0.01, 0.12, 6);
+    expect(values[0]).toBeCloseTo(0.02, 10);
+    expect(labels[0]).toBe('0.02');
+    expect(labels).toEqual(['0.02', '0.04', '0.06', '0.08', '0.10', '0.12']);
+  });
+
+  it('labels the lowest tick correctly wherever the reader puts the minimum', () => {
+    for (const min of [0, 0.005, 0.01, 0.02, 0.03, 0.05, 0.11]) {
+      const { values, labels } = axisTicks(min, 0.12, 6);
+      if (values.length === 0) continue;
+      expect(parseFloat(labels[0])).toBeCloseTo(values[0], 10);
+      if (values[0] !== 0) expect(parseFloat(labels[0])).not.toBe(0);
+    }
+  });
+
+  it('gives every tick on an axis the same number of decimals', () => {
+    for (const [lo, hi] of [[0, 0.12], [0.01, 0.12], [0, 0.37], [1200, 8400]] as [number, number][]) {
+      const decimals = axisTicks(lo, hi, 6).labels.map(l => (l.split('.')[1] || '').length);
+      expect(new Set(decimals).size).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('never repeats a label on one axis', () => {
+    for (const [lo, hi] of [[0, 0.12], [0.01, 0.12], [0, 3], [-0.5, 0.5]] as [number, number][]) {
+      const { labels } = axisTicks(lo, hi, 6);
+      expect(new Set(labels).size).toBe(labels.length);
+    }
+  });
+});
+
+describe('formatMeasureValue cannot be asked for no digits', () => {
+  it('ignores a significant-digit count of zero rather than rounding to nothing', () => {
+    // What `map` supplied as the index for the first element.
+    expect(formatMeasureValue(0.02, 0)).not.toBe('0');
+    expect(parseFloat(formatMeasureValue(0.02, 0))).toBeCloseTo(0.02, 10);
+  });
+
+  it('still honours a real digit count', () => {
+    expect(formatMeasureValue(0.123456, 3)).toBe('0.123');
+    expect(formatMeasureValue(0.123456, 5)).toBe('0.12346');
+    // Digits govern the decimals only; the whole part is never rounded away.
+    expect(formatMeasureValue(1234.5, 3)).toBe('1235');
+  });
+
+  it('leaves a true zero as zero', () => {
+    expect(formatMeasureValue(0)).toBe('0');
+  });
+});
