@@ -3,7 +3,8 @@ import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { Filter, Database, Upload, Search, Settings2, RotateCcw } from 'lucide-react';
 import { PlotConfig, FilterState, NumericRange, SpeechToken, DatasetMeta, UNDEFINED_LABEL } from '../types';
 import { filterMode, listFilterFields, listSidebarFields, NumericFilterField } from '../utils/filterFields';
-import { isOpenRange, withinRange } from '../utils/numericFields';
+import { isOpenRange } from '../utils/numericFields';
+import { crossFilterOptions } from '../utils/crossFilter';
 import { bandRatioBandsLabel } from '../utils/spectralMoments';
 import { getLabel } from '../utils/getLabel';
 
@@ -25,6 +26,43 @@ interface SidebarProps {
   /** Select every value again, in every field — the way back from a filtered view. */
   onResetFilters?: () => void;
 }
+
+/**
+ * One bound on a numeric field.
+ *
+ * The typed text lives here until it is committed, on Enter or on leaving the box. A
+ * filter change re-reads every token and re-renders every section, which is far too much
+ * to do per keystroke — and a half-typed "0." is not a bound anyway. The box is plain
+ * text rather than a number input for the same reason: a number input reports a
+ * mid-typed "0." as empty, so the decimal point is swallowed as you type it.
+ */
+const RangeBound: React.FC<{
+  value?: number;
+  placeholder: string;
+  title: string;
+  onCommit: (raw: string) => void;
+}> = ({ value, placeholder, title, onCommit }) => {
+  const committed = value === undefined ? '' : String(value);
+  const [text, setText] = useState(committed);
+  useEffect(() => { setText(committed); }, [committed]);
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      className="w-full min-w-0 px-1.5 py-1 text-[11px] border border-slate-200 rounded focus:outline-none focus:border-sky-500"
+      placeholder={placeholder}
+      title={title}
+      value={text}
+      onChange={e => setText(e.target.value)}
+      onBlur={() => onCommit(text)}
+      onKeyDown={e => {
+        if (e.key === 'Enter') onCommit(text);
+        if (e.key === 'Escape') setText(committed);
+      }}
+    />
+  );
+};
 
 const Sidebar: React.FC<SidebarProps> = ({
   filters, setFilters, data, tokenCount, totalCount, handleFileUpload, activeLayerName, datasetMeta, onToggleFieldVisibility, onSetFilterMode, onReopenMappingDialog, onResetFilters
@@ -58,61 +96,11 @@ const Sidebar: React.FC<SidebarProps> = ({
     return keys;
   }, [datasetMeta]);
 
-  // --- Cross-filtered options: for each field, apply all OTHER active filters ---
-  const fieldOptions = useMemo(() => {
-    const result: Record<string, string[]> = {};
-
-    // Pre-build filter entries from current filter state
-    const filterRecord = filters.filters as Record<string, string[]>;
-    const allFilterEntries: { key: string; set: Set<string> }[] = [];
-    for (const [key, values] of Object.entries(filterRecord)) {
-      if (values && values.length > 0) {
-        allFilterEntries.push({ key, set: new Set(values) });
-      }
-    }
-
-    // Check if any filter has empty array (= nothing passes for that field)
-    const emptyFilterKeys = new Set(
-      Object.entries(filterRecord).filter(([, v]) => v && v.length === 0).map(([k]) => k)
-    );
-
-    // Active numeric bounds narrow the value lists too, so the chips a field offers are
-    // the values that actually survive the rest of the sidebar.
-    const rangeEntries = Object.entries(filters.ranges || {}).filter(([, r]) => !isOpenRange(r));
-    const passesRanges = (t: SpeechToken) =>
-      rangeEntries.every(([key, range]) => withinRange(getLabel(t, key), range));
-
-    for (const { key } of visibleFilterFields) {
-      // If some OTHER filter is empty, no data passes → no options
-      const otherEmpty = [...emptyFilterKeys].some(k => k !== key);
-      if (otherEmpty) { result[key] = []; continue; }
-
-      // Apply all filters EXCEPT this field's own
-      let subset = rangeEntries.length ? data.filter(passesRanges) : data;
-      for (const entry of allFilterEntries) {
-        if (entry.key === key) continue;
-        subset = subset.filter(t => {
-          const val = getLabel(t, entry.key);
-          // Map empty values to UNDEFINED_LABEL for checking
-          const effectiveVal = val === '' ? UNDEFINED_LABEL : val;
-          return entry.set.has(effectiveVal);
-        });
-      }
-
-      const values = subset.map(t => {
-        const val = getLabel(t, key);
-        return val === '' ? UNDEFINED_LABEL : val;
-      });
-      result[key] = Array.from(new Set<string>(values)).sort((a, b) => {
-        // Sort UNDEFINED_LABEL to the end
-        if (a === UNDEFINED_LABEL) return 1;
-        if (b === UNDEFINED_LABEL) return -1;
-        return a.localeCompare(b);
-      });
-    }
-
-    return result;
-  }, [data, visibleFilterFields, filters]);
+  // --- Cross-filtered options: what each field still offers, given every other filter ---
+  const fieldOptions = useMemo(
+    () => crossFilterOptions(data, visibleFilterFields.map(f => f.key), filters),
+    [data, visibleFilterFields, filters],
+  );
 
   // --- Popover entries: every filterable field, listed or not. Numeric fields come last
   // and are usually many, so the popover offers a search once the list gets long. ---
@@ -292,22 +280,18 @@ const Sidebar: React.FC<SidebarProps> = ({
           </span>
         </label>
         <div className="flex items-center gap-1.5">
-          <input
-            type="number"
-            className="w-full min-w-0 px-1.5 py-1 text-[11px] border border-slate-200 rounded focus:outline-none focus:border-sky-500"
+          <RangeBound
+            value={range.min}
             placeholder="min"
-            value={range.min ?? ''}
-            onChange={e => setRangeBound(key, 'min', e.target.value)}
-            title={`Keep tokens at or above this value (observed minimum ${stats.min})`}
+            title={`Keep tokens at or above this value, applied on Enter or when you leave the box (observed minimum ${stats.min})`}
+            onCommit={raw => setRangeBound(key, 'min', raw)}
           />
           <span className="text-[10px] text-slate-400 shrink-0">to</span>
-          <input
-            type="number"
-            className="w-full min-w-0 px-1.5 py-1 text-[11px] border border-slate-200 rounded focus:outline-none focus:border-sky-500"
+          <RangeBound
+            value={range.max}
             placeholder="max"
-            value={range.max ?? ''}
-            onChange={e => setRangeBound(key, 'max', e.target.value)}
-            title={`Keep tokens at or below this value (observed maximum ${stats.max})`}
+            title={`Keep tokens at or below this value, applied on Enter or when you leave the box (observed maximum ${stats.max})`}
+            onCommit={raw => setRangeBound(key, 'max', raw)}
           />
         </div>
         {bounded && stats.count < totalCount && (

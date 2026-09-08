@@ -692,15 +692,28 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 - **Unmeasured tokens are kept by default.** A cell holding no number passes unless
   `includeMissing` is set false, so narrowing one field does not silently drop every token
   that was never measured on it. The section offers the choice, naming the count.
+- **Bounds are committed, not typed live** (`RangeBound` in `Sidebar.tsx`). The typed text
+  is local to the box until Enter or blur; Escape restores the committed value. A filter
+  change re-reads every token and re-renders every section, which is far too much to do per
+  keystroke, and a half-typed `0.` is not a bound. The box is plain text with
+  `inputMode="decimal"` rather than a number input, because a number input reports a
+  mid-typed `0.` as empty and swallows the decimal point as you type it.
 
-### Cross-Filtering (Faceted Search)
+### Cross-Filtering (Faceted Search) — `utils/crossFilter.ts`
 - **Excel-style cross-filtering**: selecting values in one filter constrains available options in all other filters
-- For each visible filter field X, options are computed by applying ALL other active filters to the data, then extracting unique values for X
+- A field keeps offering everything it could still show, so a selection is never a one-way door
 - Active numeric bounds narrow the value lists too, so the chips a field offers are the
   values that actually survive the rest of the sidebar
-- If any other filter has an empty selection (nothing passes), all fields show "No values"
+- **Decided in one pass over the tokens.** A token belongs in field X's list exactly when
+  the only filter it fails is X's own — fail nothing and it belongs in every list, fail two
+  and it belongs in none — so counting each token's failures answers every field at once.
+- An empty selection needs no special case: nothing satisfies it, so every other list comes
+  back empty while that field still offers its own values
 - Selected values that disappear from cross-filtered options remain in filter state — they reappear when the constraining filter is changed back
-- Performance: O(fields × tokens × active_filters) Set.has() operations; sub-10ms for typical datasets
+- **Why it matters**: the obvious reading of the same rule — re-filter the whole dataset
+  once per field — is `fields × fields × tokens`, which measured **1.4 s** on a
+  9,915-token set with 29 fields, paid on *every* filter change. The single pass is ~40 ms.
+  This is the sidebar's dominant cost, not the filtering itself (`layerData`, ~22 ms).
 
 ### Point Info (hover)
 - The fields a hovered point shows are a property of the **view**, not of a layer: the
