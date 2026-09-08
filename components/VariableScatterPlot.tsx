@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
-import { drawPlotFrame } from '../utils/plotFrame';
+import { drawPlotFrame, frameSpacing } from '../utils/plotFrame';
+import { composeExport } from '../utils/exportLayout';
 import { PlotLegend } from './PlotLegend';
 import { buildLegendEntries, legendWidth } from '../utils/legendEntries';
 import { SpeechToken, PlotConfig, PlotHandle, ExportConfig, DatasetMeta, Layer, SegmentRef } from '../types';
@@ -132,11 +133,6 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
       return segment === 'this' ? base : `${base} — ${SEGMENT_LABELS[segment]}`;
     };
 
-    const legendGutter = (!exportConfig && legendLayers.length > 0) ? 288 : 24;
-    const margin = { top: 24 * s, right: legendGutter * s, bottom: 64 * s, left: 88 * s };
-    const area = { x: margin.left, y: margin.top, w: width - margin.left - margin.right, h: height - margin.top - margin.bottom };
-    if (area.w <= 0 || area.h <= 0) return;
-
     // Each axis may read a neighbouring segment; a token with no such neighbour simply has
     // no point, exactly as one missing the measurement does.
     const valueOf = (t: SpeechToken): Plotted | null => {
@@ -169,15 +165,31 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
         onAutoRange?.({ x: [xLo, xHi], y: [yLo, yHi] });
       }
     }
+    // ─── Frame ───
+    // Ticks first: the frame's margins depend on how wide its labels are, so a bigger tick
+    // font for print pushes the axis title further out instead of running underneath it.
+    const xt = axisTicks(xLo, xHi, 6), yt = axisTicks(yLo, yHi, 6);
+    const yTickLabels = yt.values.map(formatMeasureValue);
+    const spacing = frameSpacing(yTickLabels, exportConfig);
+    const legendGutter = (!exportConfig && legendLayers.length > 0) ? 288 : 24;
+    // The export composition places the plot itself; on screen the graph offset is not used.
+    const margin = {
+      top: 24 * s,
+      right: legendGutter * s,
+      bottom: Math.max(64, spacing.bottom) * s,
+      left: Math.max(88, spacing.left) * s,
+    };
+    const area = { x: margin.left, y: margin.top, w: width - margin.left - margin.right, h: height - margin.top - margin.bottom };
+    if (area.w <= 0 || area.h <= 0) return;
+
     const mapX = (v: number) => area.x + ((v - xLo) / (xHi - xLo)) * area.w;
     const mapY = (v: number) => area.y + area.h - ((v - yLo) / (yHi - yLo)) * area.h;
 
-    // ─── Frame ───
-    const xt = axisTicks(xLo, xHi, 6), yt = axisTicks(yLo, yHi, 6);
     drawPlotFrame(ctx, {
-      area, scale: s, exportConfig, yLabelOffset: 60,
+      area, scale: s, exportConfig,
+      yLabelOffset: spacing.yLabelOffset, xLabelOffset: spacing.xLabelOffset,
       xTicks: xt.values.map(v => ({ pos: mapX(v), label: formatMeasureValue(v) })),
-      yTicks: yt.values.map(v => ({ pos: mapY(v), label: formatMeasureValue(v) })),
+      yTicks: yt.values.map((v, i) => ({ pos: mapY(v), label: yTickLabels[i] })),
       xLabel: axisTitle(xField, xTime, xSegment),
       yLabel: axisTitle(yField, yTime, ySegment),
     });
@@ -335,26 +347,32 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
       const plotW = 2000 * gsX * scale, plotH = 1400 * gsY * scale;
       const entries = buildLegendEntries(legendLayers, exportConfig);
       const hasLegend = exportConfig.showLegend && entries.length > 0;
-      const legendW = hasLegend
-        ? legendWidth(entries, (exportConfig.legendItemSize || 24) * scale,
-            (exportConfig.legendTitleSize || 36) * scale, 460 * scale)
+      const itemS = (exportConfig.legendItemSize || 24) * scale;
+      const titleS = (exportConfig.legendTitleSize || 36) * scale;
+      const legendW = hasLegend ? legendWidth(entries, itemS, titleS, 460 * scale) : 0;
+      const legendH = hasLegend
+        ? entries.reduce((h, e) => h + (e.kind === 'heading' ? titleS * 1.8 : itemS * 1.7), 40 * scale)
         : 0;
       const titleH = exportConfig.showPlotTitle ? (exportConfig.plotTitleSize || 96) * scale + 40 * scale : 0;
+      const pad = 40 * scale;
+      const { plotX, plotY, legendX, legendY, canvasW, canvasH } = composeExport({
+        config: exportConfig, drawScale: scale, pad, titleH, plotW, plotH, legendW, legendH, hasLegend,
+      });
       const off = document.createElement('canvas');
-      off.width = plotW + legendW + 40 * scale; off.height = plotH + titleH + 40 * scale;
+      off.width = Math.max(100, Math.ceil(canvasW)); off.height = Math.max(100, Math.ceil(canvasH));
       const ctx = off.getContext('2d');
       if (!ctx) return '';
       ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, off.width, off.height);
       if (exportConfig.showPlotTitle) {
         ctx.font = `bold ${(exportConfig.plotTitleSize || 96) * scale}px Inter, sans-serif`;
         ctx.fillStyle = '#0f172a'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(exportConfig.plotTitle || 'Scatter', plotW / 2, titleH / 2);
+        ctx.fillText(exportConfig.plotTitle || 'Scatter',
+          plotX + plotW / 2 + (exportConfig.plotTitleX || 0) * scale,
+          titleH / 2 + (exportConfig.plotTitleY || 0) * scale);
       }
-      ctx.save(); ctx.translate(0, titleH); renderPlot(ctx, plotW, plotH, 1, scale, exportConfig); ctx.restore();
+      ctx.save(); ctx.translate(plotX, plotY); renderPlot(ctx, plotW, plotH, 1, scale, exportConfig); ctx.restore();
       if (hasLegend) {
-        ctx.save(); ctx.translate(plotW + 40 * scale, titleH + 40 * scale);
-        const itemS = (exportConfig.legendItemSize || 24) * scale;
-        const titleS = (exportConfig.legendTitleSize || 36) * scale;
+        ctx.save(); ctx.translate(legendX, legendY);
         ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
         let y = 0;
         entries.forEach(it => {

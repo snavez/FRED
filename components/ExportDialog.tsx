@@ -64,8 +64,8 @@ const computeExportDefaults = (layers: Layer[], defaultTitle?: string): ExportCo
 
     showLegend: true,
     legendPosition: savedLegendPos,
-    legendX: 200,
-    legendY: 200,
+    legendX: 0,
+    legendY: 0,
     legendTitleSize: Math.round(BASE_FONT_SIZES.legendTitleSize * fs),
     legendItemSize: Math.round(BASE_FONT_SIZES.legendItemSize * fs),
 
@@ -117,39 +117,6 @@ const SizeSlider: React.FC<{
 // Compute legend absolute canvas coordinates for a given position mode (at drawScale=1)
 // MUST mirror the exact margin + position logic from CanvasPlot.tsx generateImage()
 // ---------------------------------------------------------------------------
-function computeLegendPosition(cfg: ExportConfig): { x: number; y: number } {
-  const graphScaleX = cfg.graphScaleX || cfg.graphScale || 1.0;
-  const graphScaleY = cfg.graphScaleY || cfg.graphScale || 1.0;
-  const graphX = cfg.graphX || 0;
-  const graphY = cfg.graphY || 0;
-  const basePlotWidth = 2400 * graphScaleX;
-  const basePlotHeight = 2000 * graphScaleY;
-
-  // Dynamic margins — same formulas as CanvasPlot.tsx generateImage()
-  const leftMarginBase = Math.max(220, cfg.yAxisLabelSize * 1.5 + 100);
-  const topMarginBase = cfg.showPlotTitle
-    ? Math.max(200, (cfg.plotTitleSize || 128) + 100)
-    : Math.max(100, cfg.tickLabelSize + 40);
-
-  const marginLeft = leftMarginBase + graphX;
-  const marginTop = topMarginBase + graphY;
-
-  switch (cfg.legendPosition) {
-    case 'right':
-      return { x: marginLeft + basePlotWidth + 40, y: marginTop };
-    case 'bottom':
-      return { x: marginLeft, y: marginTop + basePlotHeight + 150 };
-    case 'inside-top-right':
-      return { x: marginLeft + basePlotWidth - 300, y: marginTop + 40 };
-    case 'inside-top-left':
-      return { x: marginLeft + 40, y: marginTop + 40 };
-    case 'custom':
-      return { x: Number(cfg.legendX) || 0, y: Number(cfg.legendY) || 0 };
-    default:
-      return { x: marginLeft + basePlotWidth + 40, y: marginTop };
-  }
-}
-
 // ---------------------------------------------------------------------------
 // NudgePad — directional arrows + reset for X/Y offset positioning
 // ---------------------------------------------------------------------------
@@ -700,15 +667,13 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, plotRef, l
                       value={config.legendPosition}
                       onChange={e => {
                         const newPos = e.target.value;
+                        // Custom is an offset from where the legend already sits, so
+                        // choosing it starts from no movement at all. It used to seed an
+                        // absolute coordinate guessed from one plot's geometry, which put
+                        // the legend somewhere unrelated on every other plot — usually off
+                        // the canvas, to be nudged back blindly.
                         if (newPos === 'custom') {
-                          // Compute current legend position so it visually stays in place
-                          const currentPos = computeLegendPosition(config);
-                          setConfig(prev => ({
-                            ...prev,
-                            legendPosition: 'custom',
-                            legendX: Math.round(currentPos.x),
-                            legendY: Math.round(currentPos.y),
-                          }));
+                          setConfig(prev => ({ ...prev, legendPosition: 'custom', legendX: 0, legendY: 0 }));
                         } else {
                           updateConfig('legendPosition', newPos);
                         }

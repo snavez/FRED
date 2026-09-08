@@ -5,7 +5,7 @@ import { fitRange, quantile } from '../utils/plotRange';
 import { axisFraction, panRange, zoomRange } from '../utils/zoomRange';
 import { tooltipFieldsFor } from '../utils/pointInfo';
 import { contourSeries, hasContour, SummaryOptions } from '../utils/contours';
-import { drawPlotFrame } from '../utils/plotFrame';
+import { drawPlotFrame, frameSpacing } from '../utils/plotFrame';
 import { buildLegendEntries, legendWidth } from '../utils/legendEntries';
 import { durationFieldForRegion, getTokenDurationInUnit } from '../utils/duration';
 import { axisTicks, formatMeasureValue } from '../utils/axisTicks';
@@ -13,7 +13,7 @@ import {
   drawShape, ShapeIcon, hexToRgb, computeEncodingMaps, EncodingMaps,
 } from '../utils/plotEncoding';
 import { generateTexture } from '../utils/textureGenerator';
-import { computeExportPlotSize } from '../utils/exportLayout';
+import { composeExport, computeExportPlotSize } from '../utils/exportLayout';
 import {
   discoverSpectralColumns, spectralAxisLabel, getSpectralMeasureDef,
   SpectralMeasureKey, SpectralMeta, SpectralFeature,
@@ -196,13 +196,16 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
     // the border never cuts through the key, and no data hides behind it. Export draws
     // its own legend beside the plot, so it keeps the plain margin.
     const legendGutter = (!exportConfig && legendLayers.length > 0) ? 288 : 24;
-    const exportXTickSize = exportConfig ? (exportConfig.xTickLabelSize ?? exportConfig.tickLabelSize) : 11;
-    const exportYTickSize = exportConfig ? (exportConfig.yTickLabelSize ?? exportConfig.tickLabelSize) : 11;
-    const margin = exportConfig
-      ? { top: 24 * s, right: legendGutter * s,
-          bottom: Math.max(64, exportXTickSize * 1.4 + exportConfig.xAxisLabelSize * 1.5 + 42) * s,
-          left: Math.max(82, exportYTickSize * 2.5 + exportConfig.yAxisLabelSize * 1.5 + 52) * s }
-      : { top: 24 * s, right: legendGutter * s, bottom: 64 * s, left: 82 * s };
+    // Spectral values are formatted numbers; six characters covers "-10000" and the rest.
+    // The frame derives its own spacing so the axis titles clear the tick labels at any
+    // font size — sizing the margin by one formula and drawing the title by another left
+    // the two disagreeing, and the title landed on the numbers.
+    const spacing = frameSpacing(6, exportConfig);
+    const margin = {
+      top: 24 * s, right: legendGutter * s,
+      bottom: Math.max(64, spacing.bottom) * s,
+      left: Math.max(82, spacing.left) * s,
+    };
     const area = { x: margin.left, y: margin.top, w: width - margin.left - margin.right, h: height - margin.top - margin.bottom };
     if (area.w <= 0 || area.h <= 0) return;
     const rangeOr = (cfg: [number, number], lo: number, hi: number): [number, number] => (cfg[0] === 0 && cfg[1] === 0) ? [lo, hi] : cfg;
@@ -263,6 +266,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
 
       drawPlotFrame(ctx, {
         area, scale: s, exportConfig,
+        yLabelOffset: spacing.yLabelOffset, xLabelOffset: spacing.xLabelOffset,
         xTicks: valueTicks(xLo, xHi, mapX), yTicks: valueTicks(yLo, yHi, mapY),
         xLabel: spectralFeatureAxisLabel(xF, sm.bandRatio),
         yLabel: spectralFeatureAxisLabel(yF, sm.bandRatio),
@@ -456,6 +460,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         const boxW = cfg.boxWidth > 0 ? Math.min(cfg.boxWidth * s, slotW * 0.9) : Math.min(60 * s, slotW * 0.6);
         drawPlotFrame(ctx, {
           area: panel, scale: s, exportConfig,
+          yLabelOffset: spacing.yLabelOffset, xLabelOffset: spacing.xLabelOffset,
           xTicks: stats.map((g, i) => ({ pos: panel.x + (i + 0.5) * slotW, label: labelForKey(g.key) })),
           yTicks: valueTicks(yLo, yHi, mapY, compact ? 4 : 99),
           xLabel: compact ? '' : groupAxisLabel, yLabel,
@@ -661,6 +666,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         : steps.map(i => ({ pos: mapX(i), label: tickLabel(i) }));
       drawPlotFrame(ctx, {
         area, scale: s, exportConfig, xTicks, yTicks: valueTicks(vLo, vHi, mapY),
+        yLabelOffset: spacing.yLabelOffset, xLabelOffset: spacing.xLabelOffset,
         xLabel: absolute ? 'Time (ms)' : axisLabel,
         yLabel: spectralAxisLabel(measure, undefined, region, sm.bandRatio),
         zero: { y: zeroPos(measure, vLo, vHi, mapY) },
@@ -756,6 +762,7 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       const mapY = (d: number) => area.y + area.h - (d / dMax) * area.h * 0.95;
       drawPlotFrame(ctx, {
         area, scale: s, exportConfig,
+        yLabelOffset: spacing.yLabelOffset, xLabelOffset: spacing.xLabelOffset,
         xTicks: valueTicks(xLo, xHi, mapX), yTicks: [],
         xLabel: spectralFeatureAxisLabel(feature, sm.bandRatio, flip), yLabel: 'Density',
         zero: { x: zeroPos(feature.measure, xLo, xHi, mapX) },
@@ -797,33 +804,18 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       const legendH = hasLegend ? Math.max(160 * drawScale, legendEntries.length * itemS * 1.7 + 40 * drawScale) : 0;
       const titleH = exportConfig.showPlotTitle ? (exportConfig.plotTitleSize || 96) * drawScale + 40 * drawScale : 0;
       const pad = 40 * drawScale;
-      let canvasW = plotW + pad * 2;
-      let canvasH = titleH + plotH + pad * 2;
-      let legendX = 0, legendY = 0;
-      if (hasLegend) {
-        if (exportConfig.legendPosition === 'bottom') {
-          legendX = pad; legendY = titleH + plotH + pad; canvasH += legendH;
-        } else if (exportConfig.legendPosition === 'inside-top-left') {
-          legendX = pad * 2; legendY = titleH + pad * 2;
-        } else if (exportConfig.legendPosition === 'inside-top-right') {
-          legendX = Math.max(pad, plotW - legendW); legendY = titleH + pad * 2;
-        } else if (exportConfig.legendPosition === 'custom') {
-          legendX = (Number(exportConfig.legendX) || 0) * drawScale;
-          legendY = (Number(exportConfig.legendY) || 0) * drawScale;
-        } else {
-          legendX = plotW + pad; legendY = titleH + pad; canvasW += legendW;
-          canvasH = Math.max(canvasH, legendY + legendH + pad);
-        }
-      }
+      const { plotX, plotY, legendX, legendY, canvasW, canvasH } = composeExport({
+        config: exportConfig, drawScale, pad, titleH, plotW, plotH, legendW, legendH, hasLegend,
+      });
       const offscreen = document.createElement('canvas');
       offscreen.width = Math.max(100, Math.ceil(canvasW)); offscreen.height = Math.max(100, Math.ceil(canvasH));
       const ctx = offscreen.getContext('2d'); if (!ctx) return '';
       ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, offscreen.width, offscreen.height);
       if (exportConfig.showPlotTitle) {
         ctx.font = `bold ${(exportConfig.plotTitleSize || 96) * drawScale}px Inter, sans-serif`; ctx.fillStyle = '#0f172a'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(exportConfig.plotTitle || 'Spectral', pad + plotW / 2 + (exportConfig.plotTitleX || 0) * drawScale, titleH / 2 + (exportConfig.plotTitleY || 0) * drawScale);
+        ctx.fillText(exportConfig.plotTitle || 'Spectral', plotX + plotW / 2 + (exportConfig.plotTitleX || 0) * drawScale, titleH / 2 + (exportConfig.plotTitleY || 0) * drawScale);
       }
-      ctx.save(); ctx.translate(pad, titleH + pad); renderPlot(ctx, plotW, plotH, 1, drawScale, exportConfig); ctx.restore();
+      ctx.save(); ctx.translate(plotX, plotY); renderPlot(ctx, plotW, plotH, 1, drawScale, exportConfig); ctx.restore();
       if (hasLegend) {
         ctx.save(); ctx.translate(legendX, legendY); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
         const titleS = (exportConfig.legendTitleSize || 36) * drawScale;

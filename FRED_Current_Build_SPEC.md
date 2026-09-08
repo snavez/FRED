@@ -974,6 +974,24 @@ Each section is collapsible with a dot indicator when non-default values are set
   unaffected by export settings. A new plot honours the overlay by construction.
 - **Legend**: show/hide toggle, position (Right/Bottom/Inside/Custom), per-layer controls with editable titles, heading/item font sizes
 
+### Export Composition (`utils/exportLayout.ts`, `utils/plotFrame.ts`)
+
+- **`composeExport` places the plot and its legend** on the exported canvas, so every plot
+  answers the overlay's Graph Offset and Legend Position the same way. The scatter honoured
+  neither — both controls simply did nothing on that tab.
+- **`custom` legend position is an offset from where the legend already sits**, not an
+  absolute coordinate. As an absolute it was seeded from one plot's geometry (a 2400×2000
+  base with its own margins) and so landed somewhere unrelated on every other plot —
+  usually off the canvas, leaving the legend to be nudged back blindly. As an offset,
+  choosing `custom` changes nothing until you nudge.
+- The canvas grows to hold an offset plot or a nudged legend, so neither can be cut off.
+- **`frameSpacing` derives a frame's margins from the fonts it is about to draw**: the room
+  for the y tick labels, then the axis title beyond them. Margins fixed in advance are only
+  right for one font size — enlarge the tick numbers for print and they grow left until
+  they run under the y-axis title, which is what a 96px title over 64px ticks did in an
+  88px margin. The title offsets come from the same function, so the margin and the drawing
+  cannot disagree. Screen floors keep the on-screen layout unchanged.
+
 ### Legends
 
 - **The on-screen legend is a control, not a picture** (`components/PlotLegend.tsx`).

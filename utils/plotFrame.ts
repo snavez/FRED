@@ -40,12 +40,58 @@ export interface PlotFrameOptions {
   exportConfig?: ExportConfig;
   /** How far the y-axis title sits from the frame, in unscaled pixels. */
   yLabelOffset?: number;
+  /** How far the x-axis title's baseline sits below the frame, in unscaled pixels. */
+  xLabelOffset?: number;
 }
 
 /** Screen sizes, used whenever the frame is not being exported. */
 const SCREEN_TICK_SIZE = 11;
 const SCREEN_LABEL_SIZE = 13;
 const DEFAULT_Y_LABEL_OFFSET = 52;
+const DEFAULT_X_LABEL_OFFSET = 42;
+
+/** Rough character width. Measuring properly would need the font loaded first. */
+const CHAR_WIDTH = 0.62;
+/** Clear space between the tick labels and the axis title beyond them. */
+const LABEL_GAP = 10;
+
+export interface FrameSpacing {
+  left: number;
+  bottom: number;
+  xLabelOffset: number;
+  yLabelOffset: number;
+}
+
+/**
+ * The room a frame needs around itself, given what it is about to draw.
+ *
+ * Margins fixed in advance are only ever right for one font size. Enlarge the tick numbers
+ * for print and they grow left until they run under the axis title, or down until they
+ * meet it — which is what a 96px title over 64px ticks did in a 88px margin. So the
+ * spacing is derived from the very sizes `drawPlotFrame` is about to use, and the floors
+ * keep the on-screen layout exactly as it was.
+ */
+export const frameSpacing = (
+  /** The y tick labels, or the widest number of characters one of them will have. */
+  yTicks: string[] | number,
+  exportConfig?: ExportConfig,
+): FrameSpacing => {
+  const yTickSize = exportConfig ? (exportConfig.yTickLabelSize ?? exportConfig.tickLabelSize) : SCREEN_TICK_SIZE;
+  const xTickSize = exportConfig ? (exportConfig.xTickLabelSize ?? exportConfig.tickLabelSize) : SCREEN_TICK_SIZE;
+  const yLabelSize = exportConfig ? exportConfig.yAxisLabelSize : SCREEN_LABEL_SIZE;
+  const xLabelSize = exportConfig ? exportConfig.xAxisLabelSize : SCREEN_LABEL_SIZE;
+
+  const chars = typeof yTicks === 'number' ? yTicks : Math.max(0, ...yTicks.map(l => l.length));
+  const widest = chars * CHAR_WIDTH * yTickSize;
+  const yLabelOffset = Math.max(DEFAULT_Y_LABEL_OFFSET, 6 + widest + LABEL_GAP + yLabelSize);
+  const xLabelOffset = Math.max(DEFAULT_X_LABEL_OFFSET, 6 + xTickSize + LABEL_GAP + xLabelSize);
+  return {
+    yLabelOffset,
+    xLabelOffset,
+    left: yLabelOffset + yLabelSize * 0.4,
+    bottom: xLabelOffset + xLabelSize * 0.4,
+  };
+};
 
 export const drawPlotFrame = (
   ctx: CanvasRenderingContext2D,
@@ -66,6 +112,7 @@ export const drawPlotFrame = (
   const yLabelX = (ec?.yAxisLabelX ?? 0) * s;
   const yLabelY = (ec?.yAxisLabelY ?? 0) * s;
   const yOffset = (opts.yLabelOffset ?? DEFAULT_Y_LABEL_OFFSET) * s;
+  const xOffset = (opts.xLabelOffset ?? DEFAULT_X_LABEL_OFFSET) * s;
 
   ctx.lineWidth = 1 * s;
   ctx.fillStyle = '#64748b';
@@ -107,7 +154,7 @@ export const drawPlotFrame = (
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
   ctx.font = `600 ${xLabelSize * s}px Inter, sans-serif`;
-  ctx.fillText(xLabel, area.x + area.w / 2 + xLabelX, area.y + area.h + 42 * s + xLabelY);
+  ctx.fillText(xLabel, area.x + area.w / 2 + xLabelX, area.y + area.h + xOffset + xLabelY);
 
   ctx.save();
   ctx.translate(area.x - yOffset + yLabelX, area.y + area.h / 2 + yLabelY);
