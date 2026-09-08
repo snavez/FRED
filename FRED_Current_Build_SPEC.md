@@ -699,6 +699,40 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
   `inputMode="decimal"` rather than a number input, because a number input reports a
   mid-typed `0.` as empty and swallows the decimal point as you type it.
 
+### Neighbouring Segments (`utils/neighbours.ts`)
+
+A coarticulation question spans two segments — the centre of gravity of a stop release
+against the F2 of the vowel that follows it — but a row carries only its own measurements.
+Each axis of the **General → Scatter** plot therefore chooses a **segment** as well as a
+measure: *this*, *preceding* or *following* (`varXSegment`, `varYSegment`; unset = this).
+
+- **Neighbours are resolved once at import** and stored as `SpeechToken.prevId` / `nextId`.
+- **Row order alone is a guess** — right whenever a file lists every segment of a recording
+  in sequence, and silently wrong wherever one is missing, since an unlabelled pause makes
+  the rows either side look adjacent. Two kinds of column turn it into a check:
+  - a **neighbour label** pair (`MAU_prev` / `MAU_next`, detected as `<base>_prev` /
+    `<base>_next` where `<base>` is itself a column) must name the row it is linked to —
+    and being *empty* is a statement that there is **no** neighbour, so it says where not
+    to link as well as where to;
+  - **segment times** (`<base>_start` / `<base>_end`, or a bare `xmin` / `xmax`) must be
+    contiguous: the next segment begins where this one ended.
+- A link is made only when the rows are adjacent, in the same recording, and **every
+  available check agrees**. `NeighbourReport.basis` records which were used
+  (`labels+time` / `labels` / `time` / `rows`).
+- **Row-order-only datasets still work**, but the plot shows a warning naming the columns
+  that would make it certain — and only once an axis actually reads a neighbour, so it
+  warns about a claim being made rather than about the data in the abstract.
+- **Neighbours are looked up in the whole dataset, not the filtered set.** Filters choose
+  what to *plot*; a token's neighbour is context around it. Requiring the vowel to pass a
+  filter aimed at the consonant would empty the plot.
+- An axis reading a neighbour names it in the axis title and the hover readout
+  (*F2 @ 50% (Hz) — following segment*). A token with no such neighbour simply has no
+  point, exactly as one missing the measurement does.
+
+The `*_next_*` / `*_prev_*` **attribute** columns some exports carry (`MAU_next_type`,
+`MAU_next_V_height`) are ordinary fields and were always available for colour and filter;
+what this adds is the neighbour's *measurements*.
+
 ### Cross-Filtering (Faceted Search) — `utils/crossFilter.ts`
 - **Excel-style cross-filtering**: selecting values in one filter constrains available options in all other filters
 - A field keeps offering everything it could still show, so a selection is never a one-way door

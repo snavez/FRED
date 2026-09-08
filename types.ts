@@ -21,9 +21,37 @@ export interface SpeechToken {
   trajectory: TrajectoryPoint[];      // Formant data across time (time always 0-100%)
   trajectoryDurationMs?: number;      // Native extraction range for time-slice data (for absolute time plots)
   fields: Record<string, string>;     // All other columns (user's headers as keys)
+  /** The segments either side of this one in the same recording, when they could be
+   *  identified. Absent at a recording's edges, and wherever the data says there is no
+   *  neighbour. See `utils/neighbours.ts`. */
+  prevId?: string;
+  nextId?: string;
 }
 
 export type VariableType = string;
+
+/** Which segment an axis reads: the token itself, or the one beside it. */
+export type SegmentRef = 'this' | 'prev' | 'next';
+
+/**
+ * How confidently a dataset's neighbours could be identified. Row order alone is a guess —
+ * right whenever every segment of a recording is listed in sequence, silently wrong
+ * wherever one is missing. Neighbour labels and segment times turn it into a check.
+ * See `utils/neighbours.ts`.
+ */
+export type NeighbourBasis = 'labels+time' | 'labels' | 'time' | 'rows';
+
+export interface NeighbourReport {
+  basis: NeighbourBasis;
+  /** Tokens with at least one neighbour. */
+  linked: number;
+  /** Adjacent rows the checks refused to link. */
+  rejected: number;
+  /** Columns that would raise the confidence, named for the warning. */
+  suggested: string[];
+  /** The columns actually used. */
+  used: string[];
+}
 
 export interface StyleOverrides {
   colors: Record<string, string>;
@@ -171,6 +199,10 @@ export interface PlotConfig {
   varYField: string;                         // measure on Y
   varXTime: number;                          // timepoint for a formant X measure
   varYTime: number;                          // timepoint for a formant Y measure
+  // Which segment each axis reads: the token itself, or the one beside it. Unset = this
+  // one, so an axis is about the token in hand until it is asked to look next door.
+  varXSegment?: SegmentRef;
+  varYSegment?: SegmentRef;
   varXRange: [number, number];               // [0,0] = fit to the data
   varYRange: [number, number];
   varShowRegression: boolean;                // least-squares line
@@ -415,6 +447,8 @@ export interface TrajectorySpacing {
 export interface DatasetMeta {
   fileName: string;
   columnMappings: ColumnMapping[];
+  /** How the segments beside each token were identified, for the axis segment selector. */
+  neighbours?: NeighbourReport;
   timePoints: number[];
   timePointLabels?: Record<number, string>;  // Maps numeric index → display label (e.g. 0→"onset", 50→"50%")
   rowCount: number;

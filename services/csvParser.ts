@@ -1,6 +1,7 @@
 
 import { SpeechToken, TrajectoryPoint, ColumnMapping, ColumnRole, DatasetMeta, TrajectoryFormat, TrajectoryUnit, TrajectorySpacing } from '../types';
 import { measureNumericColumns } from '../utils/numericFields';
+import { resolveNeighbours } from '../utils/neighbours';
 import { detectSpectralRole, spectralColumnRegion } from '../utils/spectralMoments';
 
 /** Threshold: ≥ this many non-target timepoints per formant = trajectory data. */
@@ -801,6 +802,7 @@ function parseLongFormat(
     meta: {
       fileName,
       columnMappings: measureNumericColumns(tokens, mappings),
+      neighbours: resolveNeighbours(tokens, mappings),
       timePoints: commonGrid,
       rowCount: tokens.length,
       formantVariants,
@@ -1031,6 +1033,7 @@ export const parseWithMappings = (
   const meta: DatasetMeta = {
     fileName,
     columnMappings: measureNumericColumns(tokens, mappings),
+    neighbours: resolveNeighbours(tokens, mappings),
     timePoints: sortedTimePoints,
     timePointLabels,
     rowCount: tokens.length,

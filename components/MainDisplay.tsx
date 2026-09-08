@@ -578,6 +578,28 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     layers.forEach(l => updateLayerConfig(l.id, key, val));
   };
 
+  /**
+   * Whether to caution that the segments beside each token were matched by row order
+   * alone. Row order is right whenever a file lists every segment in sequence and quietly
+   * wrong wherever one is missing — an unlabelled pause makes the rows either side look
+   * adjacent. Shown only once an axis actually reads a neighbour, so it warns about a
+   * claim being made rather than about the data in the abstract.
+   */
+  const neighbourWarning = useMemo(() => {
+    const report = datasetMeta?.neighbours;
+    if (!report || report.basis !== 'rows') return null;
+    const inUse = (bgConfig.varXSegment ?? 'this') !== 'this' || (bgConfig.varYSegment ?? 'this') !== 'this';
+    if (!inUse) return null;
+    return {
+      short: 'This may pair the wrong segments.',
+      detail: 'Neighbouring segments were matched by row order alone, which is wrong wherever a '
+        + 'segment is missing from the file — an unlabelled pause makes the rows either side look '
+        + 'adjacent when they are not. To be certain, re-export your data with '
+        + report.suggested.join(' or ')
+        + '. FRED checks those against the row order and refuses to link where they disagree.',
+    };
+  }, [datasetMeta, bgConfig.varXSegment, bgConfig.varYSegment]);
+
   const handleConfig = (key: keyof PlotConfig, val: any) => {
       updateLayerConfig(activeLayerId, key, val);
   };
@@ -1622,6 +1644,14 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                           {availableTimePoints.map(t => <option key={t} value={t}>{tpLabel(t)}</option>)}
                         </select>
                       )}
+                      <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
+                        title="Which segment this axis reads: the token itself, or the one beside it"
+                        value={bgConfig.varXSegment ?? 'this'}
+                        onChange={e => updateLayerConfig(layers[0].id, 'varXSegment', e.target.value)}>
+                        <option value="this">this</option>
+                        <option value="prev">preceding</option>
+                        <option value="next">following</option>
+                      </select>
                       <label className="font-semibold text-slate-600">Y:</label>
                       <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700 max-w-[170px]"
                         value={bgConfig.varYField}
@@ -1635,8 +1665,25 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                           {availableTimePoints.map(t => <option key={t} value={t}>{tpLabel(t)}</option>)}
                         </select>
                       )}
+                      <select className="p-1.5 border border-slate-300 rounded bg-white text-slate-700"
+                        title="Which segment this axis reads: the token itself, or the one beside it"
+                        value={bgConfig.varYSegment ?? 'this'}
+                        onChange={e => updateLayerConfig(layers[0].id, 'varYSegment', e.target.value)}>
+                        <option value="this">this</option>
+                        <option value="prev">preceding</option>
+                        <option value="next">following</option>
+                      </select>
                     </div>
                     </HelpTooltip>
+
+                    {neighbourWarning && (
+                      <div
+                        className="px-2 py-1 bg-amber-50 border border-amber-200 rounded text-[10px] text-amber-900 leading-snug max-w-[280px] cursor-help"
+                        title={neighbourWarning.detail}
+                      >
+                        <span className="font-bold">Neighbours by row order.</span> {neighbourWarning.short}
+                      </div>
+                    )}
 
                     <div className="w-px h-6 bg-slate-200"></div>
 
@@ -3148,6 +3195,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
             ref={plotRef}
             layers={layers}
             layerData={layerData}
+            allTokens={data}
             activeLayerId={activeLayerId}
             datasetMeta={datasetMeta ?? null}
             onLegendClick={handleLegendClick}

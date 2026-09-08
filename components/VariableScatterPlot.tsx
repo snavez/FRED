@@ -1,10 +1,11 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { drawPlotFrame } from '../utils/plotFrame';
-import { SpeechToken, PlotConfig, PlotHandle, ExportConfig, DatasetMeta, Layer } from '../types';
+import { SpeechToken, PlotConfig, PlotHandle, ExportConfig, DatasetMeta, Layer, SegmentRef } from '../types';
 import { getLabel } from '../utils/getLabel';
 import { drawShape, hexToRgb, computeEncodingMaps, EncodingMaps, encodingGroupKey } from '../utils/plotEncoding';
 import { axisTicks, formatMeasureValue } from '../utils/axisTicks';
 import { measureLabel, measureValue } from '../utils/measures';
+import { SEGMENT_LABELS, segmentToken, tokenIndex } from '../utils/neighbours';
 import { fitRange } from '../utils/plotRange';
 import { tooltipFieldsFor } from '../utils/pointInfo';
 import { axisFraction, panRange, zoomRange } from '../utils/zoomRange';
@@ -23,6 +24,13 @@ import { linearFit, LinearFit } from '../services/statistics';
 interface VariableScatterPlotProps {
   layers: Layer[];
   layerData: Record<string, SpeechToken[]>;
+  /**
+   * Every token, filters and all. An axis reading a neighbouring segment looks it up here
+   * rather than in the filtered set: filters choose what to *plot*, and a token's
+   * neighbour is context around it — requiring the vowel to pass a filter aimed at the
+   * consonant would empty the plot.
+   */
+  allTokens: SpeechToken[];
   activeLayerId: string;
   datasetMeta: DatasetMeta | null;
   onLegendClick?: (category: string, currentStyles: { color: string, shape: string, texture: number, lineType: string }, event: React.MouseEvent, layerId?: string) => void;
@@ -68,7 +76,7 @@ const buildGroups = (
 };
 
 const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
-  { layers, layerData, activeLayerId, datasetMeta, onLegendClick, onAutoRange, onViewRange }, ref,
+  { layers, layerData, allTokens, activeLayerId, datasetMeta, onLegendClick, onAutoRange, onViewRange }, ref,
 ) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -86,6 +94,9 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
   // Both axes live on the background layer: every layer shares one coordinate space.
   const xField = bgConfig.varXField, yField = bgConfig.varYField;
   const xTime = bgConfig.varXTime ?? 50, yTime = bgConfig.varYTime ?? 50;
+  const xSegment = bgConfig.varXSegment ?? 'this', ySegment = bgConfig.varYSegment ?? 'this';
+  // Neighbours are followed through the whole dataset, not the filtered set (see below).
+  const byId = useMemo(() => tokenIndex(allTokens), [allTokens]);
 
   const legendLayers = useMemo(() =>
     layers.filter(l => l.visible)
@@ -113,14 +124,25 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
     };
     if (!xField || !yField) { drawEmpty('Choose a variable for each axis.'); return; }
 
+    /** An axis title says which segment it read, but only when that is not this one. */
+    const axisTitle = (field: string, time: number, segment: SegmentRef) => {
+      const base = measureLabel(field, time, datasetMeta);
+      return segment === 'this' ? base : `${base} — ${SEGMENT_LABELS[segment]}`;
+    };
+
     const legendGutter = (!exportConfig && legendLayers.length > 0) ? 288 : 24;
     const margin = { top: 24 * s, right: legendGutter * s, bottom: 64 * s, left: 88 * s };
     const area = { x: margin.left, y: margin.top, w: width - margin.left - margin.right, h: height - margin.top - margin.bottom };
     if (area.w <= 0 || area.h <= 0) return;
 
+    // Each axis may read a neighbouring segment; a token with no such neighbour simply has
+    // no point, exactly as one missing the measurement does.
     const valueOf = (t: SpeechToken): Plotted | null => {
-      const x = measureValue(t, xField, xTime);
-      const y = measureValue(t, yField, yTime);
+      const xTok = segmentToken(t, xSegment, byId);
+      const yTok = segmentToken(t, ySegment, byId);
+      if (!xTok || !yTok) return null;
+      const x = measureValue(xTok, xField, xTime);
+      const y = measureValue(yTok, yField, yTime);
       return isFinite(x) && isFinite(y) ? { token: t, x, y } : null;
     };
 
@@ -154,8 +176,8 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
       area, scale: s, exportConfig, yLabelOffset: 60,
       xTicks: xt.values.map(v => ({ pos: mapX(v), label: formatMeasureValue(v) })),
       yTicks: yt.values.map(v => ({ pos: mapY(v), label: formatMeasureValue(v) })),
-      xLabel: measureLabel(xField, xTime, datasetMeta),
-      yLabel: measureLabel(yField, yTime, datasetMeta),
+      xLabel: axisTitle(xField, xTime, xSegment),
+      yLabel: axisTitle(yField, yTime, ySegment),
     });
 
     // Data is clipped to the frame: a hand-set range must not spill over the axes.
@@ -196,8 +218,8 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
           if (capture) {
             hits.current.push({
               token: p.token, layer, x, y,
-              coords: [`${measureLabel(xField, xTime, datasetMeta)}: ${formatMeasureValue(p.x)}`,
-                       `${measureLabel(yField, yTime, datasetMeta)}: ${formatMeasureValue(p.y)}`],
+              coords: [`${axisTitle(xField, xTime, xSegment)}: ${formatMeasureValue(p.x)}`,
+                       `${axisTitle(yField, yTime, ySegment)}: ${formatMeasureValue(p.y)}`],
             });
           }
         }));
@@ -295,7 +317,7 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
         }
       });
     }
-  }, [layers, layerData, bgConfig, activeLayer, datasetMeta, legendLayers, showTitles, xField, yField, xTime, yTime, onAutoRange]);
+  }, [layers, layerData, bgConfig, activeLayer, datasetMeta, legendLayers, showTitles, xField, yField, xTime, yTime, xSegment, ySegment, byId, onAutoRange]);
 
   // ─── Canvas plumbing ───
   const draw = useCallback(() => {
