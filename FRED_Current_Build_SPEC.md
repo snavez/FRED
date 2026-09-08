@@ -974,6 +974,33 @@ Each section is collapsible with a dot indicator when non-default values are set
   unaffected by export settings. A new plot honours the overlay by construction.
 - **Legend**: show/hide toggle, position (Right/Bottom/Inside/Custom), per-layer controls with editable titles, heading/item font sizes
 
+### Legends
+
+- **The on-screen legend is a control, not a picture** (`components/PlotLegend.tsx`).
+  Clicking an entry opens the style editor for that category. Shared by every plot that has
+  a key: a plot that painted its own onto the canvas had a picture of a legend, and the
+  click went nowhere — which is what happened on **General → Scatter**.
+- **Exported legends are built by one function** (`utils/legendEntries.ts`): a **heading**
+  naming the variable, then one row per value carrying the value and its count. The heading
+  is the editable title from the export overlay (`layerLegends[].colorTitle`, falling back
+  to the shared title, then the field name in caps). A value's label never repeats the
+  variable name — the heading above it already gives it.
+  - Plots used to build these ad hoc and disagreed three ways: heading + plain labels;
+    no heading with every label prefixed `MAU: `; and no heading with the layer name
+    appended to each row. The reader met a different legend on each tab.
+  - With more than one layer in the legend, each block is headed by its layer name, said
+    once rather than repeated on every row. A layer heading with nothing under it is dropped.
+  - `legendWidth` sizes the gutter to the longest row, measuring headings at the title size
+    — a fixed-width gutter clipped them.
+
+### Colour Picker
+
+Every style editor offers the fixed palette plus a **rainbow swatch** that opens a mixer:
+the browser's own colour wheel, with hex and R/G/B boxes for matching a value exactly,
+which a wheel cannot do by eye. A mixed colour is **added to the palette for the session**
+and is then one click away on every plot, since the style editor is a single shared
+instance. Not persisted — a new session starts from the fixed palette.
+
 ### NudgePad Component
 Replaces raw X/Y offset inputs with directional arrows (↑↓←→) + reset button:
 - Default step: 10px (configurable per instance)

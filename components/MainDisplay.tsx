@@ -642,6 +642,15 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
     setShowExportDialog(true);
   };
 
+  /**
+   * Colours mixed by hand, kept for the session and offered on every plot's style editor.
+   * Newest first, so a colour just chosen is the first one to hand.
+   */
+  const [customColors, setCustomColors] = useState<string[]>([]);
+  const addCustomColor = useCallback((hex: string) => {
+    setCustomColors(prev => (prev.includes(hex) ? prev : [hex, ...prev].slice(0, 24)));
+  }, []);
+
   const handleLegendClick = useCallback((category: string, currentStyles: { color: string, shape: string, texture: number, lineType: string }, event: React.MouseEvent, layerId?: string) => {
     setEditingItem({
       category,
@@ -3257,6 +3266,8 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
           onUpdate={handleStyleUpdate}
           onClose={() => setEditingItem(null)}
           bwMode={currentConfig.bwMode}
+          customColors={customColors}
+          onAddCustomColor={addCustomColor}
         />
       )}
 

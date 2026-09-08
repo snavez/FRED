@@ -1,5 +1,7 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { drawPlotFrame } from '../utils/plotFrame';
+import { PlotLegend } from './PlotLegend';
+import { buildLegendEntries, legendWidth } from '../utils/legendEntries';
 import { SpeechToken, PlotConfig, PlotHandle, ExportConfig, DatasetMeta, Layer, SegmentRef } from '../types';
 import { getLabel } from '../utils/getLabel';
 import { drawShape, hexToRgb, computeEncodingMaps, EncodingMaps, encodingGroupKey } from '../utils/plotEncoding';
@@ -294,29 +296,6 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
       }
     }
 
-    // ─── On-screen legend ───
-    if (!exportConfig && legendLayers.length > 0) {
-      let ly = area.y + 4;
-      const lx = area.x + area.w + 20;
-      legendLayers.forEach(({ layer, enc }) => {
-        if (showTitles) {
-          ctx.fillStyle = '#0f172a'; ctx.font = `bold 11px Inter, sans-serif`;
-          ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-          ctx.fillText(layer.name, lx, ly); ly += 16;
-        }
-        if (enc.colorKey) {
-          ctx.fillStyle = '#64748b'; ctx.font = `bold 9px Inter, sans-serif`;
-          ctx.fillText(enc.colorKey.toUpperCase(), lx, ly); ly += 14;
-          Object.keys(enc.colorMap).sort().forEach(k => {
-            ctx.fillStyle = enc.colorMap[k]; ctx.beginPath(); ctx.arc(lx + 5, ly + 5, 5, 0, Math.PI * 2); ctx.fill();
-            ctx.fillStyle = '#334155'; ctx.font = `11px Inter, sans-serif`;
-            // Counts belong in every legend, so a group's weight is never guessed at
-            ctx.fillText(`${k} (n=${enc.colorCounts[k] || 0})`, lx + 16, ly); ly += 16;
-          });
-          ly += 6;
-        }
-      });
-    }
   }, [layers, layerData, bgConfig, activeLayer, datasetMeta, legendLayers, showTitles, xField, yField, xTime, yTime, xSegment, ySegment, byId, onAutoRange]);
 
   // ─── Canvas plumbing ───
@@ -354,15 +333,12 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
       const gsX = exportConfig.graphScaleX || exportConfig.graphScale || 1;
       const gsY = exportConfig.graphScaleY || exportConfig.graphScale || 1;
       const plotW = 2000 * gsX * scale, plotH = 1400 * gsY * scale;
-      const entries: { color: string, label: string }[] = [];
-      legendLayers.forEach(({ layer, enc }) => {
-        if (enc.colorKey) Object.keys(enc.colorMap).sort().forEach(k => {
-          const label = `${k} (n=${enc.colorCounts[k] || 0})`;
-          entries.push({ color: enc.colorMap[k], label: showTitles ? `${label} · ${layer.name}` : label });
-        });
-      });
+      const entries = buildLegendEntries(legendLayers, exportConfig);
       const hasLegend = exportConfig.showLegend && entries.length > 0;
-      const legendW = hasLegend ? 460 * scale : 0;
+      const legendW = hasLegend
+        ? legendWidth(entries, (exportConfig.legendItemSize || 24) * scale,
+            (exportConfig.legendTitleSize || 36) * scale, 460 * scale)
+        : 0;
       const titleH = exportConfig.showPlotTitle ? (exportConfig.plotTitleSize || 96) * scale + 40 * scale : 0;
       const off = document.createElement('canvas');
       off.width = plotW + legendW + 40 * scale; off.height = plotH + titleH + 40 * scale;
@@ -378,10 +354,19 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
       if (hasLegend) {
         ctx.save(); ctx.translate(plotW + 40 * scale, titleH + 40 * scale);
         const itemS = (exportConfig.legendItemSize || 24) * scale;
+        const titleS = (exportConfig.legendTitleSize || 36) * scale;
         ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-        entries.forEach((it, i) => {
-          const y = (i + 0.5) * itemS * 1.7;
-          ctx.fillStyle = it.color; ctx.fillRect(0, y - itemS / 2, itemS, itemS);
+        let y = 0;
+        entries.forEach(it => {
+          if (it.kind === 'heading') {
+            y += titleS * 1.1;
+            ctx.fillStyle = '#0f172a'; ctx.font = `bold ${titleS}px Inter, sans-serif`;
+            ctx.fillText(it.label, 0, y);
+            y += titleS * 0.7;
+            return;
+          }
+          y += itemS * 1.7;
+          ctx.fillStyle = it.color!; ctx.fillRect(0, y - itemS / 2, itemS, itemS);
           ctx.fillStyle = '#334155'; ctx.font = `${itemS}px Inter, sans-serif`;
           ctx.fillText(it.label, itemS * 1.4, y);
         });
@@ -456,6 +441,15 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
       }}
     >
       <canvas ref={canvasRef} className="w-full h-full" />
+      {legendLayers.length > 0 && (
+        <div className="absolute right-4 top-4 max-h-[85%] overflow-y-auto w-64 z-40 pointer-events-auto">
+          <PlotLegend
+            layers={legendLayers.map(l => l.layer)}
+            allMappings={Object.fromEntries(legendLayers.map(l => [l.layer.id, l.enc]))}
+            onLegendClick={onLegendClick}
+          />
+        </div>
+      )}
       {hovered && (
         <div className="absolute pointer-events-none bg-slate-900/90 text-white text-[11px] rounded px-2 py-1 z-10"
           style={{ left: mousePos.x + 12, top: mousePos.y + 12 }}>

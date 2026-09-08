@@ -6,6 +6,7 @@ import { axisFraction, panRange, zoomRange } from '../utils/zoomRange';
 import { tooltipFieldsFor } from '../utils/pointInfo';
 import { contourSeries, hasContour, SummaryOptions } from '../utils/contours';
 import { drawPlotFrame } from '../utils/plotFrame';
+import { buildLegendEntries, legendWidth } from '../utils/legendEntries';
 import { durationFieldForRegion, getTokenDurationInUnit } from '../utils/duration';
 import { axisTicks, formatMeasureValue } from '../utils/axisTicks';
 import {
@@ -787,21 +788,12 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
   useImperativeHandle(ref, () => {
     const generateImage = (exportConfig: ExportConfig) => {
       const { drawScale, width: plotW, height: plotH } = computeExportPlotSize(exportConfig, 2000, 1400);
-      const legendEntries: { color: string, label: string, dash?: number[], texture?: number }[] = [];
-      legendLayers.forEach(({ layer, enc }) => {
-        const suffix = showTitles ? ` · ${layer.name}` : '';
-        // Counts belong in every legend, on screen and in export alike
-        if (enc.colorKey && exportConfig.showColorLegend !== false) Object.keys(enc.colorMap).sort().forEach(k =>
-          legendEntries.push({ color: enc.colorMap[k], label: `${enc.colorKey}: ${k} (n=${enc.colorCounts[k] || 0})${suffix}` }));
-        if (enc.lineTypeKey && exportConfig.showLineTypeLegend !== false) Object.keys(enc.lineTypePatternMap).sort().forEach(k =>
-          legendEntries.push({ color: '#475569', dash: enc.lineTypePatternMap[k], label: `${enc.lineTypeKey}: ${k} (n=${enc.lineTypeCounts[k] || 0})${suffix}` }));
-        if (enc.textureKey && exportConfig.showTextureLegend !== false) Object.keys(enc.textureMap).sort().forEach(k =>
-          legendEntries.push({ color: '#475569', texture: enc.textureMap[k], label: `${enc.textureKey}: ${k} (n=${enc.textureCounts[k] || 0})${suffix}` }));
-      });
+      const legendEntries = buildLegendEntries(legendLayers, exportConfig);
       const hasLegend = exportConfig.showLegend && legendEntries.length > 0;
       const itemS = (exportConfig.legendItemSize || 24) * drawScale;
-      const maxLegendChars = Math.max(0, ...legendEntries.map(it => it.label.length));
-      const legendW = hasLegend ? Math.max(460 * drawScale, itemS * (2 + maxLegendChars * 0.62)) : 0;
+      const legendW = hasLegend
+        ? legendWidth(legendEntries, itemS, (exportConfig.legendTitleSize || 36) * drawScale, 460 * drawScale)
+        : 0;
       const legendH = hasLegend ? Math.max(160 * drawScale, legendEntries.length * itemS * 1.7 + 40 * drawScale) : 0;
       const titleH = exportConfig.showPlotTitle ? (exportConfig.plotTitleSize || 96) * drawScale + 40 * drawScale : 0;
       const pad = 40 * drawScale;
@@ -834,14 +826,23 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       ctx.save(); ctx.translate(pad, titleH + pad); renderPlot(ctx, plotW, plotH, 1, drawScale, exportConfig); ctx.restore();
       if (hasLegend) {
         ctx.save(); ctx.translate(legendX, legendY); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-        legendEntries.forEach((it, i) => {
-          const y = (i + 0.5) * itemS * 1.7;
+        const titleS = (exportConfig.legendTitleSize || 36) * drawScale;
+        let y = 0;
+        legendEntries.forEach(it => {
+          if (it.kind === 'heading') {
+            y += titleS * 1.1;
+            ctx.fillStyle = '#0f172a'; ctx.font = `bold ${titleS}px Inter, sans-serif`;
+            ctx.fillText(it.label, 0, y);
+            y += titleS * 0.7;
+            return;
+          }
+          y += itemS * 1.7;
           if (it.texture !== undefined) {
-            ctx.fillStyle = generateTexture(ctx, it.texture, it.color, '#ffffff'); ctx.fillRect(0, y - itemS / 2, itemS, itemS);
+            ctx.fillStyle = generateTexture(ctx, it.texture, it.color!, '#ffffff'); ctx.fillRect(0, y - itemS / 2, itemS, itemS);
           } else if (it.dash) {
-            ctx.strokeStyle = it.color; ctx.lineWidth = Math.max(2 * drawScale, itemS * 0.12); ctx.setLineDash(it.dash.map(v => v * drawScale));
+            ctx.strokeStyle = it.color!; ctx.lineWidth = Math.max(2 * drawScale, itemS * 0.12); ctx.setLineDash(it.dash.map(v => v * drawScale));
             ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(itemS, y); ctx.stroke(); ctx.setLineDash([]);
-          } else { ctx.fillStyle = it.color; ctx.fillRect(0, y - itemS / 2, itemS, itemS); }
+          } else { ctx.fillStyle = it.color!; ctx.fillRect(0, y - itemS / 2, itemS, itemS); }
           ctx.fillStyle = '#334155'; ctx.font = `${itemS}px Inter, sans-serif`; ctx.fillText(it.label, itemS * 1.4, y);
         });
         ctx.restore();

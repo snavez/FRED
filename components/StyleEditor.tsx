@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { generateTexture } from '../utils/textureGenerator';
 
 interface StyleEditorProps {
@@ -20,6 +20,10 @@ interface StyleEditorProps {
   onClose: () => void;
   position: { x: number, y: number };
   bwMode?: boolean;
+  /** Colours mixed by hand this session, offered alongside the fixed palette. */
+  customColors?: string[];
+  /** Remember a mixed colour, so it can be reused on any plot without mixing it again. */
+  onAddCustomColor?: (hex: string) => void;
 }
 
 const COLORS = [
@@ -74,8 +78,87 @@ const ShapeIcon = ({ shape, color = '#333' }: { shape: string, color?: string })
   </svg>
 );
 
-const StyleEditor: React.FC<StyleEditorProps> = ({ category, activeChannels, currentStyles, onUpdate, onClose, position, bwMode }) => {
-  const colorPalette = bwMode ? GREYSCALE_COLORS : COLORS;
+/** #rrggbb for a colour input, whatever spelling the caller had. */
+const normaliseHex = (value: string): string | null => {
+  const v = value.trim().replace(/^#/, '');
+  if (/^[0-9a-f]{3}$/i.test(v)) return `#${v[0]}${v[0]}${v[1]}${v[1]}${v[2]}${v[2]}`.toLowerCase();
+  if (/^[0-9a-f]{6}$/i.test(v)) return `#${v.toLowerCase()}`;
+  return null;
+};
+
+const toRgb = (hex: string): [number, number, number] => {
+  const h = normaliseHex(hex) || '#000000';
+  return [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)) as [number, number, number];
+};
+
+const fromRgb = (r: number, g: number, b: number): string =>
+  '#' + [r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v || 0))).toString(16).padStart(2, '0')).join('');
+
+/**
+ * Mix a colour outside the fixed palette.
+ *
+ * The wheel is the browser's own colour input, which every platform renders as a proper
+ * picker; the hex and RGB boxes are there for when a colour has to match a value from
+ * somewhere else exactly, which a wheel cannot do by eye.
+ */
+const ColorMixer: React.FC<{ value: string; onPick: (hex: string) => void }> = ({ value, onPick }) => {
+  const [text, setText] = useState(value);
+  const [r, g, b] = toRgb(text);
+
+  const commit = (hex: string) => { setText(hex); onPick(hex); };
+
+  return (
+    <div className="mt-2 p-2 border border-slate-200 rounded-lg bg-slate-50 space-y-2">
+      <div className="flex items-center gap-2">
+        <input
+          type="color"
+          value={normaliseHex(text) || '#000000'}
+          onChange={e => commit(e.target.value)}
+          className="w-10 h-8 p-0 border border-slate-200 rounded cursor-pointer bg-white"
+          title="Pick a colour"
+        />
+        <input
+          type="text"
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onBlur={() => { const hex = normaliseHex(text); if (hex) commit(hex); else setText(value); }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { const hex = normaliseHex(text); if (hex) commit(hex); }
+            if (e.key === 'Escape') setText(value);
+          }}
+          className="flex-1 min-w-0 px-1.5 py-1 text-[11px] font-mono border border-slate-200 rounded focus:outline-none focus:border-sky-500"
+          placeholder="#rrggbb"
+          title="Hex value, applied on Enter or when you leave the box"
+        />
+      </div>
+      <div className="flex items-center gap-1.5">
+        {(['R', 'G', 'B'] as const).map((channel, i) => (
+          <label key={channel} className="flex items-center gap-1 flex-1 min-w-0">
+            <span className="text-[9px] font-bold text-slate-400">{channel}</span>
+            <input
+              type="number"
+              min={0}
+              max={255}
+              value={[r, g, b][i]}
+              onChange={e => {
+                const next: [number, number, number] = [r, g, b];
+                next[i] = parseInt(e.target.value, 10);
+                commit(fromRgb(next[0], next[1], next[2]));
+              }}
+              className="w-full min-w-0 px-1 py-0.5 text-[10px] border border-slate-200 rounded focus:outline-none focus:border-sky-500"
+            />
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const StyleEditor: React.FC<StyleEditorProps> = ({ category, activeChannels, currentStyles, onUpdate, onClose, position, bwMode, customColors = [], onAddCustomColor }) => {
+  // Mixed colours join the fixed palette rather than replacing it, so a swatch chosen once
+  // is a click away on every plot for the rest of the session.
+  const colorPalette = [...(bwMode ? GREYSCALE_COLORS : COLORS), ...customColors.filter(c => !COLORS.includes(c))];
+  const [mixing, setMixing] = useState(false);
   // Prevent going off screen
   const safeX = Math.min(window.innerWidth - 260, Math.max(10, position.x));
   const safeY = Math.min(window.innerHeight - 400, Math.max(10, position.y));
@@ -104,7 +187,19 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ category, activeChannels, cur
                   style={{ backgroundColor: c }}
                 />
               ))}
+              <button
+                onClick={() => setMixing(v => !v)}
+                title="Mix a colour of your own"
+                className={`w-6 h-6 rounded-md border shadow-sm transition-transform hover:scale-110 ${mixing ? 'ring-2 ring-offset-1 ring-sky-500' : 'border-slate-200'}`}
+                style={{ background: 'conic-gradient(#ef4444,#f59e0b,#84cc16,#10b981,#06b6d4,#3b82f6,#8b5cf6,#ec4899,#ef4444)' }}
+              />
             </div>
+            {mixing && (
+              <ColorMixer
+                value={currentStyles.color}
+                onPick={hex => { onUpdate('color', hex); onAddCustomColor?.(hex); }}
+              />
+            )}
           </div>
         )}
 
