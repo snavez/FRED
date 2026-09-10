@@ -816,7 +816,7 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
 
       if (exportConfig.showLegend && hasLegendContent) {
         const legendSpace = Math.max(800, exportConfig.legendItemSize * 15, exportConfig.legendTitleSize * 10);
-        if (exportConfig.legendPosition === 'right') {
+        if (exportConfig.legendPosition === 'right' || exportConfig.legendPosition === 'custom') {
           legendW = legendSpace * drawScale;
           lx = margin.left + plotWidth + (80 * drawScale);
           ly = margin.top + (50 * drawScale);
@@ -830,9 +830,6 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
         } else if (exportConfig.legendPosition === 'inside-top-left') {
           lx = margin.left + (40 * drawScale);
           ly = margin.top + (40 * drawScale);
-        } else if (exportConfig.legendPosition === 'custom') {
-          lx = (Number(exportConfig.legendX) || 0) * drawScale;
-          ly = (Number(exportConfig.legendY) || 0) * drawScale;
         }
       }
 
@@ -840,11 +837,21 @@ const DurationPlot = forwardRef<PlotHandle, DurationPlotProps>(({ data, config, 
       let canvasHeight = (exportConfig.canvasHeight ? exportConfig.canvasHeight * drawScale : 0) || (margin.top + plotHeight + margin.bottom);
 
       // Always extend canvas for right-positioned legend (ExportDialog canvasWidth doesn't include legend space)
-      if (exportConfig.showLegend && hasLegendContent && exportConfig.legendPosition === 'right') {
+      if (exportConfig.showLegend && hasLegendContent && (exportConfig.legendPosition === 'right' || exportConfig.legendPosition === 'custom')) {
         canvasWidth += legendW;
         // Adjust legend position to be relative to actual plot area
         lx = canvasWidth - legendW + (40 * drawScale);
       }
+
+      // "Custom" is the outside-right placement, nudged. It used to be absolute canvas
+      // coordinates starting at (0, 0), which threw the legend into the top-left corner with
+      // its title off the page — it read as the legend vanishing, and nudging left only
+      // pushed it further out.
+      if (exportConfig.legendPosition === 'custom') {
+        lx += (Number(exportConfig.legendX) || 0) * drawScale;
+        ly += (Number(exportConfig.legendY) || 0) * drawScale;
+      }
+
       if (!exportConfig.canvasHeight && exportConfig.showLegend && hasLegendContent && exportConfig.legendPosition === 'bottom') {
         canvasHeight += legendH;
       }

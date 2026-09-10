@@ -80,6 +80,7 @@ const COLORS = [
 
 import { getLabel } from '../utils/getLabel';
 import { niceStep, formatTickValue } from '../utils/axisTicks';
+import { frameSpacing } from '../utils/plotFrame';
 
 // Helper: compute counts plot data for a token subset (reused for faceting)
 function computeCountsPlotData(tokens: SpeechToken[], config: PlotConfig, styleOverrides?: StyleOverrides) {
@@ -300,7 +301,10 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
     const hasColor = categories.length > 1 || (categories.length === 1 && categories[0] !== 'all');
 
     // Margins
-    const bottomBase = isExport ? Math.max(120, (exportConfig?.xAxisLabelSize || 36) * 2) : 80;
+    // Room for the tick numbers and the axis title beneath them, from the sizes about to
+    // be drawn — a title sized for print needs more than a fixed margin ever reserves.
+    const spacing = frameSpacing(0, exportConfig);
+    const bottomBase = Math.max(isExport ? 120 : 80, spacing.bottom);
     const leftBase = isExport ? Math.max(140, (exportConfig?.yAxisLabelSize || 36) * 2) : 70;
     const topBase = isExport && exportConfig?.showPlotTitle ? Math.max(100, (exportConfig.plotTitleSize || 128) + 40) : 40;
     const margin = {
@@ -444,12 +448,18 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
       });
     }
 
-    // Axis labels
+    // X-axis label. Its distance below the frame answers to the tick and title sizes, so a
+    // 96px title clears 64px tick numbers instead of landing on them, and its nudges are
+    // its own — moving the tick labels used to drag the title along with them.
     ctx.fillStyle = '#0f172a';
     ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
+    ctx.textBaseline = 'alphabetic';
     ctx.font = `bold ${(labelFont * drawScale) / scale}px Inter`;
-    ctx.fillText(prettyLabel(config.distHistXVar || 'duration', datasetMeta), margin.left + chartW / 2, margin.top + chartH + (35 * drawScale) + ((exportConfig?.xAxisTickY || 0) * drawScale));
+    ctx.fillText(
+      prettyLabel(config.distHistXVar || 'duration', datasetMeta),
+      margin.left + chartW / 2 + ((exportConfig?.xAxisLabelX || 0) * drawScale),
+      margin.top + chartH + (spacing.xLabelOffset * drawScale) + ((exportConfig?.xAxisLabelY || 0) * drawScale),
+    );
 
     // Y-axis label
     ctx.save();
@@ -1271,6 +1281,57 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
 
   }, [plotData, config, renderHistogram, facetGroups, getHistValue, styleOverrides]);
 
+  /**
+   * The labels the legend will draw, longest first.
+   *
+   * `drawLegend` builds these same strings as it goes; they are gathered here so a
+   * placement can be measured before anything is drawn. Keep the two in step.
+   */
+  const legendLabels = (): string[] => {
+    if (config.distMode === 'histogram' && histogramData) {
+      if (!histogramData.categories.length || histogramData.categories[0] === 'all') return [];
+      return histogramData.categories.map(cat => {
+        const count = histogramData.bins.reduce((s, b) => s + (b.counts[cat] || 0), 0);
+        return `${cat} (n=${count})`;
+      });
+    }
+    const { colors, textureList, colorCounts, textureCounts } = plotData;
+    return [
+      ...Object.keys(colors).map(key => `${key} (n=${colorCounts[key] || 0})`),
+      ...textureList.map((tk: string) => `${tk} (n=${textureCounts[tk] || 0})`),
+    ];
+  };
+
+  /** The section headings the legend will draw, for the same reason as `legendLabels`. */
+  const legendTitles = (exportConfig?: ExportConfig): string[] => {
+    if (config.distMode === 'histogram') return [(config.distHistColorBy || 'COLOR').toUpperCase()];
+    const { colorKey, textureKey } = plotData;
+    const layerLegendCfg = exportConfig?.layerLegends?.find(ll => ll.layerId === 'bg');
+    return [
+      layerLegendCfg?.colorTitle || exportConfig?.colorLegendTitle || (colorKey ? colorKey.toUpperCase() : 'COLOR'),
+      layerLegendCfg?.textureTitle || exportConfig?.textureLegendTitle || (textureKey ? textureKey.toUpperCase() : 'PATTERN'),
+    ];
+  };
+
+  /**
+   * How wide the legend actually draws: its swatch column plus the longest label.
+   *
+   * An inside placement used to be anchored a flat 300px in from the plot's right edge,
+   * which is a guess — "consonant (n=11799)" at print sizes ran off the page.
+   */
+  const measureLegendWidth = (drawScale: number, exportConfig?: ExportConfig): number => {
+    const labels = legendLabels();
+    const ctx = document.createElement('canvas').getContext('2d');
+    if (!labels.length || !ctx) return 0;
+    const itemSize = exportConfig ? exportConfig.legendItemSize : 14;
+    const titleSize = exportConfig ? exportConfig.legendTitleSize : 16;
+    ctx.font = `${itemSize * drawScale}px Inter`;
+    const widestItem = Math.max(...labels.map(l => ctx.measureText(l).width));
+    ctx.font = `bold ${titleSize * drawScale}px Inter`;
+    const widestTitle = Math.max(...legendTitles(exportConfig).map(t => ctx.measureText(t).width));
+    return Math.max((itemSize * 0.8 * drawScale) * 1.5 + widestItem, widestTitle);
+  };
+
   const drawLegend = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, drawScale: number = 1, exportConfig?: ExportConfig) => {
     // Histogram mode legend
     if (config.distMode === 'histogram' && histogramData) {
@@ -1413,7 +1474,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
 
        if (exportConfig.showLegend) {
            const legendSpace = Math.max(800, exportConfig.legendItemSize * 15, exportConfig.legendTitleSize * 10);
-           if (exportConfig.legendPosition === 'right') {
+           if (exportConfig.legendPosition === 'right' || exportConfig.legendPosition === 'custom') {
                legendW = legendSpace * drawScale;
                lx = margin.left + plotW + (80 * drawScale);
                ly = margin.top + (50 * drawScale);
@@ -1422,21 +1483,28 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                lx = margin.left;
                ly = margin.top + plotH + (100 * drawScale);
            } else if (exportConfig.legendPosition === 'inside-top-right') {
-               lx = margin.left + plotW - (300 * drawScale); 
+               const inset = measureLegendWidth(drawScale, exportConfig) + (40 * drawScale);
+               lx = Math.max(margin.left + (40 * drawScale), margin.left + plotW - inset);
                ly = margin.top + (40 * drawScale);
            } else if (exportConfig.legendPosition === 'inside-top-left') {
                lx = margin.left + (40 * drawScale);
                ly = margin.top + (40 * drawScale);
-           } else if (exportConfig.legendPosition === 'custom') {
-               lx = (Number(exportConfig.legendX) || 0) * drawScale;
-               ly = (Number(exportConfig.legendY) || 0) * drawScale;
+           }
+
+           // "Custom" is the outside-right placement, nudged. It used to be absolute canvas
+           // coordinates starting at (0, 0), which threw the legend into the top-left corner with
+           // its title off the page — it read as the legend vanishing, and nudging left only
+           // pushed it further out.
+           if (exportConfig.legendPosition === 'custom') {
+               lx += (Number(exportConfig.legendX) || 0) * drawScale;
+               ly += (Number(exportConfig.legendY) || 0) * drawScale;
            }
        }
        
        let canvasWidth = (exportConfig.canvasWidth ? exportConfig.canvasWidth * drawScale : 0) || (margin.left + plotW + margin.right);
        let canvasHeight = (exportConfig.canvasHeight ? exportConfig.canvasHeight * drawScale : 0) || (margin.top + plotH + margin.bottom);
 
-       if (!exportConfig.canvasWidth && exportConfig.showLegend && exportConfig.legendPosition === 'right') {
+       if (!exportConfig.canvasWidth && exportConfig.showLegend && (exportConfig.legendPosition === 'right' || exportConfig.legendPosition === 'custom')) {
            canvasWidth += legendW;
        }
        if (!exportConfig.canvasHeight && exportConfig.showLegend && exportConfig.legendPosition === 'bottom') {

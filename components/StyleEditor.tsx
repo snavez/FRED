@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { generateTexture } from '../utils/textureGenerator';
 
 interface StyleEditorProps {
@@ -100,20 +100,49 @@ const fromRgb = (r: number, g: number, b: number): string =>
  * The wheel is the browser's own colour input, which every platform renders as a proper
  * picker; the hex and RGB boxes are there for when a colour has to match a value from
  * somewhere else exactly, which a wheel cannot do by eye.
+ *
+ * Every control previews as it moves, so the plot follows the mix, but only settles on a
+ * colour once: the wheel when its picker is dismissed, the boxes when they are left or
+ * confirmed. Without that split a single drag would remember every hue it passed through.
  */
-const ColorMixer: React.FC<{ value: string; onPick: (hex: string) => void }> = ({ value, onPick }) => {
+const ColorMixer: React.FC<{
+  value: string;
+  /** Show this colour on the plot, without deciding it is the one. */
+  onPreview: (hex: string) => void;
+  /** Settle on this colour, and keep it. */
+  onSettle: (hex: string) => void;
+}> = ({ value, onPreview, onSettle }) => {
   const [text, setText] = useState(value);
   const [r, g, b] = toRgb(text);
+  const wheelRef = useRef<HTMLInputElement>(null);
 
-  const commit = (hex: string) => { setText(hex); onPick(hex); };
+  const preview = (hex: string) => { setText(hex); onPreview(hex); };
+  const settle = (hex: string) => { setText(hex); onPreview(hex); onSettle(hex); };
+
+  // The wheel's own `change` fires once, when the picker closes; React's onChange is the
+  // `input` event, which fires all the way through a drag.
+  const onSettleRef = useRef(onSettle);
+  onSettleRef.current = onSettle;
+  useEffect(() => {
+    const el = wheelRef.current;
+    if (!el) return;
+    const closed = (e: Event) => {
+      const hex = (e.target as HTMLInputElement).value;
+      setText(hex);
+      onSettleRef.current(hex);
+    };
+    el.addEventListener('change', closed);
+    return () => el.removeEventListener('change', closed);
+  }, []);
 
   return (
     <div className="mt-2 p-2 border border-slate-200 rounded-lg bg-slate-50 space-y-2">
       <div className="flex items-center gap-2">
         <input
+          ref={wheelRef}
           type="color"
           value={normaliseHex(text) || '#000000'}
-          onChange={e => commit(e.target.value)}
+          onChange={e => preview(e.target.value)}
           className="w-10 h-8 p-0 border border-slate-200 rounded cursor-pointer bg-white"
           title="Pick a colour"
         />
@@ -121,9 +150,9 @@ const ColorMixer: React.FC<{ value: string; onPick: (hex: string) => void }> = (
           type="text"
           value={text}
           onChange={e => setText(e.target.value)}
-          onBlur={() => { const hex = normaliseHex(text); if (hex) commit(hex); else setText(value); }}
+          onBlur={() => { const hex = normaliseHex(text); if (hex) settle(hex); else setText(value); }}
           onKeyDown={e => {
-            if (e.key === 'Enter') { const hex = normaliseHex(text); if (hex) commit(hex); }
+            if (e.key === 'Enter') { const hex = normaliseHex(text); if (hex) settle(hex); }
             if (e.key === 'Escape') setText(value);
           }}
           className="flex-1 min-w-0 px-1.5 py-1 text-[11px] font-mono border border-slate-200 rounded focus:outline-none focus:border-sky-500"
@@ -143,8 +172,10 @@ const ColorMixer: React.FC<{ value: string; onPick: (hex: string) => void }> = (
               onChange={e => {
                 const next: [number, number, number] = [r, g, b];
                 next[i] = parseInt(e.target.value, 10);
-                commit(fromRgb(next[0], next[1], next[2]));
+                preview(fromRgb(next[0], next[1], next[2]));
               }}
+              onBlur={() => { const hex = normaliseHex(text); if (hex) settle(hex); }}
+              onKeyDown={e => { if (e.key === 'Enter') { const hex = normaliseHex(text); if (hex) settle(hex); } }}
               className="w-full min-w-0 px-1 py-0.5 text-[10px] border border-slate-200 rounded focus:outline-none focus:border-sky-500"
             />
           </label>
@@ -197,7 +228,8 @@ const StyleEditor: React.FC<StyleEditorProps> = ({ category, activeChannels, cur
             {mixing && (
               <ColorMixer
                 value={currentStyles.color}
-                onPick={hex => { onUpdate('color', hex); onAddCustomColor?.(hex); }}
+                onPreview={hex => onUpdate('color', hex)}
+                onSettle={hex => { onUpdate('color', hex); onAddCustomColor?.(hex); }}
               />
             )}
           </div>

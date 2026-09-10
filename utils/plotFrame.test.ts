@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ExportConfig } from '../types';
-import { drawPlotFrame, PlotFrameOptions } from './plotFrame';
+import { drawPlotFrame, frameSpacing, PlotFrameOptions } from './plotFrame';
 
 /** Records the drawing calls a frame makes, so the typography can be asserted. */
 const stubContext = () => {
@@ -96,5 +96,36 @@ describe('drawPlotFrame', () => {
     const { ctx, texts } = stubContext();
     drawPlotFrame(ctx, base({ yTicks: [] }));
     expect(texts.map(t => t.text)).toEqual(['0', '10', 'X axis', 'Y axis']);
+  });
+});
+
+describe('frameSpacing', () => {
+  it('keeps the screen layout at its floors when there is no export config', () => {
+    const spacing = frameSpacing(['0', '10']);
+    expect(spacing.xLabelOffset).toBe(42);
+    expect(spacing.yLabelOffset).toBe(52);
+    expect(spacing.bottom).toBeGreaterThan(spacing.xLabelOffset);
+    expect(spacing.left).toBeGreaterThan(spacing.yLabelOffset);
+  });
+
+  it('drops the x title clear of print-sized tick numbers', () => {
+    const spacing = frameSpacing(4, exportConfig({ xTickLabelSize: 64, xAxisLabelSize: 96 }));
+    // Clear of the ticks, with the title's own height and a gap beyond them.
+    expect(spacing.xLabelOffset).toBeGreaterThan(64 + 96);
+    // The floor must not win here: a fixed 42 is what put a 96px title on the tick numbers.
+    expect(spacing.xLabelOffset).not.toBe(42);
+    expect(spacing.bottom).toBeGreaterThan(spacing.xLabelOffset);
+  });
+
+  it('widens the left margin for longer tick numbers', () => {
+    const short = frameSpacing(['1'], exportConfig({ yTickLabelSize: 64 }));
+    const long = frameSpacing(['100000'], exportConfig({ yTickLabelSize: 64 }));
+    expect(long.yLabelOffset).toBeGreaterThan(short.yLabelOffset);
+  });
+
+  it('reads a character count the same as the widest label of that length', () => {
+    const counted = frameSpacing(5, exportConfig());
+    const measured = frameSpacing(['1', '12345'], exportConfig());
+    expect(counted).toEqual(measured);
   });
 });

@@ -977,7 +977,7 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
           ctx.save();
           let lx = 0, ly = 0;
 
-          if (exportConfig.legendPosition === 'right') {
+          if (exportConfig.legendPosition === 'right' || exportConfig.legendPosition === 'custom') {
               lx = margin.left + plotWidth + (40 * drawScale);
               ly = margin.top;
           } else if (exportConfig.legendPosition === 'bottom') {
@@ -989,9 +989,15 @@ const CanvasPlot = forwardRef<PlotHandle, CanvasPlotProps>(({ layers, layerData,
           } else if (exportConfig.legendPosition === 'inside-top-left') {
               lx = margin.left + (40 * drawScale);
               ly = margin.top + (40 * drawScale);
-          } else if (exportConfig.legendPosition === 'custom') {
-              lx = (Number(exportConfig.legendX) || 0) * drawScale;
-              ly = (Number(exportConfig.legendY) || 0) * drawScale;
+          }
+
+          // "Custom" is the outside-right placement, nudged. It used to be absolute canvas
+          // coordinates starting at (0, 0), which threw the legend into the top-left corner with
+          // its title off the page — it read as the legend vanishing, and nudging left only
+          // pushed it further out.
+          if (exportConfig.legendPosition === 'custom') {
+              lx += (Number(exportConfig.legendX) || 0) * drawScale;
+              ly += (Number(exportConfig.legendY) || 0) * drawScale;
           }
 
           if (['inside-top-right', 'inside-top-left', 'custom'].includes(exportConfig.legendPosition!)) {

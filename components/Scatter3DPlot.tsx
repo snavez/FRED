@@ -978,7 +978,7 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
             const legendSpace = Math.max(800, exportConfig.legendItemSize * 15, exportConfig.legendTitleSize * 10);
             // Always allocate right space so canvas width stays consistent
             legendW = legendSpace * drawScale;
-            if (exportConfig.legendPosition === 'right') {
+            if (exportConfig.legendPosition === 'right' || exportConfig.legendPosition === 'custom') {
                 lx = margin.left + plotW + (100 * drawScale);
                 ly = margin.top;
             } else if (exportConfig.legendPosition === 'bottom') {
@@ -991,16 +991,22 @@ const Scatter3DPlot = forwardRef<PlotHandle, Scatter3DPlotProps>(({ data, config
             } else if (exportConfig.legendPosition === 'inside-top-left') {
                 lx = margin.left + (40 * drawScale);
                 ly = margin.top + (40 * drawScale);
-            } else if (exportConfig.legendPosition === 'custom') {
-                lx = (Number(exportConfig.legendX) || 0) * drawScale;
-                ly = (Number(exportConfig.legendY) || 0) * drawScale;
+            }
+
+            // "Custom" is the outside-right placement, nudged. It used to be absolute canvas
+            // coordinates starting at (0, 0), which threw the legend into the top-left corner with
+            // its title off the page — it read as the legend vanishing, and nudging left only
+            // pushed it further out.
+            if (exportConfig.legendPosition === 'custom') {
+                lx += (Number(exportConfig.legendX) || 0) * drawScale;
+                ly += (Number(exportConfig.legendY) || 0) * drawScale;
             }
         }
         
         let canvasWidth = (exportConfig.canvasWidth ? exportConfig.canvasWidth * drawScale : 0) || (margin.left + plotW + margin.right);
         let canvasHeight = (exportConfig.canvasHeight ? exportConfig.canvasHeight * drawScale : 0) || (margin.top + plotH + margin.bottom);
 
-        if (!exportConfig.canvasWidth && exportConfig.showLegend && exportConfig.legendPosition === 'right') {
+        if (!exportConfig.canvasWidth && exportConfig.showLegend && (exportConfig.legendPosition === 'right' || exportConfig.legendPosition === 'custom')) {
             canvasWidth += legendW;
         }
         if (!exportConfig.canvasHeight && exportConfig.showLegend && exportConfig.legendPosition === 'bottom') {

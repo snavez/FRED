@@ -215,17 +215,19 @@ const CollapsibleSection: React.FC<{
 
   return (
     <div className="border-b border-slate-200 last:border-b-0">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between py-2.5 px-1 text-left group"
-      >
-        <div className="flex items-center gap-1.5">
+      {/* The header's own control sits beside the toggle rather than inside it: a button
+          within a button is invalid, and React says so on every render. */}
+      <div className="flex items-center justify-between py-2.5 px-1">
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex-1 flex items-center gap-1.5 text-left group"
+        >
           {open ? <ChevronDown size={12} className="text-slate-400" /> : <ChevronRight size={12} className="text-slate-400" />}
           <h3 className="text-xs font-black text-slate-500 uppercase tracking-wider group-hover:text-slate-700">{title}</h3>
           {hasChanges && <div className="w-1.5 h-1.5 rounded-full bg-sky-500" />}
-        </div>
-        {rightElement && <div onClick={e => e.stopPropagation()}>{rightElement}</div>}
-      </button>
+        </button>
+        {rightElement}
+      </div>
       {open && (
         <div className="pb-3 px-1 space-y-3 animate-in fade-in slide-in-from-top-1 duration-150">
           {children}
