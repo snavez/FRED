@@ -261,6 +261,12 @@ export interface LinearFit {
   r2: number;
   pValue: number;
   n: number;
+  /** Mean of x: the line pivots here, so its uncertainty is least here. */
+  meanX: number;
+  /** Squared deviations of x from its mean, summed — the spread the slope is estimated over. */
+  sxx: number;
+  /** Residual standard error, sqrt(SSE / (n-2)): how far a point typically sits off the line. */
+  residualSE: number;
 }
 
 export const linearFit = (points: { x: number; y: number }[]): LinearFit | null => {
@@ -281,7 +287,41 @@ export const linearFit = (points: { x: number; y: number }[]): LinearFit | null 
   // A perfect fit leaves no residual to test against; report it as unambiguous.
   const pValue = Math.abs(r) >= 1 ? 0
     : 2 * (1 - jStat.studentt.cdf(Math.abs(r) * Math.sqrt(df / (1 - r * r)), df));
-  return { slope, intercept: my - slope * mx, r, r2: r * r, pValue, n };
+  // Float error can leave a perfect fit a hair below zero.
+  const sse = Math.max(0, syy - (sxy * sxy) / sxx);
+  return {
+    slope, intercept: my - slope * mx, r, r2: r * r, pValue, n,
+    meanX: mx, sxx, residualSE: Math.sqrt(sse / df),
+  };
+};
+
+/** What a band around a fitted line bounds. */
+export type FitBandKind = 'confidence' | 'prediction';
+
+/**
+ * The interval around a fitted line at a two-sided `level` (0.95 = 95%), as a function of x.
+ *
+ * `confidence` bounds the line itself — where the mean of y at that x plausibly lies — and
+ * tightens as tokens accumulate. `prediction` bounds where one new token would fall, so it
+ * carries the scatter of the points as well and never tightens past it. Both flare away
+ * from the mean of x, where a small change of slope moves the line furthest:
+ *
+ *   y-hat +/- t(1 - alpha/2, n-2) * s * sqrt(k + 1/n + (x - mean x)^2 / Sxx)
+ *
+ * with k = 0 for confidence and 1 for prediction. The t quantile is found once, so the
+ * returned function is cheap to sample along the line. Null for a level outside (0, 1).
+ */
+export const fitBand = (
+  fit: LinearFit, level: number, kind: FitBandKind,
+): ((x: number) => { lo: number; hi: number }) | null => {
+  if (!(level > 0 && level < 1)) return null;
+  const t = jStat.studentt.inv(1 - (1 - level) / 2, fit.n - 2);
+  const k = kind === 'prediction' ? 1 : 0;
+  return (x: number) => {
+    const y = fit.intercept + fit.slope * x;
+    const half = t * fit.residualSE * Math.sqrt(k + 1 / fit.n + (x - fit.meanX) ** 2 / fit.sxx);
+    return { lo: y - half, hi: y + half };
+  };
 };
 
 export const shapiroWilk = (x: number[]): { W: number; pValue: number } => {

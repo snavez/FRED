@@ -3,7 +3,7 @@ import {
   pairedTTest, wilcoxonSignedRank, rmOneWayAnova, friedmanTest,
   pairedPostHoc, runRepeatedAnalysis, detectDesign, runAnalysis,
   applicableRepeatedTests,
-  linearFit,
+  linearFit, fitBand,
 } from './statistics';
 
 // ─── Paired t-test ────────────────────────────────────────────────
@@ -268,5 +268,79 @@ describe('linearFit', () => {
     const fit = linearFit([...line(6, 2, 1), { x: NaN, y: 5 }, { x: 3, y: NaN }])!;
     expect(fit.n).toBe(6);
     expect(fit.slope).toBeCloseTo(2);
+  });
+});
+
+describe('fitBand', () => {
+  // Reference values from scipy (stats.linregress, stats.t.ppf), computed independently.
+  const xs = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const ys = [2.3, 3.8, 6.4, 7.7, 10.4, 11.9, 14.3, 15.6, 18.5, 19.8];
+  const fit = linearFit(xs.map((x, i) => ({ x, y: ys[i] })))!;
+
+  it('carries the statistics a band is built from', () => {
+    expect(fit.slope).toBeCloseTo(1.9860606061, 8);
+    expect(fit.intercept).toBeCloseTo(0.1466666667, 8);
+    expect(fit.residualSE).toBeCloseTo(0.3579402354, 8);
+    expect(fit.sxx).toBeCloseTo(82.5, 8);
+    expect(fit.meanX).toBeCloseTo(5.5, 8);
+  });
+
+  it('matches the reference confidence band, inside and beyond the data', () => {
+    const band = fitBand(fit, 0.95, 'confidence')!;
+    expect(band(1).lo).toBeCloseTo(1.6475884200, 6);
+    expect(band(1).hi).toBeCloseTo(2.6178661255, 6);
+    expect(band(5.5).lo).toBeCloseTo(10.8089819138, 6);
+    expect(band(5.5).hi).toBeCloseTo(11.3310180862, 6);
+    expect(band(12).lo).toBeCloseTo(23.3336069131, 6);
+    expect(band(12).hi).toBeCloseTo(24.6251809657, 6);
+  });
+
+  it('matches the reference prediction band', () => {
+    const band = fitBand(fit, 0.95, 'prediction')!;
+    expect(band(1).lo).toBeCloseTo(1.1753014950, 6);
+    expect(band(1).hi).toBeCloseTo(3.0901530505, 6);
+    expect(band(10).lo).toBeCloseTo(19.0498469495, 6);
+    expect(band(10).hi).toBeCloseTo(20.9646985050, 6);
+  });
+
+  it('matches the reference at another level', () => {
+    const band = fitBand(fit, 0.99, 'confidence')!;
+    expect(band(1).lo).toBeCloseTo(1.4268184083, 6);
+    expect(band(1).hi).toBeCloseTo(2.8386361372, 6);
+  });
+
+  it('is narrowest at the mean of x and flares evenly either side of it', () => {
+    const band = fitBand(fit, 0.95, 'confidence')!;
+    const width = (x: number) => band(x).hi - band(x).lo;
+    expect(width(5.5)).toBeLessThan(width(3));
+    expect(width(3)).toBeLessThan(width(1));
+    expect(width(3.5)).toBeCloseTo(width(7.5), 10);
+  });
+
+  it('centres on the fitted line', () => {
+    const { lo, hi } = fitBand(fit, 0.95, 'prediction')!(7);
+    expect((lo + hi) / 2).toBeCloseTo(fit.intercept + fit.slope * 7, 10);
+  });
+
+  it('bounds a new token more widely than the line, and a higher level more widely still', () => {
+    const width = (b: { lo: number; hi: number }) => b.hi - b.lo;
+    const conf = fitBand(fit, 0.95, 'confidence')!(4);
+    expect(width(fitBand(fit, 0.95, 'prediction')!(4))).toBeGreaterThan(width(conf));
+    expect(width(fitBand(fit, 0.99, 'confidence')!(4))).toBeGreaterThan(width(conf));
+    expect(width(fitBand(fit, 0.90, 'confidence')!(4))).toBeLessThan(width(conf));
+  });
+
+  it('collapses onto a line that passes through every point', () => {
+    const exact = linearFit(xs.map(x => ({ x, y: 3 * x - 1 })))!;
+    const { lo, hi } = fitBand(exact, 0.95, 'prediction')!(4);
+    expect(lo).toBeCloseTo(11, 5);
+    expect(hi).toBeCloseTo(11, 5);
+  });
+
+  it('refuses a level that is not a proportion strictly between 0 and 1', () => {
+    expect(fitBand(fit, 0, 'confidence')).toBeNull();
+    expect(fitBand(fit, 1, 'confidence')).toBeNull();
+    expect(fitBand(fit, 95, 'confidence')).toBeNull();
+    expect(fitBand(fit, NaN, 'confidence')).toBeNull();
   });
 });

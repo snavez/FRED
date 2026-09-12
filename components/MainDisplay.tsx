@@ -1696,7 +1696,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
 
                     <div className="w-px h-6 bg-slate-200"></div>
 
-                    <HelpTooltip helpMode={helpMode} text="A least-squares line through the points, with Pearson's r, the share of variance it accounts for (R²), the two-tailed p-value against no relationship, and n. Fit per group when the clouds differ — a single line through several clouds can suggest a relationship that holds in none of them.">
+                    <HelpTooltip helpMode={helpMode} text="A least-squares line through the points, with Pearson's r, the share of variance it accounts for (R²), the two-tailed p-value against no relationship, and n. Fit per group when the clouds differ — a single line through several clouds can suggest a relationship that holds in none of them. CI shades a band around each line: Mean bounds where the line itself plausibly lies; Prediction bounds where a single new token would fall, so it is always wider.">
                     <div className="flex flex-col">
                       <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Fit</span>
                       <div className="flex items-center gap-2">
@@ -1720,6 +1720,40 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                               <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.varShowStats} onChange={e => handleConfig('varShowStats', e.target.checked)} />
                               <span className="text-[10px] font-bold text-slate-600">Stats</span>
                             </label>
+                            <label className="flex items-center gap-1 cursor-pointer" title="Shade an interval band around each line">
+                              <input type="checkbox" className="rounded text-sky-700" checked={currentConfig.varShowCI} onChange={e => handleConfig('varShowCI', e.target.checked)} />
+                              <span className="text-[10px] font-bold text-slate-600">CI</span>
+                            </label>
+                            {currentConfig.varShowCI && (
+                              <div className="flex items-center gap-1.5">
+                                <select className="p-0.5 border rounded text-[10px]" title="Coverage of the band"
+                                  value={currentConfig.varCILevel}
+                                  onChange={e => handleConfig('varCILevel', parseFloat(e.target.value))}>
+                                  {[0.9, 0.95, 0.99].map(level => <option key={level} value={level}>{Math.round(level * 100)}%</option>)}
+                                </select>
+                                <select className="p-0.5 border rounded text-[10px]"
+                                  title="Mean: where the line itself plausibly lies. Prediction: where a single new token would fall, so always wider."
+                                  value={currentConfig.varCIKind}
+                                  onChange={e => handleConfig('varCIKind', e.target.value)}>
+                                  <option value="confidence">Mean</option>
+                                  <option value="prediction">Prediction</option>
+                                </select>
+                                <div className="flex flex-col gap-0.5">
+                                  <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                                    <span>Width</span>
+                                    <input type="range" min="0.5" max="4" step="0.5" title="Band edge width" value={currentConfig.varCILineWidth} onChange={e => handleConfig('varCILineWidth', parseFloat(e.target.value))} className="w-10 h-1 accent-slate-600" />
+                                  </div>
+                                  <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                                    <span>Line</span>
+                                    <input type="range" min="0" max="1" step="0.02" title="Band edge opacity" value={opacityToSlider(currentConfig.varCILineOpacity)} onChange={e => handleConfig('varCILineOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-10 h-1 accent-slate-600" />
+                                  </div>
+                                  <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                                    <span>Fill</span>
+                                    <input type="range" min="0" max="1" step="0.02" title="Band fill opacity" value={opacityToSlider(currentConfig.varCIFillOpacity)} onChange={e => handleConfig('varCIFillOpacity', sliderToOpacity(parseFloat(e.target.value)))} className="w-10 h-1 accent-slate-600" />
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                           </>
                         )}
                       </div>
@@ -1790,24 +1824,40 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     <>
                       <div className="flex flex-col" title="X axis range — set both to 0 for auto-fit">
                         <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight truncate max-w-[110px]">X · {measureLabel(bgConfig.varXField, bgConfig.varXTime, datasetMeta ?? null)}</span>
-                        <div className="flex items-center gap-1">
-                          <span className="text-[9px] font-bold text-slate-500">Min</span>
-                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={varRangeValue(bgConfig.varXRange, 'x', 0)} onChange={e => updateLayerConfig(layers[0].id, 'varXRange', varRangeEdit(bgConfig.varXRange, 'x', 0, e.target.value))} />
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <span className="text-[9px] font-bold text-slate-500">Max</span>
-                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={varRangeValue(bgConfig.varXRange, 'x', 1)} onChange={e => updateLayerConfig(layers[0].id, 'varXRange', varRangeEdit(bgConfig.varXRange, 'x', 1, e.target.value))} />
+                        <div className="flex items-center gap-1.5">
+                          <div className="flex flex-col">
+                            <div className="flex items-center gap-1">
+                              <span className="text-[9px] font-bold text-slate-500">Min</span>
+                              <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={varRangeValue(bgConfig.varXRange, 'x', 0)} onChange={e => updateLayerConfig(layers[0].id, 'varXRange', varRangeEdit(bgConfig.varXRange, 'x', 0, e.target.value))} />
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[9px] font-bold text-slate-500">Max</span>
+                              <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={varRangeValue(bgConfig.varXRange, 'x', 1)} onChange={e => updateLayerConfig(layers[0].id, 'varXRange', varRangeEdit(bgConfig.varXRange, 'x', 1, e.target.value))} />
+                            </div>
+                          </div>
+                          <label className="flex flex-col items-center gap-0.5 cursor-pointer" title="Reverse the X axis: high values on the left">
+                            <input type="checkbox" className="rounded text-sky-700" checked={bgConfig.varXReversed} onChange={e => updateLayerConfig(layers[0].id, 'varXReversed', e.target.checked)} />
+                            <span className="text-[9px] font-bold text-slate-500">Reverse</span>
+                          </label>
                         </div>
                       </div>
                       <div className="flex flex-col" title="Y axis range — set both to 0 for auto-fit">
                         <span className="text-[8px] font-bold text-slate-400 uppercase leading-tight truncate max-w-[110px]">Y · {measureLabel(bgConfig.varYField, bgConfig.varYTime, datasetMeta ?? null)}</span>
-                        <div className="flex items-center gap-1">
-                          <span className="text-[9px] font-bold text-slate-500">Min</span>
-                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={varRangeValue(bgConfig.varYRange, 'y', 0)} onChange={e => updateLayerConfig(layers[0].id, 'varYRange', varRangeEdit(bgConfig.varYRange, 'y', 0, e.target.value))} />
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <span className="text-[9px] font-bold text-slate-500">Max</span>
-                          <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={varRangeValue(bgConfig.varYRange, 'y', 1)} onChange={e => updateLayerConfig(layers[0].id, 'varYRange', varRangeEdit(bgConfig.varYRange, 'y', 1, e.target.value))} />
+                        <div className="flex items-center gap-1.5">
+                          <div className="flex flex-col">
+                            <div className="flex items-center gap-1">
+                              <span className="text-[9px] font-bold text-slate-500">Min</span>
+                              <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={varRangeValue(bgConfig.varYRange, 'y', 0)} onChange={e => updateLayerConfig(layers[0].id, 'varYRange', varRangeEdit(bgConfig.varYRange, 'y', 0, e.target.value))} />
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[9px] font-bold text-slate-500">Max</span>
+                              <input type="number" step="any" className="w-14 p-0.5 border rounded text-[10px]" value={varRangeValue(bgConfig.varYRange, 'y', 1)} onChange={e => updateLayerConfig(layers[0].id, 'varYRange', varRangeEdit(bgConfig.varYRange, 'y', 1, e.target.value))} />
+                            </div>
+                          </div>
+                          <label className="flex flex-col items-center gap-0.5 cursor-pointer" title="Reverse the Y axis: high values at the bottom">
+                            <input type="checkbox" className="rounded text-sky-700" checked={bgConfig.varYReversed} onChange={e => updateLayerConfig(layers[0].id, 'varYReversed', e.target.checked)} />
+                            <span className="text-[9px] font-bold text-slate-500">Reverse</span>
+                          </label>
                         </div>
                       </div>
                     </>

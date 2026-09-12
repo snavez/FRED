@@ -205,10 +205,20 @@ export interface PlotConfig {
   varYSegment?: SegmentRef;
   varXRange: [number, number];               // [0,0] = fit to the data
   varYRange: [number, number];
+  // A reversed axis runs high-to-low. The range stays ascending and only the direction it
+  // is drawn in changes, so auto-fit, ticks and zoom carry on as they were.
+  varXReversed: boolean;
+  varYReversed: boolean;
   varShowRegression: boolean;                // least-squares line
   varRegressionPerGroup: boolean;            // one line per colour group vs one overall
   varShowStats: boolean;                     // r / R² / p / n readout on the plot
   varRegressionWidth: number;
+  varShowCI: boolean;                        // interval band around each fitted line
+  varCIKind: 'confidence' | 'prediction';    // the line itself, or where a new token would fall
+  varCILevel: number;                        // two-sided coverage, e.g. 0.95
+  varCILineWidth: number;
+  varCILineOpacity: number;
+  varCIFillOpacity: number;
 
   // Table Panel Config
   tableMode: 'browse' | 'summary' | 'analysis';

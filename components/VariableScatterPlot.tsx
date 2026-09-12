@@ -11,8 +11,8 @@ import { measureLabel, measureValue } from '../utils/measures';
 import { SEGMENT_LABELS, segmentToken, tokenIndex } from '../utils/neighbours';
 import { fitRange } from '../utils/plotRange';
 import { tooltipFieldsFor } from '../utils/pointInfo';
-import { axisFraction, panRange, zoomRange } from '../utils/zoomRange';
-import { linearFit, LinearFit } from '../services/statistics';
+import { axisFraction, axisPosition, panRange, zoomRange } from '../utils/zoomRange';
+import { fitBand, linearFit, LinearFit } from '../services/statistics';
 
 /**
  * Any numeric variable against any other.
@@ -78,6 +78,29 @@ const buildGroups = (
   });
 };
 
+interface FitLine { label: string; color: string; fit: LinearFit; from: number; to: number; }
+
+/**
+ * The lines a layer fits: one per colour group when asked and the plot is grouped, else one
+ * over every point (label ''). Each spans only the x its data covers, clipped to the axis,
+ * so neither a line nor its band claims a relationship where there were no tokens.
+ */
+const fitLines = (cfg: PlotConfig, enc: EncodingMaps, groups: DrawGroup[], xRange: [number, number]): FitLine[] => {
+  const series = cfg.varRegressionPerGroup && enc.colorKey
+    ? groups.map(g => ({ label: g.label || g.key, color: g.color, points: g.points }))
+    : [{ label: '', color: cfg.bwMode ? '#000000' : '#0f172a', points: groups.flatMap(g => g.points) }];
+  return series.flatMap(sr => {
+    const fit = linearFit(sr.points);
+    if (!fit) return [];
+    const xs = sr.points.map(p => p.x);
+    return [{ label: sr.label, color: sr.color, fit,
+      from: Math.max(xRange[0], Math.min(...xs)), to: Math.min(xRange[1], Math.max(...xs)) }];
+  });
+};
+
+/** Samples along an interval band. It curves away from the mean of x, so a chord will not do. */
+const BAND_SAMPLES = 64;
+
 const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
   { layers, layerData, allTokens, activeLayerId, datasetMeta, onLegendClick, onAutoRange, onViewRange }, ref,
 ) => {
@@ -98,6 +121,7 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
   const xField = bgConfig.varXField, yField = bgConfig.varYField;
   const xTime = bgConfig.varXTime ?? 50, yTime = bgConfig.varYTime ?? 50;
   const xSegment = bgConfig.varXSegment ?? 'this', ySegment = bgConfig.varYSegment ?? 'this';
+  const xReversed = bgConfig.varXReversed, yReversed = bgConfig.varYReversed;
   // Neighbours are followed through the whole dataset, not the filtered set (see below).
   const byId = useMemo(() => tokenIndex(allTokens), [allTokens]);
 
@@ -156,8 +180,11 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
     if (allPoints.length === 0) { drawEmpty('No tokens carry both of these variables.'); return; }
 
     const manual = (r: [number, number]) => !(r[0] === 0 && r[1] === 0);
-    const [xLo, xHi] = manual(bgConfig.varXRange) ? bgConfig.varXRange : fitRange(allPoints.map(p => p.x));
-    const [yLo, yHi] = manual(bgConfig.varYRange) ? bgConfig.varYRange : fitRange(allPoints.map(p => p.y));
+    // A range typed high-to-low is still the same stretch of axis, and ticks can only be
+    // found over an ascending one. Which way the axis runs is the Reverse box's business.
+    const ascending = (r: [number, number]): [number, number] => r[0] <= r[1] ? r : [r[1], r[0]];
+    const [xLo, xHi] = manual(bgConfig.varXRange) ? ascending(bgConfig.varXRange) : fitRange(allPoints.map(p => p.x));
+    const [yLo, yHi] = manual(bgConfig.varYRange) ? ascending(bgConfig.varYRange) : fitRange(allPoints.map(p => p.y));
     if (!exportConfig && s === 1) {
       const prev = lastRange.current;
       if (!prev || prev.x[0] !== xLo || prev.x[1] !== xHi || prev.y[0] !== yLo || prev.y[1] !== yHi) {
@@ -186,8 +213,11 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
     const area = { x: margin.left, y: margin.top, w: width - margin.left - margin.right, h: height - margin.top - margin.bottom };
     if (area.w <= 0 || area.h <= 0) return;
 
-    const mapX = (v: number) => area.x + ((v - xLo) / (xHi - xLo)) * area.w;
-    const mapY = (v: number) => area.y + area.h - ((v - yLo) / (yHi - yLo)) * area.h;
+    // Everything drawn — ticks, points, ellipses, lines, bands — goes through these two, so
+    // a reversed axis is reversed everywhere at once. Screen y grows downwards, which makes
+    // an ordinary y axis the inverted one in pixels.
+    const mapX = (v: number) => axisPosition(v, [xLo, xHi], area.x, area.w, xReversed);
+    const mapY = (v: number) => axisPosition(v, [yLo, yHi], area.y, area.h, !yReversed);
 
     drawPlotFrame(ctx, {
       area, scale: s, exportConfig,
@@ -202,6 +232,7 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
     ctx.save();
     ctx.beginPath(); ctx.rect(area.x, area.y, area.w, area.h); ctx.clip();
 
+    const fitsByLayer = new Map<string, FitLine[]>();
     layerGroups.forEach(({ layer, cfg, enc, groups }) => {
       // ─── Ellipses ───
       if (cfg.showEllipses) {
@@ -226,6 +257,34 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
         });
       }
 
+      // ─── Fit ───
+      // Per group when the plot is grouped, else one line over everything: a single line
+      // through several clouds can suggest a relationship that holds in none of them.
+      const fits = cfg.varShowRegression ? fitLines(cfg, enc, groups, [xLo, xHi]) : [];
+      if (fits.length) fitsByLayer.set(layer.id, fits);
+
+      // ─── Interval bands, under the points so the data stays legible ───
+      if (cfg.varShowCI) {
+        const trace = (pts: [number, number][]) => pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+        fits.forEach(({ color, fit, from, to }) => {
+          const band = fitBand(fit, cfg.varCILevel, cfg.varCIKind);
+          if (!band || !(to > from)) return;
+          const edges = Array.from({ length: BAND_SAMPLES + 1 }, (_, i) => {
+            const x = from + (to - from) * (i / BAND_SAMPLES);
+            return { px: mapX(x), ...band(x) };
+          });
+          const upper = edges.map((e): [number, number] => [e.px, mapY(e.hi)]);
+          const lower = edges.map((e): [number, number] => [e.px, mapY(e.lo)]);
+          ctx.beginPath(); trace([...upper, ...lower.slice().reverse()]); ctx.closePath();
+          ctx.fillStyle = color; ctx.globalAlpha = cfg.varCIFillOpacity; ctx.fill();
+          ctx.strokeStyle = color; ctx.globalAlpha = cfg.varCILineOpacity;
+          ctx.lineWidth = (cfg.varCILineWidth || 1) * s; ctx.setLineDash([4 * s, 3 * s]);
+          ctx.beginPath(); trace(upper); ctx.stroke();
+          ctx.beginPath(); trace(lower); ctx.stroke();
+          ctx.setLineDash([]); ctx.globalAlpha = 1;
+        });
+      }
+
       // ─── Points ───
       if (cfg.showPoints) {
         ctx.globalAlpha = cfg.pointOpacity;
@@ -244,25 +303,14 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
         ctx.globalAlpha = 1;
       }
 
-      // ─── Regression ───
-      // Per group when the plot is grouped, else one line over everything: a single line
-      // through several clouds can suggest a relationship that holds in none of them.
-      if (cfg.varShowRegression) {
-        const series = cfg.varRegressionPerGroup && enc.colorKey
-          ? groups.map(g => ({ label: g.label || g.key, color: g.color, points: g.points }))
-          : [{ label: '', color: cfg.bwMode ? '#000000' : '#0f172a', points: groups.flatMap(g => g.points) }];
-        series.forEach(sr => {
-          const fit = linearFit(sr.points);
-          if (!fit) return;
-          const xs = sr.points.map(p => p.x);
-          const from = Math.max(xLo, Math.min(...xs)), to = Math.min(xHi, Math.max(...xs));
-          ctx.beginPath();
-          ctx.moveTo(mapX(from), mapY(fit.intercept + fit.slope * from));
-          ctx.lineTo(mapX(to), mapY(fit.intercept + fit.slope * to));
-          ctx.strokeStyle = sr.color; ctx.lineWidth = (cfg.varRegressionWidth || 2) * s;
-          ctx.setLineDash([]); ctx.stroke();
-        });
-      }
+      // ─── Regression lines ───
+      fits.forEach(({ color, fit, from, to }) => {
+        ctx.beginPath();
+        ctx.moveTo(mapX(from), mapY(fit.intercept + fit.slope * from));
+        ctx.lineTo(mapX(to), mapY(fit.intercept + fit.slope * to));
+        ctx.strokeStyle = color; ctx.lineWidth = (cfg.varRegressionWidth || 2) * s;
+        ctx.setLineDash([]); ctx.stroke();
+      });
 
       // ─── Group means ───
       if (cfg.showCentroids) {
@@ -290,29 +338,21 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
     ctx.restore();
 
     // ─── Fit statistics, over the active layer ───
-    if (activeLayer.config.varShowRegression && activeLayer.config.varShowStats) {
-      const active = layerGroups.find(l => l.layer.id === activeLayer.id);
-      if (active) {
-        const perGroup = active.cfg.varRegressionPerGroup && active.enc.colorKey;
-        const series = perGroup
-          ? active.groups.map(g => ({ label: g.label || g.key, color: g.color, points: g.points }))
-          : [{ label: 'All tokens', color: '#334155', points: active.groups.flatMap(g => g.points) }];
-        const lines = series
-          .map(sr => ({ sr, fit: linearFit(sr.points) }))
-          .filter((x): x is { sr: typeof series[0]; fit: LinearFit } => x.fit !== null);
-        ctx.font = `${11 * s}px Inter, sans-serif`; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-        lines.forEach(({ sr, fit }, i) => {
-          const text = `${sr.label ? sr.label + ': ' : ''}r = ${fit.r.toFixed(2)}  R² = ${fit.r2.toFixed(2)}  p ${formatP(fit.pValue)}  n = ${fit.n}`;
-          const y = area.y + 6 * s + i * 15 * s;
-          ctx.fillStyle = 'white'; ctx.globalAlpha = 0.75;
-          ctx.fillRect(area.x + 4 * s, y - 1 * s, ctx.measureText(text).width + 8 * s, 14 * s);
-          ctx.globalAlpha = 1; ctx.fillStyle = sr.color;
-          ctx.fillText(text, area.x + 8 * s, y);
-        });
-      }
+    const activeFits = fitsByLayer.get(activeLayer.id);
+    if (activeFits && activeLayer.config.varShowStats) {
+      ctx.font = `${11 * s}px Inter, sans-serif`; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      activeFits.forEach(({ label, color, fit }, i) => {
+        const text = `${label || 'All tokens'}: r = ${fit.r.toFixed(2)}  R² = ${fit.r2.toFixed(2)}  p ${formatP(fit.pValue)}  n = ${fit.n}`;
+        const y = area.y + 6 * s + i * 15 * s;
+        ctx.fillStyle = 'white'; ctx.globalAlpha = 0.75;
+        ctx.fillRect(area.x + 4 * s, y - 1 * s, ctx.measureText(text).width + 8 * s, 14 * s);
+        // One overall line reads in ink; a group's reads in its own colour.
+        ctx.globalAlpha = 1; ctx.fillStyle = label ? color : '#334155';
+        ctx.fillText(text, area.x + 8 * s, y);
+      });
     }
 
-  }, [layers, layerData, bgConfig, activeLayer, datasetMeta, legendLayers, showTitles, xField, yField, xTime, yTime, xSegment, ySegment, byId, onAutoRange]);
+  }, [layers, layerData, bgConfig, activeLayer, datasetMeta, legendLayers, showTitles, xField, yField, xTime, yTime, xSegment, ySegment, xReversed, yReversed, byId, onAutoRange]);
 
   // ─── Canvas plumbing ───
   const draw = useCallback(() => {
@@ -414,8 +454,8 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
     const area = frame();
     if (area.w <= 0 || area.h <= 0) return;
     onViewRange(
-      zoomRange(view.x, axisFraction(px, area.x, area.w), factor),
-      zoomRange(view.y, axisFraction(py, area.y, area.h, true), factor),
+      zoomRange(view.x, axisFraction(px, area.x, area.w, xReversed), factor),
+      zoomRange(view.y, axisFraction(py, area.y, area.h, !yReversed), factor),
     );
   };
 
@@ -430,7 +470,11 @@ const VariableScatterPlot = forwardRef<PlotHandle, VariableScatterPlotProps>((
       lastMouse.current = { x: e.clientX, y: e.clientY };
       const view = lastRange.current, area = frame();
       if (onViewRange && view && area.w > 0 && area.h > 0) {
-        onViewRange(panRange(view.x, -dx / area.w), panRange(view.y, dy / area.h));
+        // The data follows the pointer whichever way an axis runs.
+        onViewRange(
+          panRange(view.x, (xReversed ? dx : -dx) / area.w),
+          panRange(view.y, (yReversed ? -dy : dy) / area.h),
+        );
       }
       return;
     }

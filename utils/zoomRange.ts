@@ -41,3 +41,15 @@ export const axisFraction = (position: number, start: number, length: number, in
   const f = (position - start) / length;
   return invert ? 1 - f : f;
 };
+
+/**
+ * Where a value falls along an axis, in pixels — the inverse of `axisFraction`, reversed by
+ * the same flag, so a plot that draws with one and zooms with the other cannot disagree
+ * about which end is which. A range with no span puts every value in the middle rather
+ * than dividing by zero.
+ */
+export const axisPosition = (value: number, range: Range, start: number, length: number, invert = false): number => {
+  const [lo, hi] = range;
+  const f = hi === lo ? 0.5 : (value - lo) / (hi - lo);
+  return start + (invert ? 1 - f : f) * length;
+};

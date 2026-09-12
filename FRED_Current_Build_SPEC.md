@@ -205,8 +205,18 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
   df) and `n`, drawn over the x-range the data actually covers. Fit **All tokens** or
   **per colour group** — a single line through several clouds can suggest a relationship
   that holds in none of them. The readout is drawn on the plot for the active layer.
+- **Interval band** (`fitBand` in `services/statistics.ts`): tick **CI** beside the fit to
+  shade a band around each line, at 90 / 95 / 99%. **Mean** bounds the line itself — where
+  the mean of y at each x plausibly lies; **Prediction** bounds where a single new token
+  would fall, so it is always wider. Both flare away from the mean of x
+  (ŷ ± t·s·√(k + 1/n + (x − x̄)²/Sxx), k = 0 or 1). Width / Line / Fill mirror the ellipse
+  controls. The band is drawn under the points and spans the same x as its line.
 - Ranges default to fitting the data (`fitRange`), with Min/Max boxes to pin them; data
-  is clipped to the frame.
+  is clipped to the frame. A range typed high-to-low is put in order before use.
+- **Reverse** beside each axis's Min/Max runs that axis high-to-low (`varXReversed` /
+  `varYReversed`). The range itself stays ascending and only the pixel mapping
+  (`axisPosition` in `utils/zoomRange.ts`) flips, so auto-fit, tick labels, zoom and pan
+  all follow without special cases.
 
 ### Spectral (Consonant analysis)
 - Tab between **Time Series** and **Data Summaries** (labelled **Spectral**; `activeTab` id

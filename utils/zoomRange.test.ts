@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { axisFraction, panRange, zoomRange } from './zoomRange';
+import { axisFraction, axisPosition, panRange, zoomRange } from './zoomRange';
+import { axisTicks } from './axisTicks';
 
 describe('zoomRange', () => {
   it('zooming in keeps the value under the cursor still', () => {
@@ -65,5 +66,47 @@ describe('axisFraction', () => {
 
   it('is 0 for an axis with no length', () => {
     expect(axisFraction(10, 0, 0)).toBe(0);
+  });
+});
+
+describe('axisPosition', () => {
+  it('places values along the axis from its start', () => {
+    expect(axisPosition(0, [0, 100], 88, 500)).toBe(88);
+    expect(axisPosition(100, [0, 100], 88, 500)).toBe(588);
+    expect(axisPosition(25, [0, 100], 88, 500)).toBe(213);
+  });
+
+  it('runs a reversed axis from the other end', () => {
+    expect(axisPosition(0, [0, 100], 88, 500, true)).toBe(588);
+    expect(axisPosition(100, [0, 100], 88, 500, true)).toBe(88);
+    expect(axisPosition(25, [0, 100], 88, 500, true)).toBe(463);
+  });
+
+  it('is undone by axisFraction either way round, so drawing and zooming agree', () => {
+    for (const invert of [false, true]) {
+      const px = axisPosition(730, [200, 1200], 24, 400, invert);
+      expect(200 + axisFraction(px, 24, 400, invert) * 1000).toBeCloseTo(730, 10);
+    }
+    // Mixing the flags is exactly the disagreement the pairing exists to prevent.
+    const px = axisPosition(730, [200, 1200], 24, 400, true);
+    expect(200 + axisFraction(px, 24, 400, false) * 1000).not.toBeCloseTo(730, 3);
+  });
+
+  it('lays reversed ticks out high-to-low and plain ones low-to-high', () => {
+    const range: [number, number] = [0.02, 0.31];
+    const { values } = axisTicks(range[0], range[1], 6);
+    const place = (invert: boolean) => values.map(v => axisPosition(v, range, 88, 600, invert));
+    const increasing = (a: number[]) => a.every((v, i) => i === 0 || v > a[i - 1]);
+    expect(increasing(place(false))).toBe(true);
+    expect(increasing(place(true))).toBe(false);
+    expect(increasing(place(true).reverse())).toBe(true);
+    // The leftmost tick on a reversed axis carries the highest value.
+    const px = place(true);
+    expect(values[px.indexOf(Math.min(...px))]).toBe(Math.max(...values));
+  });
+
+  it('puts every value in the middle of a range with no span', () => {
+    expect(axisPosition(5, [5, 5], 0, 200)).toBe(100);
+    expect(axisPosition(5, [5, 5], 0, 200, true)).toBe(100);
   });
 });
