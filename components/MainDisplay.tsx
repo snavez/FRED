@@ -54,6 +54,11 @@ interface MainDisplayProps {
 const opacityToSlider = (opacity: number) => Math.sqrt(opacity);
 const sliderToOpacity = (slider: number) => slider * slider;
 
+// Bandwidth multiplier slider: log scale, so x1 (Silverman's rule) sits in the middle and
+// halving the bandwidth is as far along as doubling it
+const bandwidthToSlider = (adjust: number) => Math.log(adjust) / Math.log(4);
+const sliderToBandwidth = (slider: number) => Math.round(Math.pow(4, slider) * 100) / 100;
+
 /**
  * Tab bar grouping. "General" holds the plots that work on any numeric field —
  * formants, durations and spectral measures alike — so they serve both vowel and
@@ -2800,7 +2805,7 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 {/* Opacity slider (overlaid only) */}
                 {currentConfig.distHistColorBy && currentConfig.distHistColorBy !== 'none' && currentConfig.distHistOverlap === 'overlaid' && (
                   <div className="flex items-center gap-1">
-                    <span className="text-[9px] text-slate-500">Opacity</span>
+                    <span className="text-[9px] text-slate-500">Bar opacity</span>
                     <input type="range" min="0.1" max="1" step="0.05"
                       value={currentConfig.distHistOpacity ?? 0.6}
                       onChange={e => handleConfig('distHistOpacity', parseFloat(e.target.value))}
@@ -2818,6 +2823,68 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                     value={currentConfig.distHistBinCount || 30}
                     onChange={e => handleConfig('distHistBinCount', Math.max(1, parseInt(e.target.value) || 30))} />
                 </div>
+
+                <div className="w-px h-6 bg-slate-200"></div>
+
+                {/* Bars and density curve: either, or both — never neither */}
+                <HelpTooltip helpMode={helpMode} text="Density draws a smoothed curve for each group (a Gaussian kernel density estimate), scaled to sit on the same axis as the bars. Bandwidth sets how smooth it is: x1 is Silverman's rule of thumb for each group; lower follows the data more closely, higher smooths more. The corner of the plot shows the bandwidth used.">
+                <div className="flex items-center gap-3">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase">Show</span>
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-1 cursor-pointer" title="Histogram bars">
+                        <input type="checkbox" className="rounded text-sky-700"
+                          checked={currentConfig.distHistShowBars}
+                          disabled={currentConfig.distHistShowBars && !currentConfig.distHistShowDensity}
+                          onChange={e => handleConfig('distHistShowBars', e.target.checked)} />
+                        <span className="text-[10px] font-bold text-slate-600">Bars</span>
+                      </label>
+                      <label className="flex items-center gap-1 cursor-pointer" title="A density curve for each group">
+                        <input type="checkbox" className="rounded text-sky-700"
+                          checked={currentConfig.distHistShowDensity}
+                          disabled={currentConfig.distHistShowDensity && !currentConfig.distHistShowBars}
+                          onChange={e => handleConfig('distHistShowDensity', e.target.checked)} />
+                        <span className="text-[10px] font-bold text-slate-600">Density</span>
+                      </label>
+                    </div>
+                  </div>
+                  {currentConfig.distHistShowDensity && (
+                    <>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[9px] font-bold text-slate-500 uppercase">Bandwidth</span>
+                        <div className="flex items-center gap-1">
+                          <input type="range" min="-1" max="1" step="0.02"
+                            title="Multiplies each group's Silverman's-rule bandwidth"
+                            value={bandwidthToSlider(currentConfig.distHistBandwidthAdjust)}
+                            onChange={e => handleConfig('distHistBandwidthAdjust', sliderToBandwidth(parseFloat(e.target.value)))}
+                            className="w-20 h-1 accent-slate-600" />
+                          <span className="text-[10px] font-mono text-slate-600 w-10">×{currentConfig.distHistBandwidthAdjust.toFixed(2)}</span>
+                          {currentConfig.distHistBandwidthAdjust !== 1 && (
+                            <button className="text-[9px] text-sky-700 hover:underline" title="Back to Silverman's rule"
+                              onClick={() => handleConfig('distHistBandwidthAdjust', 1)}>Silverman</button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                          <span className="w-8">Fill</span>
+                          <input type="range" min="0" max="1" step="0.02" title="Density curve fill opacity"
+                            value={opacityToSlider(currentConfig.distHistDensityOpacity)}
+                            onChange={e => handleConfig('distHistDensityOpacity', sliderToOpacity(parseFloat(e.target.value)))}
+                            className="w-12 h-1 accent-slate-600" />
+                        </div>
+                        <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                          <span className="w-8">Stroke</span>
+                          <input type="range" min="0" max="6" step="0.5" title="Density curve outline width (0 = no outline)"
+                            value={currentConfig.distHistDensityStrokeWidth}
+                            onChange={e => handleConfig('distHistDensityStrokeWidth', parseFloat(e.target.value))}
+                            className="w-12 h-1 accent-slate-600" />
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+                </HelpTooltip>
               </div>
             )}
 

@@ -518,6 +518,18 @@ column header as `fieldName`. The xmin column (aliases: `xmin`, `onset`, `start`
 - Cluster By control when two variables are mapped (color + texture)
 - Normalization option for stacked percentage mode
 - Separate sub-plots mode
+- **Distribution** mode: a histogram of any numeric variable, with **Colour** splitting it
+  into groups (stacked or overlaid), Count or Density on the y axis, and a bin count.
+- **Density curve** (`utils/density.ts`): an optional Gaussian kernel density estimate per
+  group, evaluated at 300 points across the axis range and drawn as a filled path with its
+  own **Fill** opacity and **Stroke** width. Each curve is scaled onto the histogram's own
+  axis — × n · bin width for counts, × n / N for density — so it sits on its bars, and it
+  stacks with them in stacked mode. **Bars** and **Density** are separate toggles, either
+  or both. **Bandwidth** multiplies each group's Silverman's-rule bandwidth (as R's
+  `bw.nrd0`: 0.9 · min(sd, IQR/1.34) · n^-1/5) on a log slider, ×1 by default; the plot's
+  corner reports the bandwidth used. Kernels beyond 6 bandwidths (under 1e-8 of their peak)
+  are skipped, which keeps long-tailed measures fast. The Spectral tab's violins and
+  density curves use the same estimator.
 
 ### Data Table
 - Tabular view of filtered tokens (first 1,000 rows)

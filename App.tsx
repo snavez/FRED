@@ -102,6 +102,11 @@ const INITIAL_CONFIG: PlotConfig = {
   distHistYMode: 'count',
   distHistOverlap: 'stacked',
   distHistOpacity: 0.6,
+  distHistShowBars: true,
+  distHistShowDensity: false,
+  distHistBandwidthAdjust: 1,
+  distHistDensityOpacity: 0.25,
+  distHistDensityStrokeWidth: 2,
 
   // Spectral defaults
   spectralMode: 'scatter',

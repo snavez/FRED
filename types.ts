@@ -167,6 +167,11 @@ export interface PlotConfig {
   distHistYMode: 'count' | 'density';        // y-axis mode (default: 'count')
   distHistOverlap: 'stacked' | 'overlaid';   // multi-color bar mode (default: 'stacked')
   distHistOpacity: number;                   // bar opacity for overlaid mode (default: 0.6)
+  distHistShowBars: boolean;                 // draw the histogram's bars
+  distHistShowDensity: boolean;              // overlay a kernel density curve per group
+  distHistBandwidthAdjust: number;           // multiplies each group's Silverman bandwidth (1 = the rule)
+  distHistDensityOpacity: number;            // density curve fill opacity
+  distHistDensityStrokeWidth: number;        // density curve outline width (0 = none)
 
   // Spectral Config (consonant analysis: COG/SD/skew/kurt and the band energy ratio)
   spectralMode: 'scatter' | 'box' | 'timeline' | 'density';

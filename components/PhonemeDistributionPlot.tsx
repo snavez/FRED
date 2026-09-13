@@ -28,7 +28,12 @@ interface HistogramData {
   categories: string[];
   colors: Record<string, string>;
   totalCount: number;
+  /** Each category's values, for density curves, which need the tokens rather than their bins. */
+  valuesByCategory: Record<string, number[]>;
 }
+
+/** Points a density curve is evaluated at, across the histogram's range. */
+const DENSITY_POINTS = 300;
 
 const findNearestTimePoint = (trajectory: { time: number }[], target: number): number | undefined => {
   if (trajectory.length === 0) return undefined;
@@ -79,7 +84,8 @@ const COLORS = [
 ];
 
 import { getLabel } from '../utils/getLabel';
-import { niceStep, formatTickValue } from '../utils/axisTicks';
+import { niceStep, formatTickValue, formatMeasureValue } from '../utils/axisTicks';
+import { histogramDensityBands, linspace } from '../utils/density';
 import { frameSpacing } from '../utils/plotFrame';
 
 // Helper: compute counts plot data for a token subset (reused for faceting)
@@ -178,7 +184,7 @@ function computeHistogramBins(
       if (!isNaN(val) && isFinite(val)) values.push({ val, token: t });
     });
     if (values.length === 0) {
-      return { bins: [], min: 0, max: 0, maxY: 0, binWidth: 1, categories: [], colors: {}, totalCount: 0 };
+      return { bins: [], min: 0, max: 0, maxY: 0, binWidth: 1, categories: [], colors: {}, totalCount: 0, valuesByCategory: {} };
     }
     let dataMin = Infinity, dataMax = -Infinity;
     values.forEach(v => { if (v.val < dataMin) dataMin = v.val; if (v.val > dataMax) dataMax = v.val; });
@@ -188,6 +194,7 @@ function computeHistogramBins(
     const binWidth = (max - min) / binCount;
     const colorByKey = (config.distHistColorBy && config.distHistColorBy !== 'none') ? config.distHistColorBy : null;
     const categorySet = new Set<string>();
+    const valuesByCategory: Record<string, number[]> = {};
     const bins: HistBin[] = Array.from({ length: binCount }, (_, i) => ({
       x0: min + i * binWidth, x1: min + (i + 1) * binWidth, counts: {}, total: 0,
     }));
@@ -197,6 +204,7 @@ function computeHistogramBins(
       if (binIdx < 0) binIdx = 0;
       const category = colorByKey ? (getLabel(token, colorByKey) || 'Undefined') : 'all';
       categorySet.add(category);
+      (valuesByCategory[category] ||= []).push(val);
       bins[binIdx].counts[category] = (bins[binIdx].counts[category] || 0) + 1;
       bins[binIdx].total++;
     });
@@ -224,7 +232,7 @@ function computeHistogramBins(
       const ov = styleOverrides?.colors[c];
       colors[c] = (ov && (!config.bwMode || isGreyHex(ov))) ? ov : palette[i % palette.length];
     });
-    return { bins, min, max, maxY, binWidth, categories, colors, totalCount: values.length };
+    return { bins, min, max, maxY, binWidth, categories, colors, totalCount: values.length, valuesByCategory };
 }
 
 const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({ data, config, datasetMeta, styleOverrides, onLegendClick }, ref) => {
@@ -299,6 +307,25 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
     const isOverlaid = config.distHistOverlap === 'overlaid' && categories.length > 1 && categories[0] !== 'all';
     const isStacked = !isOverlaid;
     const hasColor = categories.length > 1 || (categories.length === 1 && categories[0] !== 'all');
+    const showBars = config.distHistShowBars;
+    const singleColor = config.bwMode ? '#475569' : '#3b82f6';
+    const colorFor = (cat: string) => hasColor ? colors[cat] : singleColor;
+    // Overlaid groups are painted largest first, so the smaller ones stay in front; curves
+    // follow the same order. Stacked groups keep the order they stack in.
+    const groupSize = (cat: string) => hData.valuesByCategory[cat]?.length ?? 0;
+    const paintOrder = isOverlaid ? [...categories].sort((a, b) => groupSize(b) - groupSize(a)) : categories;
+
+    // Density curves come before the axes: the y range has to hold whatever is drawn, and a
+    // narrow bandwidth can peak above every bar.
+    const densityGrid = linspace(min, max, DENSITY_POINTS);
+    const bands = config.distHistShowDensity
+      ? histogramDensityBands(
+          paintOrder.map(key => ({ key, values: hData.valuesByCategory[key] ?? [] })),
+          densityGrid,
+          { bandwidthAdjust: config.distHistBandwidthAdjust, yMode: isDensity ? 'density' : 'count', binWidth, total: totalCount, stacked: !isOverlaid },
+        )
+      : [];
+    const peak = Math.max(showBars ? maxY : 0, ...bands.map(b => Math.max(...b.upper)));
 
     // Margins
     // Room for the tick numbers and the axis title beneath them, from the sizes about to
@@ -320,7 +347,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
 
     // Nice tick computation for y-axis
     // Y-axis setup
-    const yMax = maxY > 0 ? maxY * 1.05 : 1; // 5% headroom
+    const yMax = peak > 0 ? peak * 1.05 : 1; // 5% headroom
     const yStep = niceStep(yMax / 5);
     const mapY = (val: number) => margin.top + chartH - (val / yMax) * chartH;
     const mapX = (val: number) => margin.left + ((val - min) / (max - min)) * chartW;
@@ -379,18 +406,12 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
     const barW = chartW / bins.length;
     const barGap = Math.max(0, Math.min(barW * 0.1, 2 * drawScale)); // small gap between bins
 
-    if (isOverlaid && hasColor) {
+    if (showBars && isOverlaid && hasColor) {
       // Draw each category separately with transparency — largest total behind
-      const sortedCats = [...categories].sort((a, b) => {
-        const sumA = bins.reduce((s, bin) => s + (bin.counts[a] || 0), 0);
-        const sumB = bins.reduce((s, bin) => s + (bin.counts[b] || 0), 0);
-        return sumB - sumA; // largest first (behind)
-      });
-
       const opacity = config.distHistOpacity ?? 0.6;
 
       // Pass 1: fill bars with transparency
-      sortedCats.forEach(cat => {
+      paintOrder.forEach(cat => {
         ctx.globalAlpha = opacity;
         bins.forEach((bin, i) => {
           const count = bin.counts[cat] || 0;
@@ -407,7 +428,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
 
       // Pass 2: draw border outlines at full opacity so categories remain distinguishable
       ctx.lineWidth = (1.5 * drawScale) / scale;
-      sortedCats.forEach(cat => {
+      paintOrder.forEach(cat => {
         ctx.strokeStyle = colors[cat];
         bins.forEach((bin, i) => {
           const count = bin.counts[cat] || 0;
@@ -419,7 +440,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
           ctx.strokeRect(bx, by, barW - barGap, barH);
         });
       });
-    } else if (isStacked && hasColor) {
+    } else if (showBars && isStacked && hasColor) {
       // Stacked bars
       bins.forEach((bin, i) => {
         let stackY = margin.top + chartH;
@@ -434,9 +455,9 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
           ctx.fillRect(bx, stackY, barW - barGap, barH);
         });
       });
-    } else {
+    } else if (showBars) {
       // Single color — no split
-      const color = config.bwMode ? '#475569' : '#3b82f6';
+      const color = singleColor;
       bins.forEach((bin, i) => {
         if (bin.total === 0) return;
         const val = isDensity ? bin.total / (totalCount * binWidth) : bin.total;
@@ -447,6 +468,28 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
         ctx.fillRect(bx, by, barW - barGap, barH);
       });
     }
+
+    // Density curves, over the bars
+    const traceUpper = (upper: number[]) => densityGrid.forEach((x, i) =>
+      i ? ctx.lineTo(mapX(x), mapY(upper[i])) : ctx.moveTo(mapX(x), mapY(upper[i])));
+    bands.forEach(({ key, lower, upper }) => {
+      const color = colorFor(key);
+      ctx.beginPath();
+      traceUpper(upper);
+      for (let i = densityGrid.length - 1; i >= 0; i--) ctx.lineTo(mapX(densityGrid[i]), mapY(lower[i]));
+      ctx.closePath();
+      ctx.globalAlpha = config.distHistDensityOpacity;
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.globalAlpha = 1.0;
+      if (config.distHistDensityStrokeWidth > 0) {
+        ctx.beginPath();
+        traceUpper(upper);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = (config.distHistDensityStrokeWidth * drawScale) / scale;
+        ctx.stroke();
+      }
+    });
 
     // X-axis label. Its distance below the frame answers to the tick and title sizes, so a
     // 96px title clears 64px tick numbers instead of landing on them, and its nudges are
@@ -483,7 +526,11 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
       ctx.fillStyle = '#94a3b8';
       ctx.font = `${(10 * drawScale) / scale}px Inter`;
       ctx.textAlign = 'right';
-      ctx.fillText(`n = ${totalCount}`, margin.left + chartW, margin.top - (8 * drawScale));
+      // The bandwidth a reader would need to reproduce the curve, or the multiplier when each
+      // group has a bandwidth of its own.
+      const bandwidthNote = bands.length === 1 ? ` · bandwidth ${formatMeasureValue(bands[0].bandwidth)}`
+        : bands.length > 1 ? ` · bandwidth ×${config.distHistBandwidthAdjust.toFixed(2)} Silverman, per group` : '';
+      ctx.fillText(`n = ${totalCount}${bandwidthNote}`, margin.left + chartW, margin.top - (8 * drawScale));
     }
   }, [histogramData, config]);
 
@@ -1588,8 +1635,13 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
     };
   });
 
-  // ... (rest of the file remains unchanged)
-  useEffect(() => {
+  /**
+   * Size the canvas to its container, then draw. A canvas keeps whatever size it was last
+   * given, so this runs when the plot changes and again whenever its container does: a panel
+   * still settling when it first drew, or squeezed later by a control bar that wrapped, would
+   * otherwise leave the plot at the size it measured then — down to nothing.
+   */
+  const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || !containerRef.current) return;
     const { width, height } = containerRef.current.getBoundingClientRect();
@@ -1604,7 +1656,18 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
         renderPlot(ctx, width, height, 1, 1);
         ctx.restore();
     }
-  }, [plotData, config, renderPlot]);
+  }, [renderPlot]);
+  const drawRef = useRef(draw);
+  useEffect(() => { drawRef.current = draw; draw(); }, [draw]);
+  // One observer for the component's life, calling whichever draw is current, so a change of
+  // settings does not also tear the observer down and draw a second time.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(() => drawRef.current());
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
   const handleLegendClickWrapper = (category: string, type: 'color'|'texture', event: React.MouseEvent) => {
       if (onLegendClick) {
@@ -1698,7 +1761,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
 
   // ── Histogram mouse handlers ──
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (config.distMode !== 'histogram' || !histogramData || !containerRef.current) {
+    if (config.distMode !== 'histogram' || !config.distHistShowBars || !histogramData || !containerRef.current) {
       if (hoveredBin) setHoveredBin(null);
       return;
     }
@@ -1725,7 +1788,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
     } else {
       setHoveredBin(null);
     }
-  }, [config.distMode, histogramData, hoveredBin]);
+  }, [config.distMode, config.distHistShowBars, histogramData, hoveredBin]);
 
   const handleMouseLeave = useCallback(() => {
     setHoveredBin(null);
@@ -1742,7 +1805,7 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
       {renderScreenLegend()}
 
       {/* Histogram tooltip */}
-      {hoveredBin && config.distMode === 'histogram' && (
+      {hoveredBin && config.distMode === 'histogram' && config.distHistShowBars && (
         <div
           className="absolute pointer-events-none bg-slate-900/90 text-white p-3 rounded-xl shadow-2xl text-[11px] z-50 border border-slate-700 backdrop-blur-md space-y-1 min-w-[160px]"
           style={{

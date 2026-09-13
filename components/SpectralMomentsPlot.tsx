@@ -14,6 +14,7 @@ import {
 } from '../utils/plotEncoding';
 import { generateTexture } from '../utils/textureGenerator';
 import { composeExport, computeExportPlotSize } from '../utils/exportLayout';
+import { gaussianKde, linspace, silvermanBandwidth } from '../utils/density';
 import {
   discoverSpectralColumns, spectralAxisLabel, getSpectralMeasureDef,
   SpectralMeasureKey, SpectralMeta, SpectralFeature,
@@ -63,18 +64,6 @@ const zeroPos = (
   measure: SpectralMeasureKey, lo: number, hi: number, mapPos: (v: number) => number,
 ): number | undefined =>
   isCentredAtZero(measure) && lo <= 0 && hi >= 0 ? mapPos(0) : undefined;
-
-const kde = (values: number[], grid: number[]): number[] => {
-  const n = values.length;
-  if (n === 0) return grid.map(() => 0);
-  const mean = values.reduce((a, b) => a + b, 0) / n;
-  const sd = Math.sqrt(values.reduce((a, b) => a + (b - mean) ** 2, 0) / n) || 1;
-  const sorted = [...values].sort((a, b) => a - b);
-  const iqr = (sorted[Math.floor(n * 0.75)] - sorted[Math.floor(n * 0.25)]) || sd;
-  const bw = 0.9 * Math.min(sd, iqr / 1.34) * Math.pow(n, -0.2) || 1;
-  const norm = 1 / (n * bw * Math.sqrt(2 * Math.PI));
-  return grid.map(g => { let s = 0; for (const v of values) { const u = (g - v) / bw; s += Math.exp(-0.5 * u * u); } return s * norm; });
-};
 
 /** A coloured/shaped group of tokens sharing colour (and optionally shape or line-type). */
 interface EncGroup { key: string; tokens: SpeechToken[]; color: string; shape: string; dash: number[]; texture: number; label: string; }
@@ -531,8 +520,8 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
         const fillStyle: string | CanvasPattern = enc.textureKey
           ? generateTexture(ctx, textureForKey(g.key), color, '#ffffff') : `rgba(${hexToRgb(color)},0.35)`;
         if (cfg.spectralViolin) {
-          const grid: number[] = []; const gN = 48; for (let k = 0; k <= gN; k++) grid.push(st.min + (st.max - st.min) * (k / gN));
-          const dens = kde(st.values, grid), dMax = Math.max(...dens) || 1;
+          const grid = linspace(st.min, st.max, 49);
+          const dens = gaussianKde(st.values, grid, silvermanBandwidth(st.values)), dMax = Math.max(...dens) || 1;
           ctx.beginPath();
           grid.forEach((v, k) => { const w = (dens[k] / dMax) * boxW / 2, yy = mapY(v); if (k === 0) ctx.moveTo(cx - w, yy); else ctx.lineTo(cx - w, yy); });
           for (let k = grid.length - 1; k >= 0; k--) ctx.lineTo(cx + (dens[k] / dMax) * boxW / 2, mapY(grid[k]));
@@ -757,8 +746,8 @@ const SpectralMomentsPlot = forwardRef<PlotHandle, SpectralMomentsPlotProps>(({ 
       const [fitLo, fitHi] = fitRange([], series.flatMap(c => c.values), { trim: 0.01, pad: 0.05 });
       const [xLo, xHi] = rangeOr(cfg.spectralXRange, fitLo, fitHi);
       reportRange([xLo, xHi], [0, 0]);
-      const grid: number[] = []; const gN = 160; for (let k = 0; k <= gN; k++) grid.push(xLo + (xHi - xLo) * (k / gN));
-      const curves = series.map(c => ({ key: c.key, dens: kde(c.values, grid) }));
+      const grid = linspace(xLo, xHi, 161);
+      const curves = series.map(c => ({ key: c.key, dens: gaussianKde(c.values, grid, silvermanBandwidth(c.values)) }));
       const dMax = Math.max(...curves.flatMap(c => c.dens), 1e-9);
       const mapX = (v: number) => area.x + ((v - xLo) / (xHi - xLo)) * area.w;
       const mapY = (d: number) => area.y + area.h - (d / dMax) * area.h * 0.95;
