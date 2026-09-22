@@ -1038,7 +1038,7 @@ Visualise counts or proportions of phoneme categories as grouped or stacked bar 
 #### 8.6.3 Display Modes
 
 **Combined Mode**: All groups on a single X-axis
-**Faceted Mode** (small multiples): Grid layout with √N columns, one subplot per group
+**Faceted Mode** (small multiples): one subplot per value of the *Plot By* variable
 
 **Bar Modes**:
 - **Grouped**: Bars side-by-side for sub-categories
@@ -1054,6 +1054,10 @@ Visualise counts or proportions of phoneme categories as grouped or stacked bar 
 - Texture/pattern overlays for print-friendly distinction
 - Configurable sort order for groups and bars (alphabetical or by count, ascending or descending)
 - Count labels above bars
+- Explicit bar layout: the space is divided evenly between the groups and then between the bars
+  in each group, with the group gap and bar gap taken out of that space in pixels and the bar drawn
+  centred in what is left at its width percentage. A gap of 0 at 100% width therefore makes the
+  bars either side of it abut exactly.
 
 #### 8.6.5 Configuration
 
@@ -1065,12 +1069,14 @@ Visualise counts or proportions of phoneme categories as grouped or stacked bar 
 | Bar mode | Grouped / Stacked | Grouped |
 | Value mode | Count / Percentage | Count |
 | Normalise | On/Off | Off |
-| Separate plots | On/Off | Off |
 | Group order | Alphabetical / By count | Alphabetical |
 | Group direction | Ascending / Descending | Ascending |
 | Bar order | Alphabetical / By count | Alphabetical |
 | Bar direction | Ascending / Descending | Ascending |
 | Primary variable | Colour / Texture | Colour |
+| Bar width | 0–100 % of the space each bar is given | 100 |
+| Group gap | 0–100 px between groups | 14 |
+| Bar gap | 0–50 px between bars within a group | 2 |
 | Max count (Y-axis) | Slider | Auto |
 
 ---
@@ -1448,7 +1454,7 @@ Controls all visualisation settings per layer. Key property groups:
 - **Centroids**: `showCentroids`, `centroidSize`, `labelAsCentroid`, `labelSize`, `meanLabelType`
 - **Reference vowels**: `showReferenceVowels`, `selectedReferenceVowels`, `referencePitchFilter`, `refVowelLabelOpacity/Size`, `refVowelEllipseLineOpacity/FillOpacity`
 - **Duration**: `showQuartiles`, `showMeanMarker`, `showDurationPoints`, `durationRange`
-- **Distribution**: `distGroupOrder/Dir`, `distBarOrder/Dir`, `distBarMode`, `distValueMode`, `distNormalize`, `distPrimaryVar`, `separatePlots`, `countRange`
+- **Distribution**: `distGroupOrder/Dir`, `distBarOrder/Dir`, `distBarMode`, `distValueMode`, `distNormalize`, `distPrimaryVar`, `distBarWidth`, `distGroupGap`, `distBarGap`, `countRange`
 
 ---
 

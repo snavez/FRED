@@ -3,6 +3,7 @@ import React, { useRef, useEffect, useMemo, useCallback, forwardRef, useImperati
 import { SpeechToken, PlotConfig, PlotHandle, StyleOverrides, ExportConfig, DatasetMeta } from '../types';
 import { computeExportPlotSize } from '../utils/exportLayout';
 import { generateTexture } from '../utils/textureGenerator';
+import { layoutBarBand } from '../utils/barLayout';
 
 interface DistributionPlotProps {
   data: SpeechToken[];
@@ -626,17 +627,17 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
             }
 
             // Bars — same layout controls as the single-chart path (W / GG / BG)
-            const cfgGroupGap = (config.distGroupGap || 0) * drawScale;
-            const cfgBarWidth = (config.distBarWidth || 0) * drawScale;
-            const cfgBarGap = (config.distBarGap || 0) * drawScale;
-            const totalGroupGaps = fGroups.length > 1 ? (fGroups.length - 1) * cfgGroupGap : 0;
-            const groupW = (chartW - totalGroupGaps) / Math.max(fGroups.length, 1);
+            const cfgGroupGap = (config.distGroupGap ?? 0) * drawScale;
+            const cfgBarGap = (config.distBarGap ?? 0) * drawScale;
+            const barWidthPct = config.distBarWidth ?? 100;
+            const groupBand = layoutBarBand(margin.left, chartW, fGroups.length, cfgGroupGap, 100);
+            const groupW = groupBand.slotW;
 
             const isPrimaryTexture = config.distPrimaryVar === 'texture';
             const labelFontSize = Math.max(7, Math.min(9, 200 / Math.max(fGroups.length, 1)));
 
             fGroups.forEach((g: string, gi: number) => {
-              const gx = margin.left + gi * (groupW + cfgGroupGap);
+              const gx = groupBand.slotX(gi);
               const total = groupTotals[g];
 
               const drawFacetBar = (bx: number, by: number, bw: number, bh: number, color: string, texIdx: number) => {
@@ -658,21 +659,20 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                   return config.distBarDir === 'asc' ? cmp : -cmp;
                 });
 
-                const numPrimary = pKeys.length;
-                const totalInnerGaps = numPrimary > 1 ? (numPrimary - 1) * cfgBarGap : 0;
-                const primaryGroupW = (groupW * 0.9 - totalInnerGaps) / Math.max(numPrimary, 1);
-                const startX = gx + groupW * 0.05;
+                const primaryBand = layoutBarBand(gx, groupW, pKeys.length, cfgBarGap, 100);
+                const primaryGroupW = primaryBand.slotW;
 
                 pKeys.forEach((pk, pi) => {
                   const sMap = nested[pk];
                   const sKeys = Object.keys(sMap).sort();
                   const stackTotal = (Object.values(sMap) as number[]).reduce((a, b) => a + b, 0);
                   const referenceTotal = (config.distNormalize && isStacked) ? stackTotal : total;
-                  const pBx = startX + pi * (primaryGroupW + cfgBarGap);
+                  const pBx = primaryBand.slotX(pi);
 
                   if (isStacked) {
-                    const barW = cfgBarWidth > 0 ? Math.min(cfgBarWidth, primaryGroupW * 0.95) : primaryGroupW * 0.7;
-                    const bx = pBx + (primaryGroupW - barW) / 2;
+                    const stack = layoutBarBand(pBx, primaryGroupW, 1, 0, barWidthPct);
+                    const barW = stack.barW;
+                    const bx = stack.barX(0);
                     let currentY = margin.top + chartH;
                     sKeys.forEach(sk => {
                       const val = sMap[sk];
@@ -684,14 +684,13 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                       drawFacetBar(bx, currentY, barW, h, color, tex);
                     });
                   } else {
-                    const autoBarW = (primaryGroupW * 0.9) / Math.max(sKeys.length, 1);
-                    const barW = cfgBarWidth > 0 ? Math.min(cfgBarWidth, autoBarW) : autoBarW;
-                    const innerStartX = pBx + primaryGroupW * 0.05;
+                    const innerBand = layoutBarBand(pBx, primaryGroupW, sKeys.length, 0, barWidthPct);
+                    const barW = innerBand.barW;
                     sKeys.forEach((sk, si) => {
                       const val = sMap[sk];
                       const dispVal = isPercentage ? (total > 0 ? (val / total * 100) : 0) : val;
                       const h = (dispVal / maxY) * chartH;
-                      const bx = innerStartX + si * barW;
+                      const bx = innerBand.barX(si);
                       const by = margin.top + chartH - h;
                       const color = isPrimaryTexture ? (fColors[sk] || '#999') : (fColors[pk] || '#999');
                       const tex = isPrimaryTexture ? (fTextureMap[pk] || 0) : (fTextureMap[sk] || 0);
@@ -719,8 +718,9 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                 if (config.distBarDir === 'desc') items.reverse();
 
                 if (isStacked) {
-                  const barW = cfgBarWidth > 0 ? Math.min(cfgBarWidth, groupW * 0.95) : groupW * 0.6;
-                  const bx = gx + (groupW - barW) / 2;
+                  const stack = layoutBarBand(gx, groupW, 1, 0, barWidthPct);
+                  const barW = stack.barW;
+                  const bx = stack.barX(0);
                   let curY = margin.top + chartH;
                   items.forEach(item => {
                     const dispVal = isPercentage ? (total > 0 ? (item.val / total * 100) : 0) : item.val;
@@ -729,14 +729,12 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
                     drawFacetBar(bx, curY, barW, h, item.color, item.tex);
                   });
                 } else {
-                  const innerGaps = items.length > 1 ? (items.length - 1) * cfgBarGap : 0;
-                  const autoBarW = (groupW * 0.9 - innerGaps) / Math.max(items.length, 1);
-                  const barW = cfgBarWidth > 0 ? Math.min(cfgBarWidth, autoBarW) : autoBarW;
-                  const startX = gx + groupW * 0.05;
+                  const band = layoutBarBand(gx, groupW, items.length, cfgBarGap, barWidthPct);
+                  const barW = band.barW;
                   items.forEach((item, idx) => {
                     const dispVal = isPercentage ? (total > 0 ? (item.val / total * 100) : 0) : item.val;
                     const h = (dispVal / maxY) * chartH;
-                    const bx = startX + idx * (barW + cfgBarGap);
+                    const bx = band.barX(idx);
                     const by = margin.top + chartH - h;
                     drawFacetBar(bx, by, barW, h, item.color, item.tex);
 
@@ -932,399 +930,202 @@ const PhonemeDistributionPlot = forwardRef<PlotHandle, DistributionPlotProps>(({
         }
     };
 
-    if (config.separatePlots) {
-        // FACETED
-        const cols = Math.ceil(Math.sqrt(groups.length));
-        const rows = Math.ceil(groups.length / cols);
-        const cellW = chartW / cols;
-        const cellH = chartH / rows;
+    const cfgGroupGap = (config.distGroupGap ?? 0) * drawScale;
+    const cfgBarGap = (config.distBarGap ?? 0) * drawScale;
+    const barWidthPct = config.distBarWidth ?? 100;
 
-        groups.forEach((g: string, i: number) => {
-            const col = i % cols;
-            const row = Math.floor(i / cols);
-            const pad = 20 * drawScale;
-            const cx = margin.left + col * cellW + pad;
-            const cy = margin.top + row * cellH + pad;
-            const cw = cellW - (pad*2);
-            const ch = cellH - (pad*2) - (20 * drawScale);
-            const total = groupTotals[g];
+    // COMBINED (Main Large Plot)
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#64748b';
+    ctx.font = `${(axisFont * drawScale)/scale}px Inter`;
+    ctx.lineWidth = 1 * drawScale;
+    
+    // Y Axis Ticks
+    for(let i=0; i<=5; i++) {
+        const val = maxY * (i/5);
+        const y = margin.top + mapY(val, chartH);
+        ctx.beginPath(); ctx.moveTo(margin.left, y); ctx.lineTo(margin.left + chartW, y); ctx.stroke();
+        const label = isPercentage ? `${Math.round(val)}%` : Math.round(val).toString();
+        ctx.fillText(label, margin.left - (15 * drawScale) + yTickOffsetX, y + (5 * drawScale) + yTickOffsetY);
+    }
 
-            // Baseline
-            ctx.beginPath(); ctx.moveTo(cx, cy+ch); ctx.lineTo(cx+cw, cy+ch); 
-            ctx.lineWidth = 1 * drawScale; ctx.strokeStyle='#e2e8f0'; ctx.stroke();
+    const groupBand = layoutBarBand(margin.left, chartW, groups.length, cfgGroupGap, 100);
+    const groupW = groupBand.slotW;
 
-            // Label for Cell (Group)
-            const showCellLabel = groups.length > 1 || !isInteraction || !showPrimaryLabel;
-            if (showCellLabel) {
-                ctx.fillStyle = '#0f172a';
-                ctx.font = `bold ${(exportConfig ? (exportConfig.xGroupLabelSize ?? exportConfig.xAxisLabelSize) : 12 * drawScale) / scale}px Inter`;
-                ctx.textAlign = 'center';
-                ctx.fillText(`/${g}/`, cx + cw/2, cy + ch + (subLabelFont * 1.5 * drawScale));
-            }
+    groups.forEach((g: string, i: number) => {
+         const cx = groupBand.slotX(i);
+         const total = groupTotals[g];
+         
+         // Prepare Data
+         let items: { key: string, val: number, color: string, tex: number, subKey?: string }[] = [];
+         
+         if (isInteraction) {
+             const nested = pData[g];
+             // nested is Primary -> Secondary -> Count
+             const isPrimaryTexture = config.distPrimaryVar === 'texture';
 
-            // Prepare Data for Rendering
-            let items: { key: string, val: number, color: string, tex: number, subKey?: string }[] = [];
-            
-            if (isInteraction) {
-                 const nested = pData[g];
-                 // nested is now Primary -> Secondary -> Count
-                 // distPrimaryVar determines if Primary is Color or Texture
-                 const isPrimaryTexture = config.distPrimaryVar === 'texture';
+             // Get Primary Keys and Sort them
+             let pKeys = Object.keys(nested);
+             pKeys.sort((a,b) => {
+                 let cmp = 0;
+                 if (config.distBarOrder === 'alpha') {
+                     cmp = a.localeCompare(b);
+                 } else {
+                     const sumA = (Object.values(nested[a]) as number[]).reduce((s, n) => s + n, 0);
+                     const sumB = (Object.values(nested[b]) as number[]).reduce((s, n) => s + n, 0);
+                     cmp = sumA - sumB;
+                 }
+                 return config.distBarDir === 'asc' ? cmp : -cmp;
+             });
 
-                 // Get Primary Keys and Sort them
-                 let pKeys = Object.keys(nested);
-                 pKeys.sort((a,b) => {
-                     let cmp = 0;
-                     if (config.distBarOrder === 'alpha') {
-                         cmp = a.localeCompare(b);
-                     } else {
-                         const sumA = (Object.values(nested[a]) as number[]).reduce((s, n) => s + n, 0);
-                         const sumB = (Object.values(nested[b]) as number[]).reduce((s, n) => s + n, 0);
-                         cmp = sumA - sumB;
-                     }
-                     return config.distBarDir === 'asc' ? cmp : -cmp;
-                 });
+             // Render Logic for Interaction
+             const primaryBand = layoutBarBand(cx, groupW, pKeys.length, cfgBarGap, 100);
+             const primaryGroupW = primaryBand.slotW;
 
-                 // Render Logic for Interaction
-                 const numPrimary = pKeys.length;
-                 // Calculate width for each Primary Group
-                 const primaryGroupW = (cw * 0.9) / numPrimary;
-                 const startX = cx + (cw * 0.05);
+             pKeys.forEach((pk, pi) => {
+                 const sMap = nested[pk];
+                 const sKeys = Object.keys(sMap).sort(); 
+                 
+                 const stackTotal = (Object.values(sMap) as number[]).reduce((a, b) => a + b, 0);
+                 const referenceTotal = (config.distNormalize && isStacked) ? stackTotal : total;
 
-                 pKeys.forEach((pk, pi) => {
-                     const sMap = nested[pk];
-                     const sKeys = Object.keys(sMap).sort(); 
+                 const pBx = primaryBand.slotX(pi);
+
+                 if (isStacked) {
+                     const stack = layoutBarBand(pBx, primaryGroupW, 1, 0, barWidthPct);
+                     const barW = stack.barW;
+                     const bx = stack.barX(0);
+                     let currentY = margin.top + chartH;
                      
-                     const stackTotal = (Object.values(sMap) as number[]).reduce((a, b) => a + b, 0);
-                     const referenceTotal = (config.distNormalize && isStacked) ? stackTotal : total;
-                     
-                     const pBx = startX + pi * primaryGroupW;
-                     
-                     if (isStacked) {
-                         // Stacked: One bar per Primary Key, stacked with Secondary Keys
-                         const barW = primaryGroupW * 0.7;
-                         const bx = pBx + (primaryGroupW - barW)/2;
-                         let currentY = cy + ch;
+                     sKeys.forEach(sk => {
+                         const val = sMap[sk];
+                         const dispVal = isPercentage ? (referenceTotal > 0 ? (val / referenceTotal * 100) : 0) : val;
+                         const h = (dispVal / maxY) * chartH;
+                         const label = isPercentage ? `${dispVal.toFixed(1)}%` : val.toString();
                          
-                         sKeys.forEach(sk => {
-                             const val = sMap[sk];
-                             const dispVal = isPercentage ? (referenceTotal > 0 ? (val / referenceTotal * 100) : 0) : val;
-                             const h = (dispVal / maxY) * ch;
-                             const label = isPercentage ? `${dispVal.toFixed(1)}%` : val.toString();
-                             
-                             currentY -= h;
-                             
-                             const color = isPrimaryTexture ? (colors[sk] || '#999') : (colors[pk] || '#999');
-                             const tex = isPrimaryTexture ? (textureMap[pk] || 0) : (textureMap[sk] || 0);
-                             
-                             drawBar(bx, currentY, barW, h, color, tex, dispVal, label);
-                         });
-
-                         // Label for Primary Key
-                         if (showPrimaryLabel) {
-                            ctx.fillStyle = '#475569';
-                            ctx.textAlign = 'center';
-                            const labelX = bx + barW/2 + xTickOffsetX;
-                            const labelY = cy + ch + (subLabelFont * 1.2 * drawScale) + xTickOffsetY;
-                            drawFittedXLabel(pk, labelX, labelY, barW, subLabelFont, (height - labelY) * 0.9);
-                         }
-
-                     } else {
-                         // Grouped: Secondary Keys side-by-side within Primary Key area
-                         const barW = (primaryGroupW * 0.9) / sKeys.length;
-                         const innerStartX = pBx + (primaryGroupW * 0.05);
-
-                         sKeys.forEach((sk, si) => {
-                             const val = sMap[sk];
-                             const dispVal = isPercentage ? (total > 0 ? (val / total * 100) : 0) : val;
-                             const h = (dispVal / maxY) * ch;
-                             const label = isPercentage ? `${dispVal.toFixed(0)}%` : val.toString();
-
-                             const bx = innerStartX + si * barW;
-                             const by = cy + ch - h;
-
-                             const color = isPrimaryTexture ? (colors[sk] || '#999') : (colors[pk] || '#999');
-                             const tex = isPrimaryTexture ? (textureMap[pk] || 0) : (textureMap[sk] || 0);
-
-                             drawBar(bx, by, barW, h, color, tex, dispVal, label);
-                         });
-
-                         // Label for Primary Key (Centered under the group)
-                         if (showPrimaryLabel) {
-                            ctx.fillStyle = '#475569';
-                            ctx.textAlign = 'center';
-                            const labelX = pBx + primaryGroupW/2 + xTickOffsetX;
-                            const labelY = cy + ch + (subLabelFont * 1.2 * drawScale) + xTickOffsetY;
-                            drawFittedXLabel(pk, labelX, labelY, primaryGroupW, subLabelFont, (height - labelY) * 0.9);
-                         }
-                     }
-                 });
-
-            } else {
-                 // Standard Mode (Non-Interaction)
-                 const counts = pData[g];
-                 Object.keys(counts).forEach(k => {
-                     items.push({
-                         key: k,
-                         val: counts[k],
-                         color: colors[k] || '#000',
-                         tex: config.textureBy !== 'none' ? (textureMap[k] || 0) : 0
+                         currentY -= h;
+                         const color = isPrimaryTexture ? (colors[sk] || '#999') : (colors[pk] || '#999');
+                         const tex = isPrimaryTexture ? (textureMap[pk] || 0) : (textureMap[sk] || 0);
+                         drawBar(bx, currentY, barW, h, color, tex, dispVal, label);
                      });
-                 });
+                     
+                     // Label for Primary Key
+                     if (showPrimaryLabel) {
+                        ctx.fillStyle = '#475569';
+                        ctx.textAlign = 'center';
+                        const labelX = bx + barW/2 + xTickOffsetX;
+                        const labelY = margin.top + chartH + (subLabelFont * 1.5 * drawScale) + xTickOffsetY;
+                        drawFittedXLabel(pk, labelX, labelY, barW, subLabelFont, (height - labelY) * 0.9);
+                     }
 
-                 // Sort Items
-                 items.sort((a,b) => {
-                    // Primary Sort: Bar Order
-                    let cmp = 0;
-                    if (config.distBarOrder === 'alpha') {
-                        cmp = a.key.localeCompare(b.key);
-                    } else {
-                        cmp = a.val - b.val;
-                    }
-                    return config.distBarDir === 'asc' ? cmp : -cmp;
+                 } else {
+                     const innerBand = layoutBarBand(pBx, primaryGroupW, sKeys.length, 0, barWidthPct);
+                     const barW = innerBand.barW;
+                     
+                     sKeys.forEach((sk, si) => {
+                         const val = sMap[sk];
+                         const dispVal = isPercentage ? (total > 0 ? (val / total * 100) : 0) : val;
+                         const h = (dispVal / maxY) * chartH;
+                         const label = isPercentage ? `${dispVal.toFixed(0)}%` : val.toString();
+                         
+                         const bx = innerBand.barX(si);
+                         const by = margin.top + chartH - h;
+                         
+                         const color = isPrimaryTexture ? (colors[sk] || '#999') : (colors[pk] || '#999');
+                         const tex = isPrimaryTexture ? (textureMap[pk] || 0) : (textureMap[sk] || 0);
+                         
+                         drawBar(bx, by, barW, h, color, tex, dispVal, label);
+                     });
+
+                     if (showPrimaryLabel) {
+                        ctx.fillStyle = '#475569';
+                        ctx.textAlign = 'center';
+                        const labelX = pBx + primaryGroupW/2 + xTickOffsetX;
+                        const labelY = margin.top + chartH + (subLabelFont * 1.5 * drawScale) + xTickOffsetY;
+                        drawFittedXLabel(pk, labelX, labelY, primaryGroupW, subLabelFont, (height - labelY) * 0.9);
+                     }
+                 }
+             });
+
+        } else {
+             const counts = pData[g];
+             Object.keys(counts).forEach(k => {
+                 items.push({
+                     key: k,
+                     val: counts[k],
+                     color: colors[k] || '#000',
+                     tex: config.textureBy !== 'none' ? (textureMap[k] || 0) : 0
+                 });
+             });
+
+             // Sort Items
+             items.sort((a,b) => {
+                // Primary Sort: Bar Order
+                let cmp = 0;
+                if (config.distBarOrder === 'alpha') {
+                    cmp = a.key.localeCompare(b.key);
+                } else {
+                    cmp = a.val - b.val;
+                }
+                return config.distBarDir === 'asc' ? cmp : -cmp;
+            });
+
+            if (isStacked) {
+                // STACKED MODE
+                const stack = layoutBarBand(cx, groupW, 1, 0, barWidthPct);
+                const barW = stack.barW;
+                const bx = stack.barX(0);
+                let currentY = margin.top + chartH;
+
+                items.forEach(item => {
+                    const rawVal = item.val;
+                    const dispVal = isPercentage ? (total > 0 ? (rawVal / total * 100) : 0) : rawVal;
+                    const h = (dispVal / maxY) * chartH;
+                    const label = isPercentage ? `${dispVal.toFixed(1)}%` : rawVal.toString();
+                    
+                    currentY -= h;
+                    drawBar(bx, currentY, barW, h, item.color, item.tex, dispVal, label);
                 });
 
-                if (isStacked) {
-                    // STACKED MODE
-                    const barW = cw * 0.6;
-                    const bx = cx + (cw - barW)/2;
-                    let currentY = cy + ch;
+            } else {
+                // GROUPED MODE
+                const band = layoutBarBand(cx, groupW, items.length, cfgBarGap, barWidthPct);
+                const barW = band.barW;
 
-                    items.forEach(item => {
-                        const rawVal = item.val;
-                        const dispVal = isPercentage ? (total > 0 ? (rawVal / total * 100) : 0) : rawVal;
-                        const h = (dispVal / maxY) * ch;
-                        const label = isPercentage ? `${dispVal.toFixed(1)}%` : rawVal.toString();
+                items.forEach((item, idx) => {
+                    const rawVal = item.val;
+                    const dispVal = isPercentage ? (total > 0 ? (rawVal / total * 100) : 0) : rawVal;
+                    const h = (dispVal / maxY) * chartH;
+                    const label = isPercentage ? `${dispVal.toFixed(0)}%` : rawVal.toString();
+                    
+                    const bx = band.barX(idx);
+                    const by = margin.top + chartH - h;
 
-                        currentY -= h;
-                        drawBar(bx, currentY, barW, h, item.color, item.tex, dispVal, label);
-                    });
+                    drawBar(bx, by, barW, h, item.color, item.tex, dispVal, label);
 
-                } else {
-                    // GROUPED MODE
-                    const barW = (cw * 0.9) / items.length;
-                    const startX = cx + (cw * 0.05);
-
-                    items.forEach((item, idx) => {
-                        const rawVal = item.val;
-                        const dispVal = isPercentage ? (total > 0 ? (rawVal / total * 100) : 0) : rawVal;
-                        const h = (dispVal / maxY) * ch;
-                        const label = isPercentage ? `${dispVal.toFixed(0)}%` : rawVal.toString();
-
-                        const bx = startX + idx * barW;
-                        const by = cy + ch - h;
-
-                        drawBar(bx, by, barW, h, item.color, item.tex, dispVal, label);
-
-                        // X-axis label per bar in faceted grouped mode
-                        {
-                            ctx.fillStyle = '#475569';
-                            ctx.textAlign = 'center';
-                            drawFittedXLabel(item.key, bx + barW/2 + xTickOffsetX, cy + ch + (subLabelFont * 1.2 * drawScale) + xTickOffsetY, barW, subLabelFont, (height - (cy + ch)) * 0.8);
-                        }
-                    });
-                }
+                    // Sub-label for grouped items (only if enough space)
+                    if (barW > (20 * drawScale)) {
+                        ctx.fillStyle = '#475569';
+                        ctx.textAlign = 'center';
+                        const labelX = bx + barW/2 + xTickOffsetX;
+                        const labelY = margin.top + chartH + (subLabelFont * 1.5 * drawScale) + xTickOffsetY;
+                        drawFittedXLabel(item.subKey || item.key, labelX, labelY, barW, subLabelFont, (height - labelY) * 0.9);
+                    }
+                });
             }
-        });
-
-    } else {
-        // COMBINED (Main Large Plot)
-        ctx.strokeStyle = '#e2e8f0';
-        ctx.textAlign = 'right';
-        ctx.fillStyle = '#64748b';
-        ctx.font = `${(axisFont * drawScale)/scale}px Inter`;
-        ctx.lineWidth = 1 * drawScale;
-        
-        // Y Axis Ticks
-        for(let i=0; i<=5; i++) {
-            const val = maxY * (i/5);
-            const y = margin.top + mapY(val, chartH);
-            ctx.beginPath(); ctx.moveTo(margin.left, y); ctx.lineTo(margin.left + chartW, y); ctx.stroke();
-            const label = isPercentage ? `${Math.round(val)}%` : Math.round(val).toString();
-            ctx.fillText(label, margin.left - (15 * drawScale) + yTickOffsetX, y + (5 * drawScale) + yTickOffsetY);
         }
 
-        const cfgGroupGap = (config.distGroupGap || 0) * drawScale;
-        const cfgBarWidth = (config.distBarWidth || 0) * drawScale;
-        const cfgBarGap = (config.distBarGap || 0) * drawScale;
-        const totalGroupGaps = (groups.length > 1 ? (groups.length - 1) * cfgGroupGap : 0);
-        const groupW = (chartW - totalGroupGaps) / groups.length;
-
-        groups.forEach((g: string, i: number) => {
-             const cx = margin.left + i * (groupW + cfgGroupGap);
-             const total = groupTotals[g];
-             
-             // Prepare Data
-             let items: { key: string, val: number, color: string, tex: number, subKey?: string }[] = [];
-             
-             if (isInteraction) {
-                 const nested = pData[g];
-                 // nested is Primary -> Secondary -> Count
-                 const isPrimaryTexture = config.distPrimaryVar === 'texture';
-
-                 // Get Primary Keys and Sort them
-                 let pKeys = Object.keys(nested);
-                 pKeys.sort((a,b) => {
-                     let cmp = 0;
-                     if (config.distBarOrder === 'alpha') {
-                         cmp = a.localeCompare(b);
-                     } else {
-                         const sumA = (Object.values(nested[a]) as number[]).reduce((s, n) => s + n, 0);
-                         const sumB = (Object.values(nested[b]) as number[]).reduce((s, n) => s + n, 0);
-                         cmp = sumA - sumB;
-                     }
-                     return config.distBarDir === 'asc' ? cmp : -cmp;
-                 });
-
-                 // Render Logic for Interaction
-                 const numPrimary = pKeys.length;
-                 const totalInnerGaps = (numPrimary > 1 ? (numPrimary - 1) * cfgBarGap : 0);
-                 const primaryGroupW = (groupW * 0.9 - totalInnerGaps) / numPrimary;
-                 const startX = cx + (groupW * 0.05);
-
-                 pKeys.forEach((pk, pi) => {
-                     const sMap = nested[pk];
-                     const sKeys = Object.keys(sMap).sort(); 
-                     
-                     const stackTotal = (Object.values(sMap) as number[]).reduce((a, b) => a + b, 0);
-                     const referenceTotal = (config.distNormalize && isStacked) ? stackTotal : total;
-
-                     const pBx = startX + pi * (primaryGroupW + cfgBarGap);
-
-                     if (isStacked) {
-                         const barW = cfgBarWidth > 0 ? Math.min(cfgBarWidth, primaryGroupW * 0.95) : primaryGroupW * 0.7;
-                         const bx = pBx + (primaryGroupW - barW)/2;
-                         let currentY = margin.top + chartH;
-                         
-                         sKeys.forEach(sk => {
-                             const val = sMap[sk];
-                             const dispVal = isPercentage ? (referenceTotal > 0 ? (val / referenceTotal * 100) : 0) : val;
-                             const h = (dispVal / maxY) * chartH;
-                             const label = isPercentage ? `${dispVal.toFixed(1)}%` : val.toString();
-                             
-                             currentY -= h;
-                             const color = isPrimaryTexture ? (colors[sk] || '#999') : (colors[pk] || '#999');
-                             const tex = isPrimaryTexture ? (textureMap[pk] || 0) : (textureMap[sk] || 0);
-                             drawBar(bx, currentY, barW, h, color, tex, dispVal, label);
-                         });
-                         
-                         // Label for Primary Key
-                         if (showPrimaryLabel) {
-                            ctx.fillStyle = '#475569';
-                            ctx.textAlign = 'center';
-                            const labelX = bx + barW/2 + xTickOffsetX;
-                            const labelY = margin.top + chartH + (subLabelFont * 1.5 * drawScale) + xTickOffsetY;
-                            drawFittedXLabel(pk, labelX, labelY, barW, subLabelFont, (height - labelY) * 0.9);
-                         }
-
-                     } else {
-                         const barW = cfgBarWidth > 0 ? Math.min(cfgBarWidth, (primaryGroupW * 0.9) / sKeys.length) : (primaryGroupW * 0.9) / sKeys.length;
-                         const innerStartX = pBx + (primaryGroupW * 0.05);
-                         
-                         sKeys.forEach((sk, si) => {
-                             const val = sMap[sk];
-                             const dispVal = isPercentage ? (total > 0 ? (val / total * 100) : 0) : val;
-                             const h = (dispVal / maxY) * chartH;
-                             const label = isPercentage ? `${dispVal.toFixed(0)}%` : val.toString();
-                             
-                             const bx = innerStartX + si * barW;
-                             const by = margin.top + chartH - h;
-                             
-                             const color = isPrimaryTexture ? (colors[sk] || '#999') : (colors[pk] || '#999');
-                             const tex = isPrimaryTexture ? (textureMap[pk] || 0) : (textureMap[sk] || 0);
-                             
-                             drawBar(bx, by, barW, h, color, tex, dispVal, label);
-                         });
-
-                         if (showPrimaryLabel) {
-                            ctx.fillStyle = '#475569';
-                            ctx.textAlign = 'center';
-                            const labelX = pBx + primaryGroupW/2 + xTickOffsetX;
-                            const labelY = margin.top + chartH + (subLabelFont * 1.5 * drawScale) + xTickOffsetY;
-                            drawFittedXLabel(pk, labelX, labelY, primaryGroupW, subLabelFont, (height - labelY) * 0.9);
-                         }
-                     }
-                 });
-
-            } else {
-                 const counts = pData[g];
-                 Object.keys(counts).forEach(k => {
-                     items.push({
-                         key: k,
-                         val: counts[k],
-                         color: colors[k] || '#000',
-                         tex: config.textureBy !== 'none' ? (textureMap[k] || 0) : 0
-                     });
-                 });
-
-                 // Sort Items
-                 items.sort((a,b) => {
-                    // Primary Sort: Bar Order
-                    let cmp = 0;
-                    if (config.distBarOrder === 'alpha') {
-                        cmp = a.key.localeCompare(b.key);
-                    } else {
-                        cmp = a.val - b.val;
-                    }
-                    return config.distBarDir === 'asc' ? cmp : -cmp;
-                });
-
-                if (isStacked) {
-                    // STACKED MODE
-                    const barW = cfgBarWidth > 0 ? Math.min(cfgBarWidth, groupW * 0.95) : groupW * 0.6;
-                    const bx = cx + (groupW - barW)/2;
-                    let currentY = margin.top + chartH;
-
-                    items.forEach(item => {
-                        const rawVal = item.val;
-                        const dispVal = isPercentage ? (total > 0 ? (rawVal / total * 100) : 0) : rawVal;
-                        const h = (dispVal / maxY) * chartH;
-                        const label = isPercentage ? `${dispVal.toFixed(1)}%` : rawVal.toString();
-                        
-                        currentY -= h;
-                        drawBar(bx, currentY, barW, h, item.color, item.tex, dispVal, label);
-                    });
-
-                } else {
-                    // GROUPED MODE
-                    const innerGaps = (items.length > 1 ? (items.length - 1) * cfgBarGap : 0);
-                    const barW = cfgBarWidth > 0 ? Math.min(cfgBarWidth, (groupW * 0.9 - innerGaps) / items.length) : (groupW * 0.9 - innerGaps) / items.length;
-                    const startX = cx + (groupW * 0.05);
-
-                    items.forEach((item, idx) => {
-                        const rawVal = item.val;
-                        const dispVal = isPercentage ? (total > 0 ? (rawVal / total * 100) : 0) : rawVal;
-                        const h = (dispVal / maxY) * chartH;
-                        const label = isPercentage ? `${dispVal.toFixed(0)}%` : rawVal.toString();
-                        
-                        const bx = startX + idx * (barW + cfgBarGap);
-                        const by = margin.top + chartH - h;
-
-                        drawBar(bx, by, barW, h, item.color, item.tex, dispVal, label);
-
-                        // Sub-label for grouped items (only if enough space)
-                        if (barW > (20 * drawScale)) {
-                            ctx.fillStyle = '#475569';
-                            ctx.textAlign = 'center';
-                            const labelX = bx + barW/2 + xTickOffsetX;
-                            const labelY = margin.top + chartH + (subLabelFont * 1.5 * drawScale) + xTickOffsetY;
-                            drawFittedXLabel(item.subKey || item.key, labelX, labelY, barW, subLabelFont, (height - labelY) * 0.9);
-                        }
-                    });
-                }
-            }
-
-             // Group Label — suppress when only one group named 'All' (groupBy=none)
-             const showGroupLabel = g !== 'All' && (groups.length > 1 || !isInteraction || !showPrimaryLabel);
-             if (showGroupLabel && groupLabelFont > 0) {
-                ctx.fillStyle = '#0f172a';
-                ctx.textAlign = 'center';
-                const labelY = margin.top + chartH + (subLabelFont * 1.5 * drawScale) + (groupLabelFont * 1.5 * drawScale) + xTickOffsetY;
-                const finalY = isStacked ? labelY - (subLabelFont * drawScale) : labelY;
-                drawFittedXLabel(`/${g}/`, cx + groupW/2, finalY, groupW, groupLabelFont, (height - finalY) * 0.9);
-             }
-        });
-    }
+         // Group Label — suppress when only one group named 'All' (groupBy=none)
+         const showGroupLabel = g !== 'All' && (groups.length > 1 || !isInteraction || !showPrimaryLabel);
+         if (showGroupLabel && groupLabelFont > 0) {
+            ctx.fillStyle = '#0f172a';
+            ctx.textAlign = 'center';
+            const labelY = margin.top + chartH + (subLabelFont * 1.5 * drawScale) + (groupLabelFont * 1.5 * drawScale) + xTickOffsetY;
+            const finalY = isStacked ? labelY - (subLabelFont * drawScale) : labelY;
+            drawFittedXLabel(`/${g}/`, cx + groupW/2, finalY, groupW, groupLabelFont, (height - finalY) * 0.9);
+         }
+    });
 
   }, [plotData, config, renderHistogram, facetGroups, getHistValue, styleOverrides]);
 

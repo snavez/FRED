@@ -54,6 +54,12 @@ interface MainDisplayProps {
 const opacityToSlider = (opacity: number) => Math.sqrt(opacity);
 const sliderToOpacity = (slider: number) => slider * slider;
 
+// Number input: keep the value in range, and fall back when the field is left blank
+const clampNumber = (raw: string, min: number, max: number, fallback: number) => {
+  const n = parseFloat(raw);
+  return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
+};
+
 // Bandwidth multiplier slider: log scale, so x1 (Silverman's rule) sits in the middle and
 // halving the bandwidth is as far along as doubling it
 const bandwidthToSlider = (adjust: number) => Math.log(adjust) / Math.log(4);
@@ -2761,21 +2767,21 @@ const MainDisplay: React.FC<MainDisplayProps> = ({
                 <div className="w-px h-6 bg-slate-200"></div>
 
                 {/* Bar Width & Gap Controls */}
-                <HelpTooltip helpMode={helpMode} text="Bar width = bar width in pixels (0 = auto). Group gap = gap between the Group By clusters (needs Group By set). Bar gap = gap between bars inside a cluster.">
+                <HelpTooltip helpMode={helpMode} text="Bar width = how much of the space each bar is given that the bar fills, as a percentage. Group gap = pixels between the Group By clusters (needs Group By set). Bar gap = pixels between bars inside a cluster. Set a gap to 0 and the bars either side of it abut.">
                 <div className="flex flex-col">
                   <span className="text-[9px] font-bold text-slate-500 uppercase leading-none mb-0.5">Layout</span>
                   <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1" title="Bar Width (0 = auto)">
-                      <span className="text-[9px] text-slate-500">Bar width</span>
-                      <input type="number" min="0" max="100" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distBarWidth || 0} onChange={e => handleConfig('distBarWidth', parseFloat(e.target.value) || 0)} />
+                    <div className="flex items-center gap-1" title="Bar Width (% of the space each bar is given)">
+                      <span className="text-[9px] text-slate-500">Bar width %</span>
+                      <input type="number" min="0" max="100" step="5" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distBarWidth ?? 100} onChange={e => handleConfig('distBarWidth', clampNumber(e.target.value, 0, 100, 100))} />
                     </div>
-                    <div className="flex items-center gap-1" title="Group Gap (needs Group By)">
+                    <div className="flex items-center gap-1" title="Group Gap in px (needs Group By)">
                       <span className={`text-[9px] ${currentConfig.groupBy !== 'none' ? 'text-slate-500' : 'text-slate-300'}`}>Group gap</span>
-                      <input type="number" min="0" max="50" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distGroupGap || 0} onChange={e => handleConfig('distGroupGap', parseFloat(e.target.value) || 0)} />
+                      <input type="number" min="0" max="100" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distGroupGap ?? 14} onChange={e => handleConfig('distGroupGap', clampNumber(e.target.value, 0, 100, 14))} />
                     </div>
-                    <div className="flex items-center gap-1" title="Bar Gap">
+                    <div className="flex items-center gap-1" title="Bar Gap in px">
                       <span className="text-[9px] text-slate-500">Bar gap</span>
-                      <input type="number" min="0" max="20" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distBarGap || 0} onChange={e => handleConfig('distBarGap', parseFloat(e.target.value) || 0)} />
+                      <input type="number" min="0" max="50" step="1" className="w-10 p-0.5 border rounded text-[10px]" value={currentConfig.distBarGap ?? 2} onChange={e => handleConfig('distBarGap', clampNumber(e.target.value, 0, 50, 2))} />
                     </div>
                   </div>
                 </div>

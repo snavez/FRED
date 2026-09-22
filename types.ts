@@ -147,7 +147,6 @@ export interface PlotConfig {
 
   // Distribution Plot Config
   distPlotBy: string;                        // 'none' or field key — faceting variable for distributions
-  separatePlots: boolean;
   distGroupOrder: 'count' | 'alpha';
   distGroupDir: 'asc' | 'desc';
   distBarOrder: 'count' | 'alpha';
@@ -156,9 +155,9 @@ export interface PlotConfig {
   distPrimaryVar: 'color' | 'texture';
   distValueMode: 'count' | 'percentage';
   distNormalize: boolean;
-  distBarWidth: number;                     // bar width in px (0 = auto)
-  distGroupGap: number;                     // gap between groups in px (0 = auto)
-  distBarGap: number;                       // gap between bars within group in px (0 = auto)
+  distBarWidth: number;                     // bar width as a % of the space each bar is given
+  distGroupGap: number;                     // gap between groups in px (0 = groups abut)
+  distBarGap: number;                       // gap between bars within a group in px (0 = bars abut)
   distMode: 'counts' | 'histogram';         // sub-mode: categorical counts vs continuous histogram
   distHistXVar: string;                      // numeric field for histogram x-axis (default: 'duration')
   distHistTimePoint: number;                 // timepoint for formant extraction (default: 50)

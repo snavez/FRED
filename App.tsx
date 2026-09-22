@@ -82,7 +82,6 @@ const INITIAL_CONFIG: PlotConfig = {
 
   // Distribution defaults
   distPlotBy: 'none',
-  separatePlots: false,
   distGroupOrder: 'count',
   distGroupDir: 'desc',
   distBarOrder: 'count',
@@ -91,9 +90,9 @@ const INITIAL_CONFIG: PlotConfig = {
   distPrimaryVar: 'color',
   distValueMode: 'count',
   distNormalize: false,
-  distBarWidth: 0,
-  distGroupGap: 0,
-  distBarGap: 0,
+  distBarWidth: 100,
+  distGroupGap: 14,
+  distBarGap: 2,
   distMode: 'counts',
   distHistXVar: 'duration',
   distHistTimePoint: 50,
